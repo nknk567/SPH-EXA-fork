@@ -40,6 +40,7 @@ class Cosmology // : public cstone::FieldStates<CosmologyData<T>>
 public:
     virtual T driftTimeCorrection(T t, T dt) = 0;
     virtual T kickTimeCorrection(T t, T dt) = 0;
+    virtual T kickTimeCorrectionSPH(T t, T dt, T gamma) const = 0;
     virtual ~Cosmology() = default;
 };
 

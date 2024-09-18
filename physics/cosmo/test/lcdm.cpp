@@ -34,25 +34,25 @@ TEST(cosmo_lcdm, hubbleRate)
     using T = double; 
     using Cosmo = cosmo::LambdaCDM<T>;
 
-    EXPECT_EQ(Cosmo({.H0=1, .OmegaRadiation=1}).H(1), 1);
-    EXPECT_EQ(Cosmo({.H0=2, .OmegaRadiation=1}).H(1), 2);
+    EXPECT_EQ(Cosmo({.H0=1, .OmegaRadiation=1}).hubble_H(1), 1);
+    EXPECT_EQ(Cosmo({.H0=2, .OmegaRadiation=1}).hubble_H(1), 2);
 
-    EXPECT_NEAR(Cosmo({.H0=4, .OmegaMatter=0.1, .OmegaRadiation=0.9}).H(0.5), 15.594870951694343, 1e-12);
-    EXPECT_NEAR(Cosmo({.H0=4, .OmegaMatter=0.1, .OmegaLambda=1}).H(0.5), 4.7328638264796927, 1e-12);
+    EXPECT_NEAR(Cosmo({.H0=4, .OmegaMatter=0.1, .OmegaRadiation=0.9}).hubble_H(0.5), 15.594870951694343, 1e-12);
+    EXPECT_NEAR(Cosmo({.H0=4, .OmegaMatter=0.1, .OmegaLambda=1}).hubble_H(0.5), 4.7328638264796927, 1e-12);
 
-    EXPECT_NEAR(Cosmo({.H0=4, .OmegaRadiation=0.3}).H(0.5), 16*sqrt(0.3 + (1-0.3)*pow(0.5,2)), 1e-12);
-    EXPECT_NEAR(Cosmo({.H0=4, .OmegaMatter=0.1, .OmegaRadiation=0.3}).H(0.5), 16*sqrt(0.3 + 0.1*0.5 + (1-0.3-0.1)*pow(0.5,2)), 1e-12);
+    EXPECT_NEAR(Cosmo({.H0=4, .OmegaRadiation=0.3}).hubble_H(0.5), 16*sqrt(0.3 + (1-0.3)*pow(0.5,2)), 1e-12);
+    EXPECT_NEAR(Cosmo({.H0=4, .OmegaMatter=0.1, .OmegaRadiation=0.3}).hubble_H(0.5), 16*sqrt(0.3 + 0.1*0.5 + (1-0.3-0.1)*pow(0.5,2)), 1e-12);
 
-    EXPECT_NEAR(Cosmo({.H0=4, .OmegaMatter=0.3, .OmegaRadiation=0.2}).H(0.5), 
+    EXPECT_NEAR(Cosmo({.H0=4, .OmegaMatter=0.3, .OmegaRadiation=0.2}).hubble_H(0.5),
             16 * sqrt(0.2 + 0.3*0.5 + (1 - 0.3 - 0.2) * pow(0.5,2)), 1e-12);
 
-    EXPECT_NEAR(Cosmo({.H0=4, .OmegaMatter=0.3, .OmegaLambda=0.2}).H(0.5), 
+    EXPECT_NEAR(Cosmo({.H0=4, .OmegaMatter=0.3, .OmegaLambda=0.2}).hubble_H(0.5),
             16 * sqrt(0.2*pow(0.5,4) + 0.3*0.5 + (1 - 0.3 - 0.2) * pow(0.5,2)), 1e-12);
 
-    EXPECT_NEAR(Cosmo({.H0=4, .OmegaRadiation=0.3, .OmegaLambda=0.2}).H(0.5), 
+    EXPECT_NEAR(Cosmo({.H0=4, .OmegaRadiation=0.3, .OmegaLambda=0.2}).hubble_H(0.5),
             16 * sqrt(0.2*pow(0.5,4) + 0.3 + (1 - 0.3 - 0.2) * pow(0.5,2)), 1e-12);
 
-    EXPECT_NEAR(Cosmo({.H0=4, .OmegaMatter=0.1, .OmegaRadiation=0.3, .OmegaLambda=0.2}).H(0.5), 
+    EXPECT_NEAR(Cosmo({.H0=4, .OmegaMatter=0.1, .OmegaRadiation=0.3, .OmegaLambda=0.2}).hubble_H(0.5),
             16 * sqrt(0.1*0.5 + 0.2*pow(0.5,4) + 0.3 + (1 - 0.3 - 0.2 - 0.1) * pow(0.5,2)), 1e-12);
 }
 
@@ -90,23 +90,23 @@ TEST(cosmo_lcdm, scale_factor_function)
 
     {
     Cosmo c({.H0=1, .OmegaMatter=1, .OmegaRadiation=0, .OmegaLambda=1});
-    EXPECT_NEAR(c.a(c.time(.001)), .001, 1e-7);
-    EXPECT_NEAR(c.a(c.time(0.5)), 0.5, 1e-7);
-    EXPECT_NEAR(c.a(c.time(1)), 1, 1e-7);
+    EXPECT_NEAR(c.scale_factor_a(c.time(.001)), .001, 1e-7);
+    EXPECT_NEAR(c.scale_factor_a(c.time(0.5)), 0.5, 1e-7);
+    EXPECT_NEAR(c.scale_factor_a(c.time(1)), 1, 1e-7);
     }
 
     {
     Cosmo c({.H0=1, .OmegaMatter=0, .OmegaRadiation=1, .OmegaLambda=0});
-    EXPECT_NEAR(c.a(c.time(.001)), .001, 1e-7);
-    EXPECT_NEAR(c.a(c.time(0.5)), 0.5, 1e-7);
-    EXPECT_NEAR(c.a(c.time(1)), 1, 1e-7);
+    EXPECT_NEAR(c.scale_factor_a(c.time(.001)), .001, 1e-7);
+    EXPECT_NEAR(c.scale_factor_a(c.time(0.5)), 0.5, 1e-7);
+    EXPECT_NEAR(c.scale_factor_a(c.time(1)), 1, 1e-7);
     }
 
     {
     Cosmo c({.H0=9, .OmegaMatter=0.2, .OmegaRadiation=0.1, .OmegaLambda=0.5});
-    EXPECT_NEAR(c.a(c.time(.001)), .001, 1e-7);
-    EXPECT_NEAR(c.a(c.time(0.5)), 0.5, 1e-7);
-    EXPECT_NEAR(c.a(c.time(1)), 1, 1e-7);
+    EXPECT_NEAR(c.scale_factor_a(c.time(.001)), .001, 1e-7);
+    EXPECT_NEAR(c.scale_factor_a(c.time(0.5)), 0.5, 1e-7);
+    EXPECT_NEAR(c.scale_factor_a(c.time(1)), 1, 1e-7);
     }
 }
 

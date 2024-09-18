@@ -51,6 +51,11 @@ public:
     {
         return dt;
     }
+    //! @brief Assuming gamma > 1
+    T kickTimeCorrectionSPH(T , T dt, T ) const override
+    {
+        return dt;
+    }
 };
 
 } // namespace cosmo

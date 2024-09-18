@@ -37,45 +37,44 @@
 
 #define DBG_COSMO_UTILS if (0)
 
-template<typename T, int MAX_ITER = 40, class FnPtr, class FnPtr2>
-T newton(FnPtr&& func, FnPtr2&& func_deriv, T x0, T l, T u, T rel_error = 1e-7, T abs_error = 1e-7)
+template<std::floating_point T, int max_iter = 40, typename F1, typename F2>
+T find_zero_newton(F1&& func, F2&& func_deriv, T x0, T xmin, T xmax, const T rel_error = 1e-7, const T abs_error = 1e-7)
 {
-    if (l > u)
-        throw std::invalid_argument("Lower bound exceeds upper bound in Newton's Method.");
+    if (xmin > xmax) throw std::invalid_argument("Lower bound exceeds upper bound in Newton's Method.");
 
-    T x0_save = x0;
+    //    T x0_save = x0;
     T x1 = x0;
 
-    for (int i=0; i < MAX_ITER; i++)
+    for (int i = 0; i < max_iter; i++)
     {
         T f = func(x0);
         if (f == 0) return x0;
 
         T fprime = func_deriv(x0);
 
-        DBG_COSMO_UTILS printf("%2i] %23.15e  ->  %23.15e  [l: %23.15e u: %23.15e] (diff: %23.15e  f: %23.15e  f': %23.15e)\n", i, x0_save, x0, l,u, fabs((x1 - x0_save)), f, fprime);
+        //        DBG_COSMO_UTILS printf(
+        //            "%2i] %23.15e  ->  %23.15e  [xmin: %23.15e xmax: %23.15e] (diff: %23.15e  f: %23.15e  f':
+        //            %23.15e)\n", i, x0_save, x0, xmin, xmax, fabs((x1 - x0_save)), f, fprime);
 
-        if (f*fprime == 0) { x0 = std::min(u, x0+abs_error*(u - l)); continue; }
-        //if (f*fprime == 0) { x0 = std::max(l, x0-abs_error*(u - l)); continue; }
- 
-        if (f*fprime < 0)
-            l = x0;
-        else 
-            u = x0;
+        if (f * fprime == 0)
+        {
+            x0 = std::min(xmax, x0 + abs_error * (xmax - xmin));
+            continue;
+        }
 
-        x0_save = x0;
-
-        x1 = x0 - f/fprime;
-
-        if (fabs(x1 - x0) <= std::max(rel_error * std::max(fabs(x0), fabs(x1)), abs_error)) return x1;
-        //if (fabs(x1 - x0) <= abs_error + rel_error * fabs(x0)) return x1;
-        //if (fabs((x1 - x0)) <= abs_error) { return x1; }
-        //if (fabs((x1 - x0) / x0) <= rel_error) { return x1; }
-
-        if (l < x1 && x1 < u)
-            x0 = x1;
+        if (f * fprime < 0)
+            xmin = x0;
         else
-            x0 = 0.5*(l + u);
+            xmax = x0;
+
+        //        x0_save = x0;
+
+        x1 = x0 - f / fprime;
+
+        if (std::abs(x1 - x0) <= std::max(rel_error * std::max(std::abs(x0), std::abs(x1)), abs_error)) { return x1; }
+
+        if (xmin < x1 && x1 < xmax) { x0 = x1; }
+        else { x0 = 0.5 * (xmin + xmax); }
     }
 
     DBG_COSMO_UTILS return -1234;
@@ -86,63 +85,63 @@ T newton(FnPtr&& func, FnPtr2&& func_deriv, T x0, T l, T u, T rel_error = 1e-7, 
  ** Romberg integrator for an open interval.
  */
 
-template<typename T, int MAXLEVEL = 13, class FnPtr>
-T romberg(FnPtr&& func, T a, T b, T eps)
+template<typename T, int max_level = 13, typename F>
+T integrate_romberg(F&& func, T a, T b, T eps)
 {
-    T tllnew;
-    T tll;
-    T tlk[MAXLEVEL+1];
-    int n = 1;
+    T   tllnew = (b - a) * func(0.5 * (b + a));
+    T   tll    = std::numeric_limits<T>::max();
+    T   tlk[max_level + 1];
+    int n        = 1;
     int nsamples = 1;
 
-    tlk[0] = tllnew = (b-a)*func(0.5*(b+a));
+    tlk[0] = tllnew;
+    //    = (b - a) * func(0.5 * (b + a));
     if (a == b) return tllnew;
 
-    tll = FLT_MAX;
+    //    tll = std::numeric_limits<T>::max();
 
-    while ((fabs((tllnew-tll)/tllnew) > eps) && (n < MAXLEVEL)) 
+    while ((std::abs((tllnew - tll) / tllnew) > eps) && (n < max_level))
     {
         /*
          * midpoint rule.
          */
 
         nsamples *= 3;
-        T dx = (b-a)/nsamples;
+        T dx = (b - a) / nsamples;
 
         T s = 0;
-        for (int i=0; i<nsamples/3; i++) 
+        for (int i = 0; i < nsamples / 3; i++)
         {
-            s += dx*func(a + (3*i + 0.5)*dx);
-            s += dx*func(a + (3*i + 2.5)*dx);
+            s += dx * func(a + (3 * i + 0.5) * dx);
+            s += dx * func(a + (3 * i + 2.5) * dx);
         }
 
-        T tmp = tlk[0];
-        tlk[0] = tlk[0]/3.0 + s;
+        T tmp  = tlk[0];
+        tlk[0] = tlk[0] / 3.0 + s;
 
         /*
          * Romberg extrapolation.
          */
 
-        for (int i=0; i < n; i++) 
+        for (int i = 0; i < n; i++)
         {
-            T k = pow(9.0, i+1.0);
-            T tlknew = (k*tlk[i] - tmp) / (k - 1.0);
+            T k      = std::pow(9.0, i + 1.0);
+            T tlknew = (k * tlk[i] - tmp) / (k - 1.0);
 
-            tmp = tlk[i+1];
-            tlk[i+1] = tlknew;
+            tmp        = tlk[i + 1];
+            tlk[i + 1] = tlknew;
         }
 
-        tll = tllnew;
+        tll    = tllnew;
         tllnew = tlk[n];
         n++;
     }
 
-    //printf("%23.15e\n", tllnew);
-    //printf("%23.15e\n", tll);
-    //printf("%23.15e\n", fabs((tllnew-tll)/(tllnew)));
-    //printf("%23.15e\n", eps);
-    //assert(fabs((tllnew-tll)/(tllnew)) <= eps);
+    // printf("%23.15e\n", tllnew);
+    // printf("%23.15e\n", tll);
+    // printf("%23.15e\n", fabs((tllnew-tll)/(tllnew)));
+    // printf("%23.15e\n", eps);
+    // assert(fabs((tllnew-tll)/(tllnew)) <= eps);
 
     return tllnew;
 }
-

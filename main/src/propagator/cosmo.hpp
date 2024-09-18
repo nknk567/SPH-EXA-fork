@@ -126,70 +126,70 @@ public:
 
         if (domain.startIndex() == 0 && cstone::HaveGpu<typename DataType::AcceleratorType>{})
         {
-            size_t n = last - first;
-            std::cout << "numP2P " << stats[0] / n << " maxP2P " << stats[1] << " numM2P " << stats[2] / n << " maxM2P "
-                      << stats[3] << std::endl;
+//            size_t n = last - first;
+//            std::cout << "numP2P " << stats[0] / n << " maxP2P " << stats[1] << " numM2P " << stats[2] / n << " maxM2P "
+//                      << stats[3] << std::endl;
         }
     }
+//
+//    void computeAccelerations(size_t first, size_t last, Dataset& d)
+//    {
+//        fill(get<"ax">(d), first, last, HydroType(0));
+//        fill(get<"ay">(d), first, last, HydroType(0));
+//        fill(get<"az">(d), first, last, HydroType(0));
+//
+//        computeGravity(domain, simData);
+//
+//        /* zero other hydro accelerations and compute those */
+//        /* ... */
+//    }
+//
+//    void GravKick(DomainType& domain, double t, double dt)
+//    {
+//        auto dt_cosmo = dt;
+//
+//#pragma omp parallel for schedule(static)
+//        for (size_t i = startIndex; i < endIndex; i++)
+//        {
+//            cstone::Vec3<T> V{d.vx[i], d.vy[i], d.vz[i]};
+//            cstone::Vec3<T> A{d.ax[i], d.ay[i], d.az[i]};
+//
+//            V += A * dt_cosmo;
+//
+//            util::tie(d.vx[i], d.vy[i], d.vz[i]) = util::tie(V[0], V[1], V[2]);
+//        }
+//    }
 
-    void computeAccelerations(size_t first, size_t last, Dataset& d)
-    {
-        fill(get<"ax">(d), first, last, HydroType(0));
-        fill(get<"ay">(d), first, last, HydroType(0));
-        fill(get<"az">(d), first, last, HydroType(0));
-
-        computeGravity(domain, simData);
-
-        /* zero other hydro accelerations and compute those */
-        /* ... */
-    }
-
-    void GravKick(DomainType& domain, double t, double dt)
-    {
-        auto dt_cosmo = dt;
-
-#pragma omp parallel for schedule(static)
-        for (size_t i = startIndex; i < endIndex; i++)
-        {
-            cstone::Vec3<T> V{d.vx[i], d.vy[i], d.vz[i]};
-            cstone::Vec3<T> A{d.ax[i], d.ay[i], d.az[i]};
-
-            V += A * dt_cosmo;
-
-            util::tie(d.vx[i], d.vy[i], d.vz[i]) = util::tie(V[0], V[1], V[2]);
-        }
-    }
-
-    void GravDrift(DomainType& domain, double t, double dt)
-    {
-        auto dt_cosmo = dt;
-
-#pragma omp parallel for schedule(static)
-        for (size_t i = startIndex; i < endIndex; i++)
-        {
-            cstone::Vec3<T> X{d.x[i], d.y[i], d.z[i]};
-            cstone::Vec3<T> V{d.vx[i], d.vy[i], d.vz[i]};
-
-            util::tie(d.x_m1[i], d.y_m1[i], d.z_m1[i]) = util::tie(d.x[i], d.y[i], d.z[i]);
-
-            X += V * dt_cosmo;
-            X = cstone::putInBox(X, domain.box()); /* Maybe we do this after all drifts? */
-
-            util::tie(d.x[i], d.y[i], d.z[i]) = util::tie(X[0], X[1], X[2]);
-        }
-    }
-
-    void Kick(DomainType& domain, double t, double dt)
-    {
-        GravKick(domain, t, dt);
-        /* HydroKick... */
-    }
-
-    void Drift(DomainType& domain, double t, double dt)
-    {
-        GravDrift(domain, t, dt);
-        /* HydroDrift?... */
-    }
+//    void GravDrift(DomainType& domain, double t, double dt)
+//    {
+//        auto dt_cosmo = dt;
+//
+//#pragma omp parallel for schedule(static)
+//        for (size_t i = startIndex; i < endIndex; i++)
+//        {
+//            cstone::Vec3<T> X{d.x[i], d.y[i], d.z[i]};
+//            cstone::Vec3<T> V{d.vx[i], d.vy[i], d.vz[i]};
+//
+//            util::tie(d.x_m1[i], d.y_m1[i], d.z_m1[i]) = util::tie(d.x[i], d.y[i], d.z[i]);
+//
+//            X += V * dt_cosmo;
+//            X = cstone::putInBox(X, domain.box()); /* Maybe we do this after all drifts? */
+//
+//            util::tie(d.x[i], d.y[i], d.z[i]) = util::tie(X[0], X[1], X[2]);
+//        }
+//    }
+//
+//    void Kick(DomainType& domain, double t, double dt)
+//    {
+//        GravKick(domain, t, dt);
+//        /* HydroKick... */
+//    }
+//
+//    void Drift(DomainType& domain, double t, double dt)
+//    {
+//        GravDrift(domain, t, dt);
+//        /* HydroDrift?... */
+//    }
 
 
     void step(DomainType& domain, DataType& simData) override
@@ -210,7 +210,7 @@ public:
 
         if (halfStepKickNeeded)
         {
-            computeAccelerations(first, last, d);
+//            computeAccelerations(first, last, d);
             timer.step("Accelerations");
             halfStepKickNeeded = false;
 
@@ -220,20 +220,20 @@ public:
         }
 
 
-        Kick(domain, d.minDt / 2);
+//        Kick(domain, d.minDt / 2);
         timer.step("Kick");
 
-        Drift(domain, d.minDt);
+//        Drift(domain, d.minDt);
         timer.step("Drift");
 
-        computeAccelerations(first, last, d);
+//        computeAccelerations(first, last, d);
         timer.step("Accelerations");
 
         d.minDtCourant = INFINITY;
         computeTimestep(first, last, d);
         timer.step("Timestep");
 
-        Kick(domain, d.minDt / 2);
+//        Kick(domain, d.minDt / 2);
         timer.step("Kick");
 
 

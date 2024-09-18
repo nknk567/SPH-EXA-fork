@@ -152,7 +152,7 @@ public:
     {
         auto f = [this, t](const T a) { return time(a) - t; };
         auto df = [this](const T a) { return 1.0/(a * H(a)); };
-        return newton(f, df, t*H0, 0.0, 1.0e38, relativeError, absoluteError);
+        return find_zero_newton(f, df, t * H0, 0.0, 1.0e38, relativeError, absoluteError);
     }
 
 
@@ -199,7 +199,11 @@ public:
         assert(0); // This situation should be caught in the constructor.
         return 0;
     }
-
+    //! @brief Assuming gamma > 1
+    T kickTimeCorrectionSPH(T , T , T ) const override
+    {
+       return 0.;
+    }
 };
 
 } // namespace cosmo
