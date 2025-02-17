@@ -15,73 +15,154 @@
 #include "grid.hpp"
 #include "utils.hpp"
 
+#include "polytrope/lane_emden.hpp"
+#include "polytrope/interpolator.hpp"
+#include "polytrope/integrate.hpp"
+
 namespace sphexa
 {
 
 std::map<std::string, double> polytropeConstants()
 {
-    return {{"gravConstant", 1.}, {"r", 1.},          {"mTotal", 1.}, {"polytropic_exponent", 5. / 3.},
-            {"minDt", 1e-4},      {"minDt_m1", 1e-4}, {"mui", 10},    {"ng0", 100},
-            {"ngmax", 150}};
+    return {{"G", 1.},       {"r", 1.},
+            {"mTotal", 1.},  {"polytropic_exponent", 5. / 3.},
+            {"minDt", 1e-4}, {"minDt_m1", 1e-4},
+            {"mui", 10},     {"ng0", 100},
+            {"ngmax", 150},  {"eosChoice", sph::EosType::polytropic}};
 }
-//
-// template<class Dataset>
-// void initEvrardFields(Dataset& d, const std::map<std::string, double>& constants)
-//{
-//    using T = typename Dataset::RealType;
-//
-//    double mPart = constants.at("mTotal") / d.numParticlesGlobal;
-//
-//    std::fill(d.m.begin(), d.m.end(), mPart);
-//    std::fill(d.du_m1.begin(), d.du_m1.end(), 0.0);
-//    std::fill(d.mui.begin(), d.mui.end(), d.muiConst);
-//    std::fill(d.alpha.begin(), d.alpha.end(), d.alphamin);
-//
-//    std::fill(d.vx.begin(), d.vx.end(), 0.0);
-//    std::fill(d.vy.begin(), d.vy.end(), 0.0);
-//    std::fill(d.vz.begin(), d.vz.end(), 0.0);
-//
-//    std::fill(d.x_m1.begin(), d.x_m1.end(), 0.0);
-//    std::fill(d.y_m1.begin(), d.y_m1.end(), 0.0);
-//    std::fill(d.z_m1.begin(), d.z_m1.end(), 0.0);
-//
-//    generateParticleIDs(d.id);
-//
-//    auto cv    = sph::idealGasCv(d.muiConst, d.gamma);
-//    auto temp0 = constants.at("u0") / cv;
-//    std::fill(d.temp.begin(), d.temp.end(), temp0);
-//
-//    T totalVolume = 4 * M_PI / 3 * std::pow(constants.at("r"), 3);
-//    // before the contraction with sqrt(r), the sphere has a constant particle concentration of Ntot / Vtot
-//    // after shifting particles towards the center by factor sqrt(r), the local concentration becomes
-//    // c(r) = 2/3 * 1/r * Ntot / Vtot
-//    T c0 = 2. / 3. * d.numParticlesGlobal / totalVolume;
-//
-// #pragma omp parallel for schedule(static)
-//    for (size_t i = 0; i < d.x.size(); i++)
-//    {
-//        T radius        = std::sqrt((d.x[i] * d.x[i]) + (d.y[i] * d.y[i]) + (d.z[i] * d.z[i]));
-//        T concentration = c0 / radius;
-//        d.h[i]          = std::cbrt(3 / (4 * M_PI) * d.ng0 / concentration) * 0.5;
-//    }
-//}
-//
-// template<class Vector>
-// void contractRhoProfile(Vector& x, Vector& y, Vector& z)
-//{
-// #pragma omp parallel for schedule(static)
-//    for (size_t i = 0; i < x.size(); i++)
-//    {
-//        auto radius0 = std::sqrt(x[i] * x[i] + y[i] * y[i] + z[i] * z[i]);
-//
-//        // multiply coordinates by sqrt(r) to generate a density profile ~ 1/r
-//        auto contraction = std::sqrt(radius0);
-//        x[i] *= contraction;
-//        y[i] *= contraction;
-//        z[i] *= contraction;
-//    }
-//}
-//
+
+template<class Dataset>
+void initPolytropeFields(Dataset& d, const std::map<std::string, double>& constants)
+{
+    using T = typename Dataset::RealType;
+
+    double mPart = constants.at("mTotal") / d.numParticlesGlobal;
+
+    std::fill(d.m.begin(), d.m.end(), mPart);
+    std::fill(d.du_m1.begin(), d.du_m1.end(), 0.0);
+    std::fill(d.mui.begin(), d.mui.end(), d.muiConst);
+    std::fill(d.alpha.begin(), d.alpha.end(), d.alphamin);
+
+    std::fill(d.vx.begin(), d.vx.end(), 0.0);
+    std::fill(d.vy.begin(), d.vy.end(), 0.0);
+    std::fill(d.vz.begin(), d.vz.end(), 0.0);
+
+    std::fill(d.x_m1.begin(), d.x_m1.end(), 0.0);
+    std::fill(d.y_m1.begin(), d.y_m1.end(), 0.0);
+    std::fill(d.z_m1.begin(), d.z_m1.end(), 0.0);
+
+    generateParticleIDs(d.id);
+
+    //    auto cv    = sph::idealGasCv(d.muiConst, d.gamma);
+    //    auto temp0 = constants.at("u0") / cv;
+    //    std::fill(d.temp.begin(), d.temp.end(), temp0);
+
+    //    T totalVolume = 4 * M_PI / 3 * std::pow(constants.at("r"), 3);
+    // before the contraction with sqrt(r), the sphere has a constant particle concentration of Ntot / Vtot
+    // after shifting particles towards the center by factor sqrt(r), the local concentration becomes
+    // c(r) = 2/3 * 1/r * Ntot / Vtot
+    //    T c0 = 2. / 3. * d.numParticlesGlobal / totalVolume;
+    //
+    // #pragma omp parallel for schedule(static)
+    //    for (size_t i = 0; i < d.x.size(); i++)
+    //    {
+    //        T radius        = std::sqrt((d.x[i] * d.x[i]) + (d.y[i] * d.y[i]) + (d.z[i] * d.z[i]));
+    //        T concentration = c0 / radius;
+    //        d.h[i]          = std::cbrt(3 / (4 * M_PI) * d.ng0 / concentration) * 0.5;
+    //    }
+}
+
+// SET THE MINIMUM STEP SIZE!
+auto computeDensityProfile(double polytropic_n, double total_mass, double radial_size, double G)
+{
+    const double G_code = 1.0;
+
+    LaneEmdenAsymptoticStart asympt{polytropic_n};
+    // set step size here
+    auto [xi, theta_phi] = integrate_to_zero(LaneEmden{polytropic_n}, asympt(1., 1e-7), 1e-7, 20.0, 1e-8, 0.01);
+
+    const double xi_1        = xi.back();
+    const double dtheta_xi_1 = -theta_phi.back()[1] / (xi.back() * xi.back());
+
+    const double rho_c = get_rho_c(xi_1, dtheta_xi_1, radial_size, total_mass);
+    const double K     = get_K(polytropic_n, xi_1, dtheta_xi_1, radial_size, rho_c, G_code);
+
+    std::vector<double> density(theta_phi.size());
+
+    auto theta_phi_to_rho = [rho_c, polytropic_n](const auto& theta_phi)
+    { return rho_c * std::pow(theta_phi[0], polytropic_n); };
+
+    std::transform(theta_phi.begin(), theta_phi.end(), density.begin(), theta_phi_to_rho);
+
+    std::vector<double> enclosed_mass(theta_phi.size());
+    auto                value_to_encl_m = [rho_c, K, polytropic_n, G_code](/*const auto &xi, */ const auto& theta_phi)
+    {
+        const double phi = theta_phi[1]; // phi = -xi^2 * dtheta / dxi
+        return get_enclosed_mass(polytropic_n, phi, K, rho_c, G_code);
+    };
+    std::transform(theta_phi.begin(), theta_phi.end(), enclosed_mass.begin(), value_to_encl_m);
+
+    std::vector<double> radius(theta_phi.size());
+    const auto          alpha_c = alpha(polytropic_n, rho_c, K, G_code);
+
+    auto xi_to_r = [alpha_c](const auto& xi) { return alpha_c * xi; };
+
+    std::transform(xi.begin(), xi.end(), radius.begin(), xi_to_r);
+
+    return std::tuple{std::move(radius), std::move(density), std::move(enclosed_mass)};
+}
+
+auto getInterpolators(double polytropic_exponent, double total_mass, double radius, double G)
+{
+    const auto [r, rho, encl_mass] = computeDensityProfile(polytropic_exponent, total_mass, radius, G);
+    LinearInterpolator rho_interp{r, rho};
+    LinearInterpolator m_interp{r, encl_mass};
+
+    // if two subsequent values in encl_mass are the same, it is not sorted
+    std::vector<size_t> indices(r.size());
+    std::iota(indices.begin(), indices.end(), size_t(0));
+    std::sort(indices.begin(), indices.end(), [&encl_mass](size_t i, size_t j) { return encl_mass[i] < encl_mass[j]; });
+
+    std::vector<double> r_sorted(r.size());
+    std::transform(indices.begin(), indices.end(), r_sorted.begin(), [&r](size_t i) { return r[i]; });
+    std::vector<double> encl_mass_sorted(r.size());
+    std::transform(indices.begin(), indices.end(), encl_mass_sorted.begin(),
+                   [&encl_mass](size_t i) { return encl_mass[i]; });
+
+    LinearInterpolator M_inv_interp{encl_mass, r};
+
+    return std::make_tuple(std::move(rho_interp), std::move(M_inv_interp));
+}
+
+template<class Vector, typename HType>
+void contractRhoProfileToPolytrope(Vector& x, Vector& y, Vector& z, HType& h, double total_mass, double radius,
+                                   auto rho_interp, auto M_inv_interp)
+{
+    //    auto [rho_interp, M_inv_interp] = getInterpolators(polytropic_exponent, total_mass, radius, G);
+
+    const size_t n_part = x.size();
+
+    // The radius in the original distribution that corresponds to the outer edge of the star after stretching.
+    //    const double r_original = std::cbrt(3. * total_mass / (4. * M_PI));
+
+#pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < x.size(); i++)
+    {
+        const auto old_radius = std::sqrt(x[i] * x[i] + y[i] * y[i] + z[i] * z[i]);
+        const auto new_radius = M_inv_interp(4. * M_PI / 3. * old_radius * old_radius * old_radius);
+        // multiply coordinates by sqrt(r) to generate a density profile ~ 1/r
+        const auto contraction = new_radius / old_radius;
+        //        auto contraction = std::sqrt(radius0);
+        x[i] *= contraction;
+        y[i] *= contraction;
+        z[i] *= contraction;
+
+        const double rho = rho_interp(new_radius);
+        const size_t ng0 = 100;
+        h[i]             = 0.5 * std::cbrt(100) * std::cbrt(total_mass / n_part / rho);
+    }
+}
+
 ////! @brief Estimate SFC partition of the Evrard sphere based on approximate continuum particle counts
 // template<class KeyType, class T>
 // std::tuple<KeyType, KeyType> estimateEvrardSfcPartition(size_t cbrtNumPart, const cstone::Box<T>& box, int rank,
@@ -134,18 +215,26 @@ public:
         int               multi1D      = std::rint(cbrtNumPart / std::cbrt(blockSize));
         cstone::Vec3<int> multiplicity = {multi1D, multi1D, multi1D};
 
-        T              r = settings_.at("r");
-        cstone::Box<T> globalBox(-r, r, cstone::BoundaryType::open);
+        auto [rho_interp, M_inv_interp] = getInterpolators(1.5, 1.0, 1.0, 1.0);
+
+        const auto r_original = std::cbrt(3. / (4. * M_PI) * M_inv_interp.y_values.back());
+        printf("rmax: %lf\n", r_original);
+
+        //        T              r = settings_.at("r");
+//        const T        r_orig = 1.0;
+        cstone::Box<T> globalBox(-r_original, r_original, cstone::BoundaryType::open);
 
         auto [keyStart, keyEnd] = equiDistantSfcSegments<KeyType>(rank, numRanks, 100);
         assembleCuboid<T>(keyStart, keyEnd, globalBox, multiplicity, xBlock, yBlock, zBlock, d.x, d.y, d.z);
-        cutSphere(r, d.x, d.y, d.z);
+
+        cutSphere(r_original, d.x, d.y, d.z);
+
+        d.h.resize(d.x.size());
 
         size_t numParticlesGlobal = d.x.size();
         MPI_Allreduce(MPI_IN_PLACE, &numParticlesGlobal, 1, MpiType<size_t>{}, MPI_SUM, simData.comm);
 
-//        double polytropic_n, double total_mass, double radial_size, double G
-        contractRhoProfileToPolytrope(d.x, d.y, d.z, n_polytrope, total_mass, radial_size, G);
+        contractRhoProfileToPolytrope(d.x, d.y, d.z, d.h, 1.0, settings_.at("r"), rho_interp, M_inv_interp);
         syncCoords<KeyType>(rank, numRanks, numParticlesGlobal, d.x, d.y, d.z, globalBox);
 
         d.resize(d.x.size());
@@ -154,7 +243,7 @@ public:
         BuiltinWriter attributeSetter(settings_);
         d.loadOrStoreAttributes(&attributeSetter);
 
-        //        initEvrardFields(d, settings_);
+        initPolytropeFields(d, settings_);
 
         return globalBox;
     }

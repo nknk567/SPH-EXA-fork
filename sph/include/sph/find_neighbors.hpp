@@ -24,12 +24,19 @@ void findNeighborsSph(const Tc* x, const Tc* y, const Tc* z, T* h, LocalIndex fi
     {
         LocalIndex id    = i + firstId;
         unsigned   ncSph = 1 + findNeighbors(id, x, y, z, h, treeView, box, ngmax, neighbors + i * ngmax);
-
         int iteration = 0;
         while ((ngmin > ncSph || (ncSph - 1) > ngmax) && iteration++ < maxIteration)
         {
+            if (id == 55333) printf("h: %lf\n", h[id]);
             h[id] = updateH(ng0, ncSph, h[id]);
             ncSph = 1 + findNeighbors(id, x, y, z, h, treeView, box, ngmax, neighbors + i * ngmax);
+        }
+
+        if (iteration >= maxIteration)
+        {
+            printf("nb search failed for: %lf\t%lf\t%lf\t%lf\n ", x[id], y[id], z[id], h[id]);
+            printf("found: %u\n", ncSph);
+            printf("i: %u\n", id);
         }
         numFails += (iteration >= maxIteration);
 
