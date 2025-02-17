@@ -39,6 +39,7 @@
 #include "isobaric_cube_init.hpp"
 #include "kelvin_helmholtz_init.hpp"
 #include "noh_init.hpp"
+#include "polytrope.hpp"
 #include "sedov_init.hpp"
 #include "turbulence_init.hpp"
 #include "wind_shock_init.hpp"
@@ -140,6 +141,13 @@ std::unique_ptr<ISimInitializer<Dataset>>
 SimInitializers<Dataset>::makeWindShock(std::string glassBlock, std::string settingsFile, IFileReader* reader)
 {
     return std::make_unique<WindShockGlass<Dataset>>(glassBlock, settingsFile, reader);
+}
+
+template<class Dataset>
+std::unique_ptr<ISimInitializer<Dataset>>
+SimInitializers<Dataset>::makePolytrope(std::string glassBlock, std::string settingsFile, IFileReader* reader)
+{
+    return std::make_unique<Polytrope<Dataset>>(glassBlock, settingsFile, reader);
 }
 
 #ifdef USE_CUDA
