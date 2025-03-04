@@ -8,6 +8,7 @@
 #include <limits>
 #include <iostream>
 
+#include "central_force_loop.hpp"
 #include "cstone/tree/definitions.h"
 #include "removal_statistics.hpp"
 
@@ -16,6 +17,9 @@ namespace disk
 
 struct StarData
 {
+    //! @brief The type of the potential to use when computing the gravitational forces involving the central star
+    StarPotentialType potentialType;
+
     //! @brief position of the central star
     cstone::Vec3<double> position{};
 
@@ -66,6 +70,7 @@ struct StarData
             }
         };
 
+        optionalIO("star::potentialType", &potentialType, 1);
         optionalIO("star::x", &position[0], 1);
         optionalIO("star::y", &position[1], 1);
         optionalIO("star::z", &position[2], 1);
