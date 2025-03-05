@@ -152,8 +152,8 @@ auto getInterpolators(double polytropic_exponent, double total_mass, double radi
 }
 
 template<class Vector, typename HType>
-void contractRhoProfileToPolytrope(Vector& x, Vector& y, Vector& z, HType& h, double rho_original, double total_mass,
-                                   double radius, auto rho_interp, auto M_inv_interp)
+void contractRhoProfileToPolytrope(Vector& x, Vector& y, Vector& z, HType& h, double rho_original, // double total_mass,
+                                   /*double radius, auto rho_interp,*/ auto M_inv_interp)
 {
     const size_t n_part = x.size();
 
@@ -173,10 +173,23 @@ void contractRhoProfileToPolytrope(Vector& x, Vector& y, Vector& z, HType& h, do
         y[i] *= contraction;
         z[i] *= contraction;
 
-        const double rho = rho_interp(new_radius);
-        const size_t ng0 = 100;
-        //        h[i]             = 0.5 * std::cbrt(100) * std::cbrt(total_mass / n_part / rho);
-        const double m_part = total_mass / x.size();
+        //        const double rho = rho_interp(new_radius);
+        //        const size_t ng0 = 100;
+        //        //        h[i]             = 0.5 * std::cbrt(100) * std::cbrt(total_mass / n_part / rho);
+        //        const double m_part = total_mass / x.size();
+        //        h[i]                = 0.5 * std::cbrt(3. * ng0 * m_part / (4. * M_PI * rho));
+    }
+}
+
+template<typename Vector, typename VectorH>
+void estimateSmoothingLength(auto rho_interp, const Vector& x, const Vector& y, const Vector& z, VectorH& h,
+                             double m_part, size_t ng0)
+{
+#pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < x.size(); i++)
+    {
+        const auto   radius = std::sqrt(x[i] * x[i] + y[i] * y[i] + z[i] * z[i]);
+        const double rho    = rho_interp(radius);
         h[i]                = 0.5 * std::cbrt(3. * ng0 * m_part / (4. * M_PI * rho));
     }
 }
@@ -249,17 +262,18 @@ public:
 
         cutSphere(r_original, d.x, d.y, d.z);
 
-        d.h.resize(d.x.size());
-
         size_t numParticlesGlobal = d.x.size();
         MPI_Allreduce(MPI_IN_PLACE, &numParticlesGlobal, 1, MpiType<size_t>{}, MPI_SUM, simData.comm);
 
         const double rho_original =
             settings_.at("mTotal") / (4. / 3. * M_PI * settings_.at("r") * settings_.at("r") * settings_.at("r"));
 
-        contractRhoProfileToPolytrope(d.x, d.y, d.z, d.h, rho_original, settings_.at("mTotal"), settings_.at("r"),
-                                      rho_interp, M_inv_interp);
+        contractRhoProfileToPolytrope(d.x, d.y, d.z, d.h, rho_original, M_inv_interp);
         syncCoords<KeyType>(rank, numRanks, numParticlesGlobal, d.x, d.y, d.z, globalBox);
+
+        d.h.resize(d.x.size());
+        const double m_part = settings_.at("mTotal") / d.x.size();
+        estimateSmoothingLength(rho_interp, d.x, d.y, d.z, d.h, m_part, 100);
 
         d.resize(d.x.size());
 
