@@ -24,11 +24,22 @@ namespace sphexa
 
 std::map<std::string, double> polytropeConstants()
 {
-    return {{"G", 1.},       {"r", 1.},
-            {"mTotal", 1.},  {"polytropic_exponent", 5. / 3.},
-            {"minDt", 1e-4}, {"minDt_m1", 1e-4},
-            {"mui", 10},     {"ng0", 100},
-            {"ngmax", 150},  {"eosChoice", sph::EosType::polytropic}};
+    constexpr double r            = 4.72108762739756E-01;
+    constexpr double mTotal       = 1e-6;
+    constexpr double gravConstant = 1.0;
+    const double     t_relax      = std::sqrt(r * r * r / (gravConstant * mTotal)) / 3.;
+
+    return {{"gravConstant", gravConstant}, // {"r", 0.47},
+            {"r", r},
+            {"mTotal", mTotal},
+            {"polytropic_exponent", 5. / 3.},
+            {"minDt", 1e-4},
+            {"minDt_m1", 1e-4},
+            {"mui", 10},
+            {"ng0", 100},
+            {"ngmax", 150},
+            {"eosChoice", sph::EosType::polytropic},
+            {"relaxationTimescale", t_relax}};
 }
 
 template<class Dataset>
@@ -79,7 +90,7 @@ auto computeDensityProfile(double polytropic_n, double total_mass, double radial
 
     LaneEmdenAsymptoticStart asympt{polytropic_n};
     // set step size here
-    auto [xi, theta_phi] = integrate_to_zero(LaneEmden{polytropic_n}, asympt(1., 1e-7), 1e-7, 20.0, 1e-8, 0.01);
+    auto [xi, theta_phi] = integrate_to_zero(LaneEmden{polytropic_n}, asympt(1., 1e-8), 1e-8, 20.0, 1e-2, 1e-12);
 
     const double xi_1        = xi.back();
     const double dtheta_xi_1 = -theta_phi.back()[1] / (xi.back() * xi.back());
@@ -109,37 +120,41 @@ auto computeDensityProfile(double polytropic_n, double total_mass, double radial
 
     std::transform(xi.begin(), xi.end(), radius.begin(), xi_to_r);
 
-    return std::tuple{std::move(radius), std::move(density), std::move(enclosed_mass)};
+    return std::tuple{std::move(radius), std::move(density), std::move(enclosed_mass), K};
 }
 
 auto getInterpolators(double polytropic_exponent, double total_mass, double radius, double G)
 {
-    const auto [r, rho, encl_mass] = computeDensityProfile(polytropic_exponent, total_mass, radius, G);
+    const auto [r, rho, encl_mass, K] = computeDensityProfile(polytropic_exponent, total_mass, radius, G);
     LinearInterpolator rho_interp{r, rho};
     LinearInterpolator m_interp{r, encl_mass};
 
     // if two subsequent values in encl_mass are the same, it is not sorted
-    std::vector<size_t> indices(r.size());
-    std::iota(indices.begin(), indices.end(), size_t(0));
-    std::sort(indices.begin(), indices.end(), [&encl_mass](size_t i, size_t j) { return encl_mass[i] < encl_mass[j]; });
-
-    std::vector<double> r_sorted(r.size());
-    std::transform(indices.begin(), indices.end(), r_sorted.begin(), [&r](size_t i) { return r[i]; });
-    std::vector<double> encl_mass_sorted(r.size());
-    std::transform(indices.begin(), indices.end(), encl_mass_sorted.begin(),
-                   [&encl_mass](size_t i) { return encl_mass[i]; });
-
+    //    std::vector<size_t> indices(r.size());
+    //    std::iota(indices.begin(), indices.end(), size_t(0));
+    //    std::sort(indices.begin(), indices.end(), [&encl_mass](size_t i, size_t j) { return encl_mass[i] <
+    //    encl_mass[j]; });
+    //
+    //    std::vector<double> r_sorted(r.size());
+    //    std::transform(indices.begin(), indices.end(), r_sorted.begin(), [&r](size_t i) { return r[i]; });
+    //    std::vector<double> encl_mass_sorted(r.size());
+    //    std::transform(indices.begin(), indices.end(), encl_mass_sorted.begin(),
+    //                   [&encl_mass](size_t i) { return encl_mass[i]; });
+    for (size_t i = 0; i < 100; i++)
+    {
+        const double r = i * (0.5) / 100.;
+        //        printf("r: %lf\trho: %g\t\tencl mass: %g\n", r, rho_interp(r), m_interp(r));
+        printf("%lf\t%g\t%g\n", r, rho_interp(r), m_interp(r));
+    }
     LinearInterpolator M_inv_interp{encl_mass, r};
 
-    return std::make_tuple(std::move(rho_interp), std::move(M_inv_interp));
+    return std::make_tuple(std::move(rho_interp), std::move(M_inv_interp), K);
 }
 
 template<class Vector, typename HType>
-void contractRhoProfileToPolytrope(Vector& x, Vector& y, Vector& z, HType& h, double total_mass, double radius,
-                                   auto rho_interp, auto M_inv_interp)
+void contractRhoProfileToPolytrope(Vector& x, Vector& y, Vector& z, HType& h, double rho_original, double total_mass,
+                                   double radius, auto rho_interp, auto M_inv_interp)
 {
-    //    auto [rho_interp, M_inv_interp] = getInterpolators(polytropic_exponent, total_mass, radius, G);
-
     const size_t n_part = x.size();
 
     // The radius in the original distribution that corresponds to the outer edge of the star after stretching.
@@ -149,8 +164,9 @@ void contractRhoProfileToPolytrope(Vector& x, Vector& y, Vector& z, HType& h, do
     for (size_t i = 0; i < x.size(); i++)
     {
         const auto old_radius = std::sqrt(x[i] * x[i] + y[i] * y[i] + z[i] * z[i]);
-        const auto new_radius = M_inv_interp(4. * M_PI / 3. * old_radius * old_radius * old_radius);
+        const auto new_radius = M_inv_interp(4. * M_PI / 3. * old_radius * old_radius * old_radius * rho_original);
         // multiply coordinates by sqrt(r) to generate a density profile ~ 1/r
+        //        printf("old radius: %lf\tnew radius: %lf\n", old_radius, new_radius);
         const auto contraction = new_radius / old_radius;
         //        auto contraction = std::sqrt(radius0);
         x[i] *= contraction;
@@ -159,7 +175,9 @@ void contractRhoProfileToPolytrope(Vector& x, Vector& y, Vector& z, HType& h, do
 
         const double rho = rho_interp(new_radius);
         const size_t ng0 = 100;
-        h[i]             = 0.5 * std::cbrt(100) * std::cbrt(total_mass / n_part / rho);
+        //        h[i]             = 0.5 * std::cbrt(100) * std::cbrt(total_mass / n_part / rho);
+        const double m_part = total_mass / x.size();
+        h[i]                = 0.5 * std::cbrt(3. * ng0 * m_part / (4. * M_PI * rho));
     }
 }
 
@@ -215,13 +233,15 @@ public:
         int               multi1D      = std::rint(cbrtNumPart / std::cbrt(blockSize));
         cstone::Vec3<int> multiplicity = {multi1D, multi1D, multi1D};
 
-        auto [rho_interp, M_inv_interp] = getInterpolators(1.5, 1.0, 1.0, 1.0);
+        const double n_polytropic = 1. / (settings_.at("polytropic_exponent") - 1.);
+        auto [rho_interp, M_inv_interp, K] =
+            getInterpolators(n_polytropic, settings_.at("mTotal"), settings_.at("r"), settings_.at("gravConstant"));
+        settings_["polytropic_const"] = K;
+        //        const auto r_original = std::cbrt(3. / (4. * M_PI) * M_inv_interp.y_values.back());
+        printf("rmax interpolator: %lf\n", M_inv_interp.y_values.back());
 
-        const auto r_original = std::cbrt(3. / (4. * M_PI) * M_inv_interp.y_values.back());
-        printf("rmax: %lf\n", r_original);
-
-        //        T              r = settings_.at("r");
-//        const T        r_orig = 1.0;
+        T r_original = settings_.at("r");
+        //        const T        r_orig = 1.0;
         cstone::Box<T> globalBox(-r_original, r_original, cstone::BoundaryType::open);
 
         auto [keyStart, keyEnd] = equiDistantSfcSegments<KeyType>(rank, numRanks, 100);
@@ -234,7 +254,11 @@ public:
         size_t numParticlesGlobal = d.x.size();
         MPI_Allreduce(MPI_IN_PLACE, &numParticlesGlobal, 1, MpiType<size_t>{}, MPI_SUM, simData.comm);
 
-        contractRhoProfileToPolytrope(d.x, d.y, d.z, d.h, 1.0, settings_.at("r"), rho_interp, M_inv_interp);
+        const double rho_original =
+            settings_.at("mTotal") / (4. / 3. * M_PI * settings_.at("r") * settings_.at("r") * settings_.at("r"));
+
+        contractRhoProfileToPolytrope(d.x, d.y, d.z, d.h, rho_original, settings_.at("mTotal"), settings_.at("r"),
+                                      rho_interp, M_inv_interp);
         syncCoords<KeyType>(rank, numRanks, numParticlesGlobal, d.x, d.y, d.z, globalBox);
 
         d.resize(d.x.size());
