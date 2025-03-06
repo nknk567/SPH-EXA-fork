@@ -10,6 +10,8 @@
 #include "cstone/util/array.hpp"
 #include <cmath>
 
+namespace polytrope
+{
 struct LaneEmden
 {
     const double polytropic_n = 1.5;
@@ -29,39 +31,23 @@ struct LaneEmdenAsymptoticStart
     auto         operator()(double theta_0, double t) const
     {
         const double n = polytropic_n;
-        return util::array<double, 2>{theta_0 - std::pow(theta_0, n) / 6. * t * t, -std::pow(theta_0, n) / 3. * t * t * t};
+        return util::array<double, 2>{theta_0 - std::pow(theta_0, n) / 6. * t * t,
+                                      -std::pow(theta_0, n) / 3. * t * t * t};
     }
 };
 
 double get_enclosed_mass(double polytropic_n, double phi, double K, double rho_c, double G)
 {
-    const double     n       = polytropic_n;
-//    constexpr double G       = 1.0;
-    const double     pre_fac = K / G * (n + 1.) / (4. * M_PI);
-    const double     rho_fac = std::pow(rho_c, (3. - n) / (2. * n));
+    const double n       = polytropic_n;
+    const double pre_fac = K / G * (n + 1.) / (4. * M_PI);
+    const double rho_fac = std::pow(rho_c, (3. - n) / (2. * n));
     return 4. * M_PI * std::pow(pre_fac, 1.5) * rho_fac * phi;
-};
-
-double phi_from_xi_theta(const double xi, const double dtheta)
-{
-    return -xi * xi * dtheta;
-}
-
-double get_enclosed_mass(double polytropic_n, double xi_1, double dtheta, double K, double rho_c, double G)
-{
-    return get_enclosed_mass(polytropic_n, phi_from_xi_theta(xi_1, dtheta), K, rho_c, G);
-//    const double     n       = polytropic_n;
-//    constexpr double G       = 1.0;
-//    const double     pre_fac = K / G * (n + 1.) / (4. * M_PI);
-//    const double     rho_fac = std::pow(rho_c, (3. - n) / (2. * n));
-//    return 4. * M_PI * std::pow(pre_fac, 1.5) * rho_fac * (-xi_1 * xi_1 * dtheta);
 };
 
 double alpha(double polytropic_n, double rho_c, double K, double G)
 {
-    const double     n       = polytropic_n;
-//    constexpr double G       = 1.0;
-    const double     rho_fac = std::pow(rho_c, (1. - n) / n);
+    const double n       = polytropic_n;
+    const double rho_fac = std::pow(rho_c, (1. - n) / n);
     return std::sqrt(K * (n + 1.) * rho_fac / (4. * M_PI * G));
 };
 
@@ -73,8 +59,8 @@ double get_rho_c(double xi_1, double dtheta, double star_radius, double star_mas
 
 double get_K(double polytropic_n, double xi_1, double dtheta, double star_radius, double rho_c, double G)
 {
-    const double     n        = polytropic_n;
-//    constexpr double G        = 1.0;
-    const double     rho_term = std::pow(rho_c, (n - 1.) / n);
+    const double n        = polytropic_n;
+    const double rho_term = std::pow(rho_c, (n - 1.) / n);
     return star_radius * star_radius * G * 4. * M_PI / (n + 1.) * rho_term / (xi_1 * xi_1);
 };
+} // namespace polytrope

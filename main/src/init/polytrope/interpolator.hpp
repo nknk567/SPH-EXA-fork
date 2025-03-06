@@ -10,11 +10,13 @@
 #include <algorithm>
 #include <vector>
 
+namespace polytrope
+{
 struct LinearInterpolator
 {
     std::vector<double> x_values;
     std::vector<double> y_values;
-    double              operator()(const double x)
+    double              operator()(const double x) const
     {
         const auto it = std::upper_bound(x_values.begin(), x_values.end(), x);
         if (it == x_values.end()) return y_values.back();
@@ -31,3 +33,4 @@ struct LinearInterpolator
         return t * y_higher + (1. - t) * y_lower;
     }
 };
+} // namespace polytrope
