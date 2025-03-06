@@ -121,14 +121,16 @@ public:
         const double m_total             = settings_.at("mTotal");
         const double r_total             = settings_.at("r");
         const double G                   = settings_.at("gravConstant");
+        const size_t ng0                 = settings_.at("ng0");
 
         auto [rho_r, M_r, polytropic_const] = polytrope::computePolytropeProfile(n_polytropic, m_total, r_total, G);
         settings_["polytropic_const"]       = polytropic_const;
 
-        std::printf("polytropic constant: %lf\tpolytropic exponent: %lf\n", polytropic_const, polytropic_exponent);
-        //        std::printf("r_total: %lf\trmax interpolator: %lf\n", r_total,
-        //        M_inv_interp.y_values.back());
-
+        if (rank == 0)
+        {
+            std::printf("polytropic constant: %lf\tpolytropic exponent: %lf\n", polytropic_const, polytropic_exponent);
+            std::printf("r_total: %lf\tachieved r: %lf\n", r_total, M_r.y_values.back());
+        }
         auto globalBox = createUniformSphere(rank, numRanks, cbrtNumPart, simData, reader, r_total);
 
         const double rho_original = m_total / (4. / 3. * M_PI * r_total * r_total * r_total);
@@ -136,9 +138,9 @@ public:
         contractRadialProfile(d.x, d.y, d.z, rho_original, M_r);
 
         syncAndLoadAttributes(rank, numRanks, simData, globalBox);
-        const double m_part = settings_.at("mTotal") / d.x.size();
+        const double m_part = settings_.at("mTotal") / d.numParticlesGlobal;
 
-        estimateSmoothingLengths(rho_r, d, m_part, 100);
+        estimateSmoothingLengths(rho_r, d, m_part, ng0);
 
         initPolytropeFields(d, settings_, m_part);
 
