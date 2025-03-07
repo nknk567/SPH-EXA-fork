@@ -18,7 +18,7 @@ namespace disk
 struct StarData
 {
     //! @brief The type of the potential to use when computing the gravitational forces involving the central star
-    StarPotentialType potentialType;
+    StarPotentialType potentialType{StarPotentialType::newtonian};
 
     //! @brief position of the central star
     cstone::Vec3<double> position{};
@@ -58,7 +58,16 @@ struct StarData
         {
             try
             {
-                ar->stepAttribute(attribute, location, attrSize);
+                if constexpr (std::is_enum_v<std::decay_t<decltype(*location)>>)
+                {
+                    // handle pointers to enum by casting to the underlying type
+                    using EType = std::decay_t<decltype(*location)>;
+                    using UType = std::underlying_type_t<EType>;
+                    auto tmp    = static_cast<UType>(*location);
+                    ar->stepAttribute(attribute, &tmp, attrSize);
+                    *location = static_cast<EType>(tmp);
+                }
+                else { ar->stepAttribute(attribute, location, attrSize); }
             }
             catch (std::out_of_range&)
             {

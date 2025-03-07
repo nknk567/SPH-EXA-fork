@@ -22,14 +22,14 @@ enum StarPotentialType : int
 template<typename Treal, typename Thydro, typename Tmass>
 struct CentralForceData
 {
-    const Treal *              x, *y, *z;
-    const Tmass*               m;
-    Thydro *                   ax, *ay, *az;
-    const Treal                g;
-    const cstone::Vec3<double> star_position;
-    const double               m_star;
-    const double               inner_size2;
-    const double               c_light;
+    const Treal *        x, *y, *z;
+    const Tmass*         m;
+    Thydro *             ax, *ay, *az;
+    Treal                g;
+    const double         m_star;
+    const double         inner_size2;
+    const double         c_light;
+    cstone::Vec3<double> star_position;
 };
 
 template<typename Data>

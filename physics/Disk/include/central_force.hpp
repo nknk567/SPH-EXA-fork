@@ -21,8 +21,7 @@ void computeCentralForceImpl(size_t first, size_t last, Dataset& d, StarData& st
 {
     cstone::Vec4<double>   force_local{};
     const double           inner_size2 = star.inner_size * star.inner_size;
-    const CentralForceData data{
-        d.x, d.y, d.z, d.m, d.ax, d.ay, d.az, d.g, star.position, star.m, star.inner_size * star.inner_size, 1.0};
+    const CentralForceData data{d.x, d.y, d.z, d.m, d.ax, d.ay, d.az, d.g, star.m, inner_size2, 1.0, star.position};
 
 #pragma omp declare reduction(add_force : cstone::Vec4<double> : omp_out = omp_out + omp_in) initializer(omp_priv = {})
 
