@@ -150,6 +150,13 @@ SimInitializers<Dataset>::makePolytrope(std::string glassBlock, std::string sett
     return std::make_unique<Polytrope<Dataset>>(glassBlock, settingsFile, reader);
 }
 
+template<class Dataset>
+std::unique_ptr<ISimInitializer<Dataset>> SimInitializers<Dataset>::makeTDEOrbitInit(const std::string& filePath,
+                                                                                     int initStep, IFileReader* reader)
+{
+    return std::make_unique<TDEOrbitInit<Dataset>>(filePath, initStep, reader);
+}
+
 #ifdef USE_CUDA
 template struct SimInitializers<SimulationData<cstone::GpuTag>>;
 #else
