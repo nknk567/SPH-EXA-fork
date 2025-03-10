@@ -99,6 +99,11 @@ public:
         reader->closeStep();
 
         simData.hydro.relaxationTimescale = 0.;
+        simData.hydro.iteration           = 0;
+        simData.hydro.ttot                = 0.0;
+        simData.hydro.minDt               = 1e-9;
+        simData.hydro.minDt_m1            = 1e-9;
+
         // place the center of mass on a parabolic orbit.
         // Compute the tidal radius
         const double mTotal = settings_.at("mTotal");
@@ -124,6 +129,9 @@ public:
             d.vx[i] += V[0];
             d.vy[i] += V[1];
             d.vz[i] += V[2];
+            d.x_m1[i] = d.vx[i] * simData.hydro.minDt;
+            d.y_m1[i] = d.vy[i] * simData.hydro.minDt;
+            d.z_m1[i] = d.vz[i] * simData.hydro.minDt;
         }
         return box;
     }
