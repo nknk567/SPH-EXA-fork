@@ -41,6 +41,7 @@
 #include "noh_init.hpp"
 #include "polytrope.hpp"
 #include "sedov_init.hpp"
+#include "tde_orbit_init.hpp"
 #include "turbulence_init.hpp"
 #include "wind_shock_init.hpp"
 #ifdef SPH_EXA_HAVE_GRACKLE
