@@ -66,7 +66,6 @@ public:
         auto&        d     = simData.hydro;
         const size_t first = domain.startIndex();
         const size_t last  = domain.endIndex();
-        fill(get<"nb_it_stat">(d), first, last, unsigned{0});
 
         Base::computeForces(domain, simData);
 
@@ -80,14 +79,19 @@ public:
         std::array<size_t, 20> histogram{};
         for (size_t i = first; i < last; i++)
         {
-            size_t bin = d.nb_it_stat[i] >= histogram.size() ? histogram.size() : d.nb_it_stat[i];
+            size_t bin = (d.nb_it_stat[i] >= histogram.size() ? histogram.size() - 1 : d.nb_it_stat[i]);
             histogram[bin]++;
         }
 
-        printf("Neighbour iterations");
-        for (size_t i = 0; i < histogram.size(); i++)
+        MPI_Allreduce(MPI_IN_PLACE, histogram.data(), histogram.size(), MpiType<size_t>{}, MPI_SUM, MPI_COMM_WORLD);
+
+        if (Base::rank_ == 0)
         {
-            printf("ncIt: %zu, nPart: %zu\n", i, histogram[i]);
+            printf("Neighbour iterations");
+            for (size_t i = 0; i < histogram.size(); i++)
+            {
+                printf("ncIt: %zu, nPart: %zu\n", i, histogram[i]);
+            }
         }
     }
 

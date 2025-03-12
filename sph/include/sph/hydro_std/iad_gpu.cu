@@ -73,11 +73,11 @@ using cstone::TreeNodeIndex;
  * @param[out] c33
  */
 template<class Tc, class Tm, class T, class KeyType>
-__global__ void IADGpuKernel(Tc K, unsigned ngmax, cstone::Box<Tc> box, const LocalIndex* grpStart,
-                             const LocalIndex* grpEnd, LocalIndex numGroups,
-                             const cstone::OctreeNsView<Tc, KeyType> tree, const Tc* x, const Tc* y, const Tc* z,
-                             const T* h, const Tm* m, const T* rho, const T* wh, const T* whd, T* c11, T* c12, T* c13,
-                             T* c22, T* c23, T* c33, LocalIndex* nidx, TreeNodeIndex* globalPool)
+__global__ void
+IADGpuKernel(Tc K, unsigned ngmax, cstone::Box<Tc> box, const LocalIndex* grpStart, const LocalIndex* grpEnd,
+             LocalIndex numGroups, const cstone::OctreeNsView<Tc, KeyType> tree, const Tc* x, const Tc* y, const Tc* z,
+             const T* h, const Tm* m, const T* rho, const T* wh, const T* whd, T* c11, T* c12, T* c13, T* c22, T* c23,
+             T* c33, LocalIndex* nidx, TreeNodeIndex* globalPool, const T* vx, const T* vy, const T* vz, T* divv)
 {
     unsigned laneIdx     = threadIdx.x & (GpuConfig::warpSize - 1);
     unsigned targetIdx   = 0;
@@ -104,6 +104,8 @@ __global__ void IADGpuKernel(Tc K, unsigned ngmax, cstone::Box<Tc> box, const Lo
         unsigned ncCapped = stl::min(ncTrue[0], ngmax);
         sph::IADJLoopSTD<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, h, m, rho, wh,
                                                  whd, c11, c12, c13, c22, c23, c33);
+//        sph::divV_curlVJLoopSTD<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, vx, vy,
+//                                                        vz, h, c11, c12, c13, c22, c23, c33, wh, whd, m, rho, divv);
     }
 }
 
@@ -118,7 +120,7 @@ void computeIADGpu(const GroupView& grp, Dataset& d, const cstone::Box<typename 
         rawPtr(d.devData.y), rawPtr(d.devData.z), rawPtr(d.devData.h), rawPtr(d.devData.m), rawPtr(d.devData.rho),
         rawPtr(d.devData.wh), rawPtr(d.devData.whd), rawPtr(d.devData.c11), rawPtr(d.devData.c12),
         rawPtr(d.devData.c13), rawPtr(d.devData.c22), rawPtr(d.devData.c23), rawPtr(d.devData.c33), nidxPool,
-        traversalPool);
+        traversalPool, rawPtr(d.devData.vx), rawPtr(d.devData.vy), rawPtr(d.devData.vz), rawPtr(d.devData.divv));
     checkGpuErrors(cudaDeviceSynchronize());
 }
 

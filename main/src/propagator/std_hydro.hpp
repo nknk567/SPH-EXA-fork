@@ -132,6 +132,7 @@ public:
         d.resize(domain.nParticlesWithHalos());
         size_t first = domain.startIndex();
         size_t last  = domain.endIndex();
+        fill(get<"nb_it_stat">(d), 0, domain.nParticlesWithHalos(), unsigned{0});
 
         domain.exchangeHalos(std::tie(get<"m">(d)), get<"ax">(d), get<"ay">(d));
 
