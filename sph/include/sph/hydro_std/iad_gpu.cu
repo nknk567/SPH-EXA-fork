@@ -104,8 +104,8 @@ IADGpuKernel(Tc K, unsigned ngmax, cstone::Box<Tc> box, const LocalIndex* grpSta
         unsigned ncCapped = stl::min(ncTrue[0], ngmax);
         sph::IADJLoopSTD<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, h, m, rho, wh,
                                                  whd, c11, c12, c13, c22, c23, c33);
-//        sph::divV_curlVJLoopSTD<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, vx, vy,
-//                                                        vz, h, c11, c12, c13, c22, c23, c33, wh, whd, m, rho, divv);
+        sph::divV_curlVJLoopSTD<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, vx, vy,
+                                                        vz, h, c11, c12, c13, c22, c23, c33, wh, whd, m, rho, divv);
     }
 }
 
