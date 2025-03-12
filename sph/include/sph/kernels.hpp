@@ -31,6 +31,15 @@ HOST_DEVICE_FUN T updateH(unsigned ng0, unsigned nc, T h)
     return h * T(0.5) * std::pow(T(1) + c0 * ng0 / T(nc), exp);
 }
 
+template<typename T>
+HOST_DEVICE_FUN T updateHDivv(unsigned ng0, unsigned nc, T h, T divv)
+{
+    T h_corrected = updateH(ng0, nc, h);
+    T h_predicted = h_corrected + (1. / 3.) * divv * h_corrected;
+    return h_predicted;
+}
+
+
 //! @brief sinc(PI/2 * v)
 template<typename T>
 HOST_DEVICE_FUN inline T wharmonic_std(T v)

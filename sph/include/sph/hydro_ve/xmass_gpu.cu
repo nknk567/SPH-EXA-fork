@@ -57,7 +57,7 @@ template<class Tc, class Tm, class T, class KeyType>
 __global__ void xmassGpu(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<Tc> box, const LocalIndex* grpStart,
                          const LocalIndex* grpEnd, LocalIndex numGroups, const cstone::OctreeNsView<Tc, KeyType> tree,
                          unsigned* nc, const Tc* x, const Tc* y, const Tc* z, T* h, const Tm* m, const T* wh,
-                         const T* whd, T* xm, LocalIndex* nidx, TreeNodeIndex* globalPool)
+                         const T* whd, T* xm, LocalIndex* nidx, TreeNodeIndex* globalPool, unsigned* nb_it_stat)
 {
     unsigned laneIdx     = threadIdx.x & (GpuConfig::warpSize - 1);
     unsigned targetIdx   = 0;
@@ -77,6 +77,9 @@ __global__ void xmassGpu(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<T
         LocalIndex bodyEnd   = grpEnd[targetIdx];
         LocalIndex i         = bodyBegin + laneIdx;
 
+        T h_max = INFINITY;
+        T h_min = 0.;
+
         unsigned ncSph =
             1 + traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax, globalPool)[0];
 
@@ -85,7 +88,17 @@ __global__ void xmassGpu(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<T
         {
             bool repeat = (ncSph < ng0 / 4 || (ncSph - 1) > ngmax) && i < bodyEnd;
             if (!cstone::ballotSync(repeat)) { break; }
-            if (repeat) { h[i] = updateH(ng0, ncSph, h[i]); }
+            if (repeat)
+            {
+                nb_it_stat[i]++;
+                if (ncSph < ng0 / 4) { h_min = stl::max(h_min, h[i]); }
+                else if ((ncSph - 1) > ngmax) { h_max = stl::min(h_max, h[i]); }
+                T h_new = updateH(ng0, ncSph, h[i]);
+                if (h_new >= h_max) { h[i] = 0.5 * (h_max + h[i]); }
+                else if (h_new <= h_min) { h[i] = 0.5 * (h_min + h[i]); }
+                else { h[i] = h_new; }
+            }
+
             ncSph =
                 1 + traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax, globalPool)[0];
 
@@ -110,7 +123,7 @@ void computeXMass(const GroupView& grp, Dataset& d, const cstone::Box<typename D
     xmassGpu<<<TravConfig::numBlocks(), TravConfig::numThreads>>>(
         d.K, d.ng0, d.ngmax, box, grp.groupStart, grp.groupEnd, grp.numGroups, d.treeView, rawPtr(d.devData.nc),
         rawPtr(d.devData.x), rawPtr(d.devData.y), rawPtr(d.devData.z), rawPtr(d.devData.h), rawPtr(d.devData.m),
-        rawPtr(d.devData.wh), rawPtr(d.devData.whd), rawPtr(d.devData.xm), nidxPool, traversalPool);
+        rawPtr(d.devData.wh), rawPtr(d.devData.whd), rawPtr(d.devData.xm), nidxPool, traversalPool, rawPtr(d.devData.nb_it_stat));
     checkGpuErrors(cudaDeviceSynchronize());
 
     NcStats::type stats[NcStats::numStats];

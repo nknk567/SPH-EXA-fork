@@ -63,17 +63,32 @@ public:
 
     void computeForces(DomainType& domain, DataType& simData) override
     {
-        Base::computeForces(domain, simData);
-
         auto&        d     = simData.hydro;
         const size_t first = domain.startIndex();
         const size_t last  = domain.endIndex();
+        fill(get<"nb_it_stat">(d), first, last, unsigned{0});
+
+        Base::computeForces(domain, simData);
 
         disk::betaCooling(first, last, d, simData.star);
         timer.step("betaCooling");
 
         disk::computeCentralForce(first, last, d, simData.star);
         timer.step("computeCentralForce");
+
+        transferToHost(d, first, last, {"nb_it_stat"});
+        std::array<size_t, 20> histogram{};
+        for (size_t i = first; i < last; i++)
+        {
+            size_t bin = d.nb_it_stat[i] >= histogram.size() ? histogram.size() : d.nb_it_stat[i];
+            histogram[bin]++;
+        }
+
+        printf("Neighbour iterations");
+        for (size_t i = 0; i < histogram.size(); i++)
+        {
+            printf("ncIt: %zu, nPart: %zu\n", i, histogram[i]);
+        }
     }
 
     void integrate(DomainType& domain, DataType& simData) override
