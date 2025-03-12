@@ -76,7 +76,7 @@ public:
         timer.step("computeCentralForce");
 
         transferToHost(d, first, last, {"nb_it_stat"});
-        std::array<size_t, 20> histogram{};
+        std::array<size_t, 9> histogram{};
         for (size_t i = first; i < last; i++)
         {
             size_t bin = (d.nb_it_stat[i] >= histogram.size() ? histogram.size() - 1 : d.nb_it_stat[i]);
