@@ -94,8 +94,8 @@ __global__ void xmassGpu(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<T
                 if (ncSph < ng0 / 4) { h_min = stl::max(h_min, h[i]); }
                 else if ((ncSph - 1) > ngmax) { h_max = stl::min(h_max, h[i]); }
                 T h_new = updateH(ng0, ncSph, h[i]);
-                if (h_new >= h_max) { h[i] = 0.5 * (h_max + h[i]); }
-                else if (h_new <= h_min) { h[i] = 0.5 * (h_min + h[i]); }
+                if (h_new >= h_max) { h[i] = std::cbrt(0.5 * (std::pow(h_max, 3.0) + std::pow(h[i], 3.0))); }
+                else if (h_new <= h_min) { h[i] = std::cbrt(0.5 * (std::pow(h_min, 3.0) + std::pow(h[i], 3.0))); }
                 else { h[i] = h_new; }
             }
 
@@ -123,7 +123,8 @@ void computeXMass(const GroupView& grp, Dataset& d, const cstone::Box<typename D
     xmassGpu<<<TravConfig::numBlocks(), TravConfig::numThreads>>>(
         d.K, d.ng0, d.ngmax, box, grp.groupStart, grp.groupEnd, grp.numGroups, d.treeView, rawPtr(d.devData.nc),
         rawPtr(d.devData.x), rawPtr(d.devData.y), rawPtr(d.devData.z), rawPtr(d.devData.h), rawPtr(d.devData.m),
-        rawPtr(d.devData.wh), rawPtr(d.devData.whd), rawPtr(d.devData.xm), nidxPool, traversalPool, rawPtr(d.devData.nb_it_stat));
+        rawPtr(d.devData.wh), rawPtr(d.devData.whd), rawPtr(d.devData.xm), nidxPool, traversalPool,
+        rawPtr(d.devData.nb_it_stat));
     checkGpuErrors(cudaDeviceSynchronize());
 
     NcStats::type stats[NcStats::numStats];
