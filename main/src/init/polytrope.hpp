@@ -14,7 +14,7 @@
 #include "early_sync.hpp"
 #include "grid.hpp"
 #include "utils.hpp"
-
+#include "polytrope/bisect.hpp"
 #include "polytrope/polytrope_profile.hpp"
 
 namespace sphexa
@@ -82,16 +82,25 @@ void contractRadialProfile(Vector& x, Vector& y, Vector& z, double rho_uniform, 
 }
 
 template<typename Dataset>
-void estimateSmoothingLengths(auto rhoAtRadius, Dataset& d, double m_part, size_t ng0)
+void estimateSmoothingLengths(auto rhoAtRadius, Dataset& d, double m_part, size_t ng0, double r_total)
 {
     d.h.resize(d.x.size());
+
+    auto smoothing_length = [rhoAtRadius, m_part, ng0](double r)
+    { return 0.5 * std::cbrt(3. * ng0 * m_part / (4. * M_PI * rhoAtRadius(r))); };
+
+    auto boundary_overlap = [&](double r) { return 2. * smoothing_length(r) + r - r_total; };
+    const auto [converged, r_resolved] =
+        polytrope::find_zero_bisect(boundary_overlap, r_total / 2., r_total, 1e-6 * r_total, 1e-6 * r_total);
+    if (!converged) throw std::runtime_error("Find zero not converged");
+
+    const double h_max = smoothing_length(r_resolved);
 
 #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < d.x.size(); i++)
     {
-        const auto   radius = std::sqrt(d.x[i] * d.x[i] + d.y[i] * d.y[i] + d.z[i] * d.z[i]);
-        const double rho    = rhoAtRadius(radius);
-        d.h[i]              = 0.5 * std::cbrt(3. * ng0 * m_part / (4. * M_PI * rho));
+        const auto radius = std::sqrt(d.x[i] * d.x[i] + d.y[i] * d.y[i] + d.z[i] * d.z[i]);
+        d.h[i]            = std::min(h_max, smoothing_length(radius));
     }
 }
 
@@ -131,7 +140,7 @@ public:
             std::printf("polytropic constant: %lf\tpolytropic exponent: %lf\n", polytropic_const, polytropic_exponent);
             std::printf("r_total: %lf\tachieved r: %lf\n", r_total, M_r.y_values.back());
         }
-        auto globalBox = createUniformSphere(rank, numRanks, cbrtNumPart, simData, reader, r_total);
+        const auto globalBox = createUniformSphere(rank, numRanks, cbrtNumPart, simData, reader, r_total);
 
         const double rho_original = m_total / (4. / 3. * M_PI * r_total * r_total * r_total);
 
@@ -140,7 +149,7 @@ public:
         syncAndLoadAttributes(rank, numRanks, simData, globalBox);
         const double m_part = settings_.at("mTotal") / d.numParticlesGlobal;
 
-        estimateSmoothingLengths(rho_r, d, m_part, ng0);
+        estimateSmoothingLengths(rho_r, d, m_part, ng0, r_total);
 
         initPolytropeFields(d, settings_, m_part);
 
