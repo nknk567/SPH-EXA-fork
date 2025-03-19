@@ -39,6 +39,7 @@
 #include "acceleration_timestep_gpu.hpp"
 #include "cstone/primitives/mpi_wrappers.hpp"
 #include "cstone/primitives/primitives_gpu.h"
+#include "cstone/util/array.hpp"
 #include "kernels.hpp"
 
 namespace sph

@@ -6,6 +6,6 @@
 
 namespace sph
 {
-template<typename T, typename Th>
-T accelerationTimestepGPU(size_t first, size_t last, const T* x, const T* y, const T* z, const Th* h);
+template<typename T>
+T accelerationTimestepGPU(size_t first, size_t last, const T* x, const T* y, const T* z, const T* h);
 }
