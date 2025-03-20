@@ -106,6 +106,8 @@ public:
         auto&        d     = simData.hydro;
         auto&        star  = simData.star;
 
+        d.minDtRho = rhoTimestep(first, last, d);
+
         disk::duTimestep(first, last, d, star);
         timer.step("duTimestep");
 
