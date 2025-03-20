@@ -83,12 +83,12 @@ __global__ void xmassGpu(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<T
         unsigned ncSph =
             1 + traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax, globalPool)[0];
 
-        constexpr int ncMaxIteration = 9;
+        constexpr int ncMaxIteration = 19;
         for (int ncIt = 0; ncIt <= ncMaxIteration; ++ncIt)
         {
             bool repeat = (ncSph < ng0 / 4 || (ncSph - 1) > ngmax) && i < bodyEnd;
             if (!cstone::ballotSync(repeat)) { break; }
-            //            nb_it_stat[i]++;
+            nb_it_stat[i]++;
             if (repeat)
             {
                 //                if (ncSph < ng0 / 4) { h_min = stl::max(h_min, h[i]); }
