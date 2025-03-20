@@ -53,7 +53,7 @@ auto accelerationTimestep(size_t first, size_t last, const Dataset& d)
     using T = typename Dataset::RealType;
 
     //! @brief minimum value of all {h_i^2 / a_i^2}
-    T minDtTerm = 0.0;
+    T minDtTerm = std::numeric_limits<T>::infinity();
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
         minDtTerm = accelerationTimestepGPU(first, last, rawPtr(d.devData.ax), rawPtr(d.devData.ay),
