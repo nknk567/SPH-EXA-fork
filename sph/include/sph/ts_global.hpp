@@ -36,36 +36,49 @@
 #include <vector>
 #include <mpi.h>
 
+#include "acceleration_timestep_gpu.hpp"
 #include "cstone/primitives/mpi_wrappers.hpp"
 #include "cstone/primitives/primitives_gpu.h"
+#include "cstone/util/array.hpp"
 #include "kernels.hpp"
 
 namespace sph
 {
 
 //! @brief limit time-step based on accelerations when gravity is enabled
+//! Computes etaAcc * min(sqrt(h[i] / norm(a[i])))
 template<class Dataset>
 auto accelerationTimestep(size_t first, size_t last, const Dataset& d)
 {
     using T = typename Dataset::RealType;
 
-    T maxAccSq = 0.0;
+    //! @brief minimum value of all {h_i^2 / a_i^2}
+    T minDtTerm = std::numeric_limits<T>::infinity();
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
-        maxAccSq = cstone::maxNormSquareGpu(rawPtr(d.devData.ax) + first, rawPtr(d.devData.ay) + first,
-                                            rawPtr(d.devData.az) + first, last - first);
+        minDtTerm = accelerationTimestepGPU(first, last, rawPtr(d.devData.ax), rawPtr(d.devData.ay),
+                                            rawPtr(d.devData.az), rawPtr(d.devData.h));
+        //        maxAccSq = cstone::maxNormSquareGpu(rawPtr(d.devData.ax) + first, rawPtr(d.devData.ay) + first,
+        //                                            rawPtr(d.devData.az) + first, last - first);
     }
     else
     {
-#pragma omp parallel for reduction(max : maxAccSq)
+#pragma omp parallel for reduction(min : minDtTerm)
         for (size_t i = first; i < last; ++i)
         {
-            cstone::Vec3<T> X{d.ax[i], d.ay[i], d.az[i]};
-            maxAccSq = std::max(norm2(X), maxAccSq);
+            cstone::Vec3<T> A{d.ax[i], d.ay[i], d.az[i]};
+            minDtTerm = std::min(minDtTerm, d.h[i] * d.h[i] / norm2(A));
         }
+        // #pragma omp parallel for reduction(max : maxAccSq)
+        //         for (size_t i = first; i < last; ++i)
+        //         {
+        //             cstone::Vec3<T> X{d.ax[i], d.ay[i], d.az[i]};
+        //             maxAccSq = std::max(norm2(X), maxAccSq);
+        //         }
     }
 
-    return d.etaAcc * std::sqrt(d.eps / std::sqrt(maxAccSq));
+    return d.etaAcc * std::pow(minDtTerm, 0.25);
+    //    return d.etaAcc * std::sqrt(d.eps / std::sqrt(maxAccSq));
 }
 
 //! @brief limit time-step based on divergence of velocity, this is called in the propagator when Divv is available

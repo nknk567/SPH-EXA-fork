@@ -14,7 +14,7 @@
 #include "early_sync.hpp"
 #include "grid.hpp"
 #include "utils.hpp"
-
+#include "polytrope/bisect.hpp"
 #include "polytrope/polytrope_profile.hpp"
 
 namespace sphexa
@@ -28,12 +28,11 @@ std::map<std::string, double> polytropeConstants()
     const double     t_relax      = std::sqrt(r * r * r / (gravConstant * mTotal)) / 3.;
 
     return {{"gravConstant", gravConstant}, // {"r", 0.47},
-            {"r", r},
-            {"mTotal", mTotal},
-            {"polytropic_exponent", 5. / 3.},
+            {"polytrope::r", r},
+            {"polytrope::mTotal", mTotal},
+            {"polytropic_index", 5. / 3.},
             {"minDt", 1e-4},
             {"minDt_m1", 1e-4},
-            {"mui", 10},
             {"ng0", 100},
             {"ngmax", 150},
             {"eosChoice", sph::EosType::polytropic},
@@ -82,16 +81,25 @@ void contractRadialProfile(Vector& x, Vector& y, Vector& z, double rho_uniform, 
 }
 
 template<typename Dataset>
-void estimateSmoothingLengths(auto rhoAtRadius, Dataset& d, double m_part, size_t ng0)
+void estimateSmoothingLengths(auto rhoAtRadius, Dataset& d, double m_part, size_t ng0, double r_total)
 {
     d.h.resize(d.x.size());
+
+    auto smoothing_length = [rhoAtRadius, m_part, ng0](double r)
+    { return 0.5 * std::cbrt(3. * ng0 * m_part / (4. * M_PI * rhoAtRadius(r))); };
+
+    auto boundary_overlap = [&](double r) { return 2. * smoothing_length(r) + r - r_total; };
+    const auto [converged, r_resolved] =
+        polytrope::find_zero_bisect(boundary_overlap, r_total / 2., r_total, 1e-6 * r_total, 1e-6 * r_total);
+    if (!converged) throw std::runtime_error("Find zero not converged");
+
+    const double h_max = smoothing_length(r_resolved);
 
 #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < d.x.size(); i++)
     {
-        const auto   radius = std::sqrt(d.x[i] * d.x[i] + d.y[i] * d.y[i] + d.z[i] * d.z[i]);
-        const double rho    = rhoAtRadius(radius);
-        d.h[i]              = 0.5 * std::cbrt(3. * ng0 * m_part / (4. * M_PI * rho));
+        const auto radius = std::sqrt(d.x[i] * d.x[i] + d.y[i] * d.y[i] + d.z[i] * d.z[i]);
+        d.h[i]            = std::min(h_max, smoothing_length(radius));
     }
 }
 
@@ -116,10 +124,10 @@ public:
         using KeyType = typename Dataset::KeyType;
         using T       = typename Dataset::RealType;
 
-        const double polytropic_exponent = settings_.at("polytropic_exponent");
-        const double n_polytropic        = 1. / (settings_.at("polytropic_exponent") - 1.);
-        const double m_total             = settings_.at("mTotal");
-        const double r_total             = settings_.at("r");
+        const double polytropic_index = settings_.at("polytropic_index");
+        const double n_polytropic        = 1. / (settings_.at("polytropic_index") - 1.);
+        const double m_total             = settings_.at("polytrope::mTotal");
+        const double r_total             = settings_.at("polytrope::r");
         const double G                   = settings_.at("gravConstant");
         const size_t ng0                 = settings_.at("ng0");
 
@@ -128,19 +136,19 @@ public:
 
         if (rank == 0)
         {
-            std::printf("polytropic constant: %lf\tpolytropic exponent: %lf\n", polytropic_const, polytropic_exponent);
+            std::printf("polytropic constant: %lf\tpolytropic exponent: %lf\n", polytropic_const, polytropic_index);
             std::printf("r_total: %lf\tachieved r: %lf\n", r_total, M_r.y_values.back());
         }
-        auto globalBox = createUniformSphere(rank, numRanks, cbrtNumPart, simData, reader, r_total);
+        const auto globalBox = createUniformSphere(rank, numRanks, cbrtNumPart, simData, reader, r_total);
 
         const double rho_original = m_total / (4. / 3. * M_PI * r_total * r_total * r_total);
 
         contractRadialProfile(d.x, d.y, d.z, rho_original, M_r);
 
         syncAndLoadAttributes(rank, numRanks, simData, globalBox);
-        const double m_part = settings_.at("mTotal") / d.numParticlesGlobal;
+        const double m_part = m_total / d.numParticlesGlobal;
 
-        estimateSmoothingLengths(rho_r, d, m_part, ng0);
+        estimateSmoothingLengths(rho_r, d, m_part, ng0, r_total);
 
         initPolytropeFields(d, settings_, m_part);
 

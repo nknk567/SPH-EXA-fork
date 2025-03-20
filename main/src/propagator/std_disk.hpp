@@ -60,7 +60,11 @@ public:
         //        }
     }
     //    void save(IFileWriter* writer) override { star.loadOrStoreAttributes(writer); }
-
+    void activateFields(DataType& simData) override
+    {
+        simData.star.active = true;
+        Base::activateFields(simData);
+    }
     void computeForces(DomainType& domain, DataType& simData) override
     {
         auto&        d     = simData.hydro;
@@ -127,8 +131,21 @@ public:
             std::printf("star mass: %lf\n", star.m);
             std::printf("additional pot. erg.: %lf\n", star.potential);
         }
+        auto stats = Base::mHolder_.readStats();
+        // numP2P, maxP2P, numM2P, maxM2P, maxStack
+        MPI_Allreduce(MPI_IN_PLACE, stats.data(), 1, MpiType<uint64_t>{}, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(MPI_IN_PLACE, stats.data() + 2, 1, MpiType<uint64_t>{}, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(MPI_IN_PLACE, stats.data() + 1, 1, MpiType<uint64_t>{}, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(MPI_IN_PLACE, stats.data() + 3, 2, MpiType<uint64_t>{}, MPI_MAX, MPI_COMM_WORLD);
+        if (Base::rank_ == 0)
+        {
+            std::cout << "numP2P: " << stats[0] << ", ";
+            std::cout << "maxP2P: " << stats[1] << ", ";
+            std::cout << "numM2P: " << stats[2] << ", ";
+            std::cout << "maxM2P: " << stats[3] << ", ";
+            std::cout << "maxStack: " << stats[4] << "\n";
+        }
     }
-
     void saveFields(IFileWriter* writer, size_t first, size_t last, DataType& simData,
                     const cstone::Box<T>& box) override
     {
