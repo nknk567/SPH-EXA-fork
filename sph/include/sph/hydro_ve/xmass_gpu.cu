@@ -88,7 +88,7 @@ __global__ void xmassGpu(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<T
         {
             bool repeat = (ncSph < ng0 / 4 || (ncSph - 1) > ngmax) && i < bodyEnd;
             if (!cstone::ballotSync(repeat)) { break; }
-//            nb_it_stat[i]++;
+            //            nb_it_stat[i]++;
             if (repeat)
             {
                 //                if (ncSph < ng0 / 4) { h_min = stl::max(h_min, h[i]); }
@@ -103,8 +103,8 @@ __global__ void xmassGpu(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<T
             ncSph =
                 1 + traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax, globalPool)[0];
 
-            //            if (ncIt == ncMaxIteration) { nc_h_convergenceFailure = true; }
-//            if (ncSph < 5) { nc_h_convergenceFailure = true; }
+            if (ncIt == ncMaxIteration) { nc_h_convergenceFailure = true; }
+            //            if (ncSph < 5) { nc_h_convergenceFailure = true; }
         }
 
         if (i >= bodyEnd) continue;
@@ -113,7 +113,7 @@ __global__ void xmassGpu(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<T
         xm[i] = sph::xmassJLoop<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, h, m, wh,
                                                         whd);
         nc[i] = ncSph;
-//        if (ncSph < 5) { nc_h_convergenceFailure = true; }
+        //        if (ncSph < 5) { nc_h_convergenceFailure = true; }
     }
 }
 
