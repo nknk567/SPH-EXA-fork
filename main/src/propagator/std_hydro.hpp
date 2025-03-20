@@ -175,6 +175,7 @@ public:
         size_t last  = domain.endIndex();
 
         relaxSystem(first, last, d);
+        d.minDtRho = rhoTimestep(first, last, d);
 
         computeTimestep(first, last, d);
         timer.step("Timestep");
