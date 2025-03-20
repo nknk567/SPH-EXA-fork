@@ -60,7 +60,11 @@ public:
         //        }
     }
     //    void save(IFileWriter* writer) override { star.loadOrStoreAttributes(writer); }
-
+    void activateFields(DataType& simData) override
+    {
+        simData.star.active = true;
+        Base::activateFields(simData);
+    }
     void computeForces(DomainType& domain, DataType& simData) override
     {
         Base::computeForces(domain, simData);

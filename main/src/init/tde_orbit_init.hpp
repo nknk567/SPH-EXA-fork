@@ -13,18 +13,31 @@ namespace sphexa
 {
 InitSettings tdeOrbitConstants()
 {
-    InitSettings ret{{"beta_impact", 1.0}, {"r0_per_periapsis", 5.0}, {"mTotal", 1.0}, {"r", 1.0}, {"star::m", 1.0}};
+    InitSettings ret{{"tde-orbit::beta_impact", 1.0},
+                     {"tde-orbit::r0_per_periapsis", 5.0},
+                     {"star::potentialType", disk::StarPotentialType::newtonian},
+                     {"star::m", 1.0},
+                     {"star::inner_size", 0.0},
+                     {"star::fixed_star", 1},
+                     {"star::x", 0.},
+                     {"star::y", 0.},
+                     {"star::z", 0.},
+                     {"star::x_m1", 0.},
+                     {"star::y_m1", 0.},
+                     {"star::z_m1", 0.}};
     return ret;
 }
 
 /*! @brief Compute the position and the velocity of an object in a parabolic orbit.
  * The function assumes that the orbital plane is the xy-plane and the periapsis is at y = 0.
  * @param m_b Mass of the central object (black hole)
+ * @param pos_b Position of the centrla object
  * @param r_periapsis Periapsis distance of the orbit
  * @param r0_per_periapsis Initial distance from the central object measured in periapsis distances
  * @param G Gravitational constant
  * */
-auto computeParabolicOrbit(double m_b, double r_periapsis, double r0_per_periapsis, double G)
+auto computeParabolicOrbit(double m_b, const cstone::Vec3<double>& pos_b, double r_periapsis, double r0_per_periapsis,
+                           double G)
 {
     //! @brief 1 + cos(theta0); while theta is the angle of the object in the orbital (xy) plane, measured from
     //! periapsis counter-clock wise
@@ -50,8 +63,9 @@ auto computeParabolicOrbit(double m_b, double r_periapsis, double r0_per_periaps
     const double vx = v * std::cos(phi0_centre);
     const double vy = v * std::sin(phi0_centre);
 
-    return std::tuple{cstone::Vec3<double>{x0, y0, 0.}, cstone::Vec3<double>{vx, vy, 0.}};
+    return std::tuple{cstone::Vec3<double>{x0, y0, 0.} + pos_b, cstone::Vec3<double>{vx, vy, 0.}};
 }
+
 void printMap(const auto& map)
 {
     for (const auto& elem : map)
@@ -59,6 +73,7 @@ void printMap(const auto& map)
         std::cout << elem.first << " " << elem.second << "\n";
     }
 }
+
 template<typename Dataset>
 class TDEOrbitInit : public ISimInitializer<Dataset>
 {
@@ -72,17 +87,28 @@ public:
         , initStep(initStep)
     {
         BuiltinReader extractor(settings_);
-        Dataset       simData;
+        // load default settings
+        Dataset simData;
         simData.hydro.loadOrStoreAttributes(&extractor);
         simData.star.loadOrStoreAttributes(&extractor);
 
+        // settings specified in tdeOrbitConstants()
         for (const auto& kv : tdeOrbitConstants())
         {
             settings_[kv.first] = kv.second;
         }
 
+        // load settings from init file. Must contain mTotal and r fields of the orbiter.
         readFileAttributes(settings_, filename, reader, true);
         printMap(settings_);
+        if (!settings_.contains("polytrope::r"))
+        {
+            throw std::runtime_error("init file must contain attribute polytrope::r");
+        }
+        if (!settings_.contains("polytrope::mTotal"))
+        {
+            throw std::runtime_error("init file must contain attribute polytrope::mTotal");
+        }
     }
 
     [[nodiscard]] const InitSettings& constants() const override { return settings_; }
@@ -98,27 +124,33 @@ public:
         auto box = restoreData(reader, simData);
         reader->closeStep();
 
+        // step parameters that have to be overriden
         simData.hydro.relaxationTimescale = 0.;
         simData.hydro.iteration           = 0;
         simData.hydro.ttot                = 0.0;
         simData.hydro.minDt               = 1e-9;
         simData.hydro.minDt_m1            = 1e-9;
 
-        // place the center of mass on a parabolic orbit.
-        // Compute the tidal radius
-        const double mTotal = settings_.at("mTotal");
-        const double r      = settings_.at("r");
-        const double m_b    = simData.star.m;
+        const double               mTotal = settings_.at("polytrope::mTotal");
+        const double               r      = settings_.at("polytrope::r");
+        const double               m_b    = settings_.at("star::m");
+        const cstone::Vec3<double> pos_b  = {settings_.at("star::x"), settings_.at("star::y"), settings_.at("star::z")};
 
         const double r_tidal          = r * std::pow(m_b / mTotal, 1. / 3.);
-        const double r_periapsis      = r_tidal / settings_.at("beta_impact");
-        const double r0_per_periapsis = settings_.at("r0_per_periapsis");
+        const double r_periapsis      = r_tidal / settings_.at("tde-orbit::beta_impact");
+        const double r0_per_periapsis = settings_.at("tde-orbit::r0_per_periapsis");
 
-        const auto [X, V] = computeParabolicOrbit(m_b, r_periapsis, r0_per_periapsis, simData.hydro.g);
+        const auto [X, V] = computeParabolicOrbit(m_b, pos_b, r_periapsis, r0_per_periapsis, simData.hydro.g);
+        displaceSystem(simData, X, V);
         std::printf("Placed orbiter: \n");
         std::printf("x: %lf, %lf, %lf\n", X[0], X[1], X[2]);
         std::printf("v: %lf, %lf, %lf\n", V[0], V[1], V[2]);
-        // Add X and V to every particle
+
+        return box;
+    }
+
+    void displaceSystem(Dataset& simData, const cstone::Vec3<double>& X, const cstone::Vec3<double>& V) const
+    {
         auto& d = simData.hydro;
 #pragma omp parallel for
         for (size_t i = 0; i < d.x.size(); i++)
@@ -129,11 +161,10 @@ public:
             d.vx[i] += V[0];
             d.vy[i] += V[1];
             d.vz[i] += V[2];
-            d.x_m1[i] = d.vx[i] * simData.hydro.minDt;
-            d.y_m1[i] = d.vy[i] * simData.hydro.minDt;
-            d.z_m1[i] = d.vz[i] * simData.hydro.minDt;
+            d.x_m1[i] = d.vx[i] * d.minDt;
+            d.y_m1[i] = d.vy[i] * d.minDt;
+            d.z_m1[i] = d.vz[i] * d.minDt;
         }
-        return box;
     }
 };
 } // namespace sphexa
