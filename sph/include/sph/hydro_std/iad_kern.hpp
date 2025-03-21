@@ -74,14 +74,15 @@ HOST_DEVICE_FUN inline void IADJLoopSTD(cstone::LocalIndex i, Tc K, const cstone
     c22[i] = (tau11 * tau33 - tau13 * tau13) * factor;
     c23[i] = (tau13 * tau12 - tau11 * tau23) * factor;
     c33[i] = (tau11 * tau22 - tau12 * tau12) * factor;
+    if (neighborsCount > 25 && neighborsCount + 1 < 150) { c11[i] = c12[i] = c13[i] = c22[i] = c23[i] = c33[i] = 0.; }
 }
 
 template<size_t stride = 1, typename Tc, class T>
 HOST_DEVICE_FUN inline void
 divV_curlVJLoopSTD(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box, const cstone::LocalIndex* neighbors,
-                unsigned neighborsCount, const Tc* x, const Tc* y, const Tc* z, const T* vx, const T* vy, const T* vz,
-                const T* h, const T* c11, const T* c12, const T* c13, const T* c22, const T* c23, const T* c33,
-                const T* wh, const T* /*whd*/, const T* m, const T* rho, T* divv)
+                   unsigned neighborsCount, const Tc* x, const Tc* y, const Tc* z, const T* vx, const T* vy,
+                   const T* vz, const T* h, const T* c11, const T* c12, const T* c13, const T* c22, const T* c23,
+                   const T* c33, const T* wh, const T* /*whd*/, const T* m, const T* rho, T* divv)
 {
     auto xi   = x[i];
     auto yi   = y[i];

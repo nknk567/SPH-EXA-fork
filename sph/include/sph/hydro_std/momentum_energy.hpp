@@ -87,7 +87,11 @@ void computeMomentumEnergyStdImpl(size_t startIndex, size_t endIndex, Dataset& d
                                c11, c12, c13, c22, c23, c33, wh, whd, grad_P_x, grad_P_y, grad_P_z, du, &maxvsignal);
 
         T dt_i = tsKCourant(maxvsignal, h[i], c[i], d.Kcour);
-        minDt  = std::min(minDt, dt_i);
+        if (dt_i < 1e-9)
+        {
+            printf("maxvsignal: %lf, h: %lf, c: %lf, ncSph: %u\n", maxvsignal, h[i], c[i], neighborsCount[i]);
+        }
+        minDt = std::min(minDt, dt_i);
     }
 
     d.minDtCourant = minDt;

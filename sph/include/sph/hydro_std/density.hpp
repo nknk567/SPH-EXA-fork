@@ -59,4 +59,11 @@ void computeDensity(const GroupView& groups, Dataset& d, const cstone::Box<T>& b
     else { computeDensityImpl(groups, d, box); }
 }
 
+template<class T, class Dataset>
+void zeroUnconverged(const GroupView& groups, Dataset& d, const cstone::Box<T>& box)
+{
+    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{}) { cuda::zeroUnconverged(groups, d, box); }
+//    else { computeDensityImpl(groups, d, box); }
+}
+
 } // namespace sph

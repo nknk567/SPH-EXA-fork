@@ -32,6 +32,9 @@ template<class Dataset>
 void computeDensity(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>& box);
 
 template<class Dataset>
+void zeroUnconverged(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>& box);
+
+template<class Dataset>
 extern void computeVeDefGradh(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
 template<class Dataset>

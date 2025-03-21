@@ -106,13 +106,30 @@ public:
         auto&        d     = simData.hydro;
         auto&        star  = simData.star;
 
-        d.minDtRho = rhoTimestep(first, last, d);
+        //        d.minDtRho = rhoTimestep(first, last, d);
 
         disk::duTimestep(first, last, d, star);
         timer.step("duTimestep");
 
         computeTimestep(first, last, d, star.t_du);
         timer.step("Timestep");
+        double minDtAcc           = accelerationTimestep(first, last, d);
+        double minDtAccGlobal     = INFINITY;
+        double minDtCourantGlobal = INFINITY;
+        double minDtRhoGlobal     = INFINITY;
+        double minDtUGlobal       = INFINITY;
+        MPI_Allreduce(&minDtAcc, &minDtAccGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&d.minDtCourant, &minDtCourantGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&d.minDtRho, &minDtRhoGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&star.t_du, &minDtUGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+
+        if (Base::rank_ == 0)
+        {
+            std::printf("acc: %lf\n", minDtAccGlobal);
+            std::printf("courant: %lf\n", minDtCourantGlobal);
+            std::printf("rho: %lf\n", minDtRhoGlobal);
+            std::printf("u: %lf\n\n", minDtRhoGlobal);
+        }
 
         computePositions(Base::groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)});
         updateSmoothingLength(Base::groups_.view(), d);

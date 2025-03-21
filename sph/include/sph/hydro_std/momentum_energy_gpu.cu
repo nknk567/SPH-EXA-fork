@@ -88,6 +88,10 @@ __global__ void cudaGradP(Tc K, Tc Kcour, unsigned ngmax, cstone::Box<Tc> box, c
                                                        grad_P_x, grad_P_y, grad_P_z, du, &maxvsignal);
 
         dt_i = stl::min(dt_i, tsKCourant(maxvsignal, h[i], c[i], Kcour));
+        if (tsKCourant(maxvsignal, h[i], c[i], Kcour) < 1e-9)
+        {
+            printf("maxvsignal: %lf, h: %lf, c: %lf, ncSph: %u\n", maxvsignal, h[i], c[i], ncTrue[i]);
+        }
     }
 
     typedef cub::BlockReduce<T, TravConfig::numThreads> BlockReduce;

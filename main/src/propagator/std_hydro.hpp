@@ -143,6 +143,8 @@ public:
 
         computeDensity(groups_.view(), d, domain.box());
         timer.step("Density");
+//        zeroUnconverged(groups_.view(), d, domain.box());
+
         computeEOS_HydroStd(first, last, d);
         timer.step("EquationOfState");
 

@@ -35,7 +35,7 @@ template<typename T, typename T2>
 HOST_DEVICE_FUN T updateHDivv(unsigned ng0, unsigned nc, T h, T divv, T2 minDt)
 {
     T h_corrected = updateH(ng0, nc, h);
-    T h_predicted = h_corrected + (1. / 3.) * divv * h * minDt;
+    T h_predicted = h_corrected;// + (1. / 3.) * divv * h * minDt;
     return h_predicted;
 }
 

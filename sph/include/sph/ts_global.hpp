@@ -123,6 +123,7 @@ void computeTimestep(size_t first, size_t last, Dataset& d, Ts... extraTimesteps
 
     d.minDt_m1 = d.minDt;
     d.minDt    = minDtGlobal;
+
 }
 
 } // namespace sph

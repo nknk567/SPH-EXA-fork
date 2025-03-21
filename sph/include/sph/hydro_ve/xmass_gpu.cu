@@ -56,8 +56,8 @@ __device__ bool nc_h_convergenceFailure = false;
 template<class Tc, class Tm, class T, class KeyType>
 __global__ void xmassGpu(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<Tc> box, const LocalIndex* grpStart,
                          const LocalIndex* grpEnd, LocalIndex numGroups, const cstone::OctreeNsView<Tc, KeyType> tree,
-                         unsigned* nc, const Tc* x, const Tc* y, const Tc* z, T* h, const Tm* m, const T* wh,
-                         const T* whd, T* xm, LocalIndex* nidx, TreeNodeIndex* globalPool, unsigned* nb_it_stat)
+                         unsigned* nc, const Tc* x, const Tc* y, const Tc* z, T* h, const Tm* m, const T* wh, const T* whd,
+                         T* xm, LocalIndex* nidx, TreeNodeIndex* globalPool, unsigned* nb_it_stat)
 {
     unsigned laneIdx     = threadIdx.x & (GpuConfig::warpSize - 1);
     unsigned targetIdx   = 0;
@@ -83,7 +83,7 @@ __global__ void xmassGpu(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<T
         unsigned ncSph =
             1 + traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax, globalPool)[0];
 
-        constexpr int ncMaxIteration = 19;
+        constexpr int ncMaxIteration = 9;
         for (int ncIt = 0; ncIt <= ncMaxIteration; ++ncIt)
         {
             bool repeat = (ncSph < ng0 / 4 || (ncSph - 1) > ngmax) && i < bodyEnd;
@@ -103,8 +103,9 @@ __global__ void xmassGpu(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<T
             ncSph =
                 1 + traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax, globalPool)[0];
 
-            if (ncIt == ncMaxIteration) { nc_h_convergenceFailure = true; }
+            //            if (ncIt == ncMaxIteration) { nc_h_convergenceFailure = true; }
             //            if (ncSph < 5) { nc_h_convergenceFailure = true; }
+//            if (ncSph < ng0 / 4 || (ncSph - 1) > ngmax) { m[i] = 0; }
         }
 
         if (i >= bodyEnd) continue;
@@ -184,5 +185,36 @@ void computeDensity(const GroupView& grp, Dataset& d, const cstone::Box<typename
 template void computeDensity(const GroupView&, sphexa::ParticlesData<cstone::GpuTag>& d,
                              const cstone::Box<SphTypes::CoordinateType>&);
 
+template<class Tm, class Tn>
+__global__ void zeroUnconvergedKernel(const LocalIndex* grpStart, const LocalIndex* grpEnd, LocalIndex numGroups, Tm* m,
+                                      const Tn* nc, unsigned ng0, unsigned ngmax)
+{
+    LocalIndex tid = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (tid >= numGroups) { return; }
+
+    LocalIndex bodyBegin = grpStart[tid];
+    LocalIndex bodyEnd   = grpEnd[tid];
+
+    for (auto i = bodyBegin; i < bodyEnd; ++i)
+    {
+        if (nc[i] < ng0 / 4 || (nc[i] - 1) > ngmax) { m[i] = 0; }
+    }
+}
+
+template<class Dataset>
+void zeroUnconverged(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>& box)
+{
+
+    unsigned numThreads = 256;
+    unsigned numBlocks  = (grp.numGroups + numThreads - 1) / numThreads;
+    if (numBlocks == 0) { return; }
+
+    zeroUnconvergedKernel<<<numBlocks, numThreads>>>(grp.groupStart, grp.groupEnd, grp.numGroups, rawPtr(d.devData.m),
+                                                     rawPtr(d.devData.nc), d.ng0, d.ngmax);
+    checkGpuErrors(cudaDeviceSynchronize());
+}
+template void zeroUnconverged(const GroupView&, sphexa::ParticlesData<cstone::GpuTag>& d,
+                              const cstone::Box<SphTypes::CoordinateType>&);
 } // namespace cuda
 } // namespace sph
