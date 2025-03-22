@@ -67,36 +67,37 @@ public:
     }
     void computeForces(DomainType& domain, DataType& simData) override
     {
+        Base::computeForces(domain, simData);
+
         auto&        d     = simData.hydro;
         const size_t first = domain.startIndex();
         const size_t last  = domain.endIndex();
-
-        Base::computeForces(domain, simData);
 
         disk::betaCooling(first, last, d, simData.star);
         timer.step("betaCooling");
 
         disk::computeCentralForce(first, last, d, simData.star);
         timer.step("computeCentralForce");
-
-        transferToHost(d, first, last, {"nb_it_stat"});
-        std::array<size_t, 9> histogram{};
-        for (size_t i = first; i < last; i++)
-        {
-            size_t bin = (d.nb_it_stat[i] >= histogram.size() ? histogram.size() - 1 : d.nb_it_stat[i]);
-            histogram[bin]++;
-        }
-
-        MPI_Allreduce(MPI_IN_PLACE, histogram.data(), histogram.size(), MpiType<size_t>{}, MPI_SUM, MPI_COMM_WORLD);
-
-        if (Base::rank_ == 0)
-        {
-            printf("Neighbour iterations");
-            for (size_t i = 0; i < histogram.size(); i++)
-            {
-                printf("ncIt: %zu, nPart: %zu\n", i, histogram[i]);
-            }
-        }
+        //
+        //        transferToHost(d, first, last, {"nb_it_stat"});
+        //        std::array<size_t, 9> histogram{};
+        //        for (size_t i = first; i < last; i++)
+        //        {
+        //            size_t bin = (d.nb_it_stat[i] >= histogram.size() ? histogram.size() - 1 : d.nb_it_stat[i]);
+        //            histogram[bin]++;
+        //        }
+        //
+        //        MPI_Allreduce(MPI_IN_PLACE, histogram.data(), histogram.size(), MpiType<size_t>{}, MPI_SUM,
+        //        MPI_COMM_WORLD);
+        //
+        //        if (Base::rank_ == 0)
+        //        {
+        //            printf("Neighbour iterations");
+        //            for (size_t i = 0; i < histogram.size(); i++)
+        //            {
+        //                printf("ncIt: %zu, nPart: %zu\n", i, histogram[i]);
+        //            }
+        //        }
     }
 
     void integrate(DomainType& domain, DataType& simData) override
@@ -113,23 +114,23 @@ public:
 
         computeTimestep(first, last, d, star.t_du);
         timer.step("Timestep");
-        double minDtAcc           = accelerationTimestep(first, last, d);
-        double minDtAccGlobal     = INFINITY;
-        double minDtCourantGlobal = INFINITY;
-        double minDtRhoGlobal     = INFINITY;
-        double minDtUGlobal       = INFINITY;
-        MPI_Allreduce(&minDtAcc, &minDtAccGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
-        MPI_Allreduce(&d.minDtCourant, &minDtCourantGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
-        MPI_Allreduce(&d.minDtRho, &minDtRhoGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
-        MPI_Allreduce(&star.t_du, &minDtUGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+        //        double minDtAcc           = accelerationTimestep(first, last, d);
+        //        double minDtAccGlobal     = INFINITY;
+        //        double minDtCourantGlobal = INFINITY;
+        //        double minDtRhoGlobal     = INFINITY;
+        //        double minDtUGlobal       = INFINITY;
+        //        MPI_Allreduce(&minDtAcc, &minDtAccGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+        //        MPI_Allreduce(&d.minDtCourant, &minDtCourantGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+        //        MPI_Allreduce(&d.minDtRho, &minDtRhoGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+        //        MPI_Allreduce(&star.t_du, &minDtUGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
 
-        if (Base::rank_ == 0)
-        {
-            std::printf("acc: %lf\n", minDtAccGlobal);
-            std::printf("courant: %lf\n", minDtCourantGlobal);
-            std::printf("rho: %lf\n", minDtRhoGlobal);
-            std::printf("u: %lf\n\n", minDtRhoGlobal);
-        }
+        //        if (Base::rank_ == 0)
+        //        {
+        //            std::printf("acc: %lf\n", minDtAccGlobal);
+        //            std::printf("courant: %lf\n", minDtCourantGlobal);
+        //            std::printf("rho: %lf\n", minDtRhoGlobal);
+        //            std::printf("u: %lf\n\n", minDtRhoGlobal);
+        //        }
 
         computePositions(Base::groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)});
         updateSmoothingLength(Base::groups_.view(), d);
@@ -150,20 +151,20 @@ public:
             std::printf("star mass: %lf\n", star.m);
             std::printf("additional pot. erg.: %lf\n", star.potential);
         }
-        auto stats = Base::mHolder_.readStats();
-        // numP2P, maxP2P, numM2P, maxM2P, maxStack
-        MPI_Allreduce(MPI_IN_PLACE, stats.data(), 1, MpiType<uint64_t>{}, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(MPI_IN_PLACE, stats.data() + 2, 1, MpiType<uint64_t>{}, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(MPI_IN_PLACE, stats.data() + 1, 1, MpiType<uint64_t>{}, MPI_MAX, MPI_COMM_WORLD);
-        MPI_Allreduce(MPI_IN_PLACE, stats.data() + 3, 2, MpiType<uint64_t>{}, MPI_MAX, MPI_COMM_WORLD);
-        if (Base::rank_ == 0)
-        {
-            std::cout << "numP2P: " << stats[0] << ", ";
-            std::cout << "maxP2P: " << stats[1] << ", ";
-            std::cout << "numM2P: " << stats[2] << ", ";
-            std::cout << "maxM2P: " << stats[3] << ", ";
-            std::cout << "maxStack: " << stats[4] << "\n";
-        }
+        //        auto stats = Base::mHolder_.readStats();
+        //        // numP2P, maxP2P, numM2P, maxM2P, maxStack
+        //        MPI_Allreduce(MPI_IN_PLACE, stats.data(), 1, MpiType<uint64_t>{}, MPI_SUM, MPI_COMM_WORLD);
+        //        MPI_Allreduce(MPI_IN_PLACE, stats.data() + 2, 1, MpiType<uint64_t>{}, MPI_SUM, MPI_COMM_WORLD);
+        //        MPI_Allreduce(MPI_IN_PLACE, stats.data() + 1, 1, MpiType<uint64_t>{}, MPI_MAX, MPI_COMM_WORLD);
+        //        MPI_Allreduce(MPI_IN_PLACE, stats.data() + 3, 2, MpiType<uint64_t>{}, MPI_MAX, MPI_COMM_WORLD);
+        //        if (Base::rank_ == 0)
+        //        {
+        //            std::cout << "numP2P: " << stats[0] << ", ";
+        //            std::cout << "maxP2P: " << stats[1] << ", ";
+        //            std::cout << "numM2P: " << stats[2] << ", ";
+        //            std::cout << "maxM2P: " << stats[3] << ", ";
+        //            std::cout << "maxStack: " << stats[4] << "\n";
+        //        }
     }
     void saveFields(IFileWriter* writer, size_t first, size_t last, DataType& simData,
                     const cstone::Box<T>& box) override

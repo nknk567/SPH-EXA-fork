@@ -74,7 +74,7 @@ HOST_DEVICE_FUN inline void IADJLoopSTD(cstone::LocalIndex i, Tc K, const cstone
     c22[i] = (tau11 * tau33 - tau13 * tau13) * factor;
     c23[i] = (tau13 * tau12 - tau11 * tau23) * factor;
     c33[i] = (tau11 * tau22 - tau12 * tau12) * factor;
-    if (neighborsCount > 25 && neighborsCount + 1 < 150) { c11[i] = c12[i] = c13[i] = c22[i] = c23[i] = c33[i] = 0.; }
+//    if (neighborsCount > 25 && neighborsCount + 1 < 150) { c11[i] = c12[i] = c13[i] = c22[i] = c23[i] = c33[i] = 0.; }
 }
 
 template<size_t stride = 1, typename Tc, class T>

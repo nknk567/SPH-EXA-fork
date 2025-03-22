@@ -79,18 +79,30 @@ __global__ void cudaGradP(Tc K, Tc Kcour, unsigned ngmax, cstone::Box<Tc> box, c
         auto ncTrue = traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax, globalPool);
 
         if (i >= bodyEnd) continue;
-
-        unsigned ncCapped = stl::min(ncTrue[0], ngmax);
-        T        maxvsignal;
-
-        momentumAndEnergyJLoop<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, vx, vy,
-                                                       vz, h, m, rho, p, c, c11, c12, c13, c22, c23, c33, wh, whd,
-                                                       grad_P_x, grad_P_y, grad_P_z, du, &maxvsignal);
-
-        dt_i = stl::min(dt_i, tsKCourant(maxvsignal, h[i], c[i], Kcour));
-        if (tsKCourant(maxvsignal, h[i], c[i], Kcour) < 1e-9)
+        if ((1 + ncTrue[0] >= 100 / 4) && ((ncTrue[0]) <= ngmax))
         {
-            printf("maxvsignal: %lf, h: %lf, c: %lf, ncSph: %u\n", maxvsignal, h[i], c[i], ncTrue[i]);
+            unsigned ncCapped = stl::min(ncTrue[0], ngmax);
+            T        maxvsignal;
+
+            momentumAndEnergyJLoop<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, vx,
+                                                           vy, vz, h, m, rho, p, c, c11, c12, c13, c22, c23, c33, wh,
+                                                           whd, grad_P_x, grad_P_y, grad_P_z, du, &maxvsignal);
+
+            //        if ((ncTrue[0] >= 100 / 4) && ((ncTrue[0] - 1) <= ngmax))
+            //        {
+            dt_i = stl::min(dt_i, tsKCourant(maxvsignal, h[i], c[i], Kcour));
+            if (tsKCourant(maxvsignal, h[i], c[i], Kcour) < 1e-9)
+            {
+                printf("maxvsignal: %lf, h: %lf, c: %lf, ncSph: %u\n", maxvsignal, h[i], c[i], ncTrue[i]);
+            }
+        }
+        else
+        {
+            du[i]       = 0.;
+            grad_P_x[i] = 0.;
+            grad_P_y[i] = 0.;
+            grad_P_z[i] = 0.;
+            //            maxvsignal = 0.;
         }
     }
 
@@ -157,8 +169,8 @@ void relaxSystemGPU(size_t first, size_t last, Thydro* ax, Thydro* ay, Thydro* a
 }
 
 #define RELAX_SYSTEM_GPU(Thydro, T)                                                                                    \
-    template void relaxSystemGPU(size_t first, size_t last, Thydro* ax, Thydro* ay, Thydro* az, Thydro* vx, Thydro* vy, \
-                                 Thydro* vz, T relaxationTimescale);
+    template void relaxSystemGPU(size_t first, size_t last, Thydro* ax, Thydro* ay, Thydro* az, Thydro* vx,            \
+                                 Thydro* vy, Thydro* vz, T relaxationTimescale);
 RELAX_SYSTEM_GPU(float, double);
 RELAX_SYSTEM_GPU(double, double);
 

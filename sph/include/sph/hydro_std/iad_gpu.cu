@@ -100,12 +100,19 @@ IADGpuKernel(Tc K, unsigned ngmax, cstone::Box<Tc> box, const LocalIndex* grpSta
         auto ncTrue = traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax, globalPool);
 
         if (i >= bodyEnd) { continue; }
-
-        unsigned ncCapped = stl::min(ncTrue[0], ngmax);
-        sph::IADJLoopSTD<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, h, m, rho, wh,
-                                                 whd, c11, c12, c13, c22, c23, c33);
-        sph::divV_curlVJLoopSTD<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, vx, vy,
-                                                        vz, h, c11, c12, c13, c22, c23, c33, wh, whd, m, rho, divv);
+        if (1 + ncTrue[0] < 100 / 4 || (ncTrue[0]) > ngmax)
+        {
+            c11[i] = c12[i] = c13[i] = c22[i] = c23[i] = c33[i] = 0.;
+        }
+        else
+        {
+            unsigned ncCapped = stl::min(ncTrue[0], ngmax);
+            sph::IADJLoopSTD<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, h, m, rho,
+                                                     wh, whd, c11, c12, c13, c22, c23, c33);
+            sph::divV_curlVJLoopSTD<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, vx,
+                                                            vy, vz, h, c11, c12, c13, c22, c23, c33, wh, whd, m, rho,
+                                                            divv);
+        }
     }
 }
 

@@ -126,22 +126,22 @@ momentumAndEnergyJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box, c
 
     // with the choice of calculating coordinate (r) and velocity (v_ij) differences as i - j,
     // we add the negative sign only here at the end instead of to termA123_ij in each iteration
-    if (neighborsCount > 25 && neighborsCount + 1 < 150)
-    {
-        du[i]       = -K * Tm1(0.5) * energy;
-        grad_P_x[i] = K * momentum_x;
-        grad_P_y[i] = K * momentum_y;
-        grad_P_z[i] = K * momentum_z;
-        *maxvsignal = maxvsignali;
-    }
-    else
-    {
-        du[i]       = 0.;
-        grad_P_x[i] = 0.;
-        grad_P_y[i] = 0.;
-        grad_P_z[i] = 0.;
-        *maxvsignal = 0.;
-    }
+    //    if (neighborsCount >= 25 && neighborsCount - 1 <= 150)
+    //    {
+    du[i]       = -K * Tm1(0.5) * energy;
+    grad_P_x[i] = K * momentum_x;
+    grad_P_y[i] = K * momentum_y;
+    grad_P_z[i] = K * momentum_z;
+    *maxvsignal = maxvsignali;
+    //    }
+    //    else
+    //    {
+    //        du[i]       = 0.;
+    //        grad_P_x[i] = 0.;
+    //        grad_P_y[i] = 0.;
+    //        grad_P_z[i] = 0.;
+    //        *maxvsignal = 0.;
+    //    }
 }
 
 } // namespace sph
