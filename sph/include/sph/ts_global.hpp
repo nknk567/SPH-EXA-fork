@@ -40,7 +40,7 @@
 #include "cstone/primitives/mpi_wrappers.hpp"
 #include "cstone/primitives/primitives_gpu.h"
 #include "cstone/util/array.hpp"
-//#include "buffer_reduce.hpp"
+// #include "buffer_reduce.hpp"
 #include "kernels.hpp"
 
 namespace sph
@@ -51,14 +51,16 @@ namespace sph
 template<class Dataset>
 auto accelerationTimestep(size_t first, size_t last, const Dataset& d)
 {
-    using T = typename Dataset::RealType;
+    using T     = typename Dataset::RealType;
+    using HType = decltype(d.h)::value_type;
 
     //! @brief minimum value of all {h_i^2 / a_i^2}
     T minDtTerm = std::numeric_limits<T>::infinity();
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
+        //Limit the softening used for timestep calculation, taking into account the central star interaction
         minDtTerm = accelerationTimestepGPU(first, last, rawPtr(d.devData.ax), rawPtr(d.devData.ay),
-                                            rawPtr(d.devData.az), rawPtr(d.devData.h));
+                                            rawPtr(d.devData.az), rawPtr(d.devData.h), HType(0.25));
         //        maxAccSq = cstone::maxNormSquareGpu(rawPtr(d.devData.ax) + first, rawPtr(d.devData.ay) + first,
         //                                            rawPtr(d.devData.az) + first, last - first);
     }
