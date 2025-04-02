@@ -28,6 +28,7 @@ struct TimestepFactor
 template<typename T>
 T accelerationTimestepGPU(size_t first, size_t last, const T* x, const T* y, const T* z, const T* h, const T h_max)
 {
+    if (last == first) { return INFINITY; }
     auto begin = thrust::make_zip_iterator(x + first, y + first, z + first, h + first);
     auto end   = thrust::make_zip_iterator(x + last, y + last, z + last, h + last);
     return thrust::transform_reduce(thrust::device, begin, end, TimestepFactor<T>{h_max}, INFINITY,
