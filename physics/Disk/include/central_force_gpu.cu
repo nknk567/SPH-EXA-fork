@@ -84,12 +84,13 @@ void computeCentralForceGPU(size_t first, size_t last, const Treal* x, const Tre
     const double     inner_size2 = star.inner_size * star.inner_size;
     CentralForceData data{x, y, z, m, ax, ay, az, g, star.m, inner_size2, 1.0};
     data.star_position = star.position; // Initializing in aggregate list produces an error in CUDA compiler
+    if (last > first)
+    {
+        computeCentralForceGPUKernel<numThreads><<<numBlocks, numThreads>>>(first, last, data, star.potentialType);
 
-    computeCentralForceGPUKernel<numThreads><<<numBlocks, numThreads>>>(first, last, data, star.potentialType);
-
-    checkGpuErrors(cudaDeviceSynchronize());
-    checkGpuErrors(cudaGetLastError());
-
+        checkGpuErrors(cudaDeviceSynchronize());
+        checkGpuErrors(cudaGetLastError());
+    }
     checkGpuErrors(cudaMemcpyFromSymbol(&force_local, GPU_SYMBOL(force_device), sizeof(force_local)));
     star.force_local = force_local;
 }

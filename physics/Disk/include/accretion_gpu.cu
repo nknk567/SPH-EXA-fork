@@ -88,25 +88,30 @@ void computeAccretionConditionGPU(size_t first, size_t last, const Treal* x, con
     star.accreted_local = {};
     star.removed_local  = {};
 
-    RemovalStatistics *accreted_device, *removed_device;
-    checkGpuErrors(cudaMalloc(reinterpret_cast<void**>(&accreted_device), sizeof *accreted_device));
-    checkGpuErrors(cudaMalloc(reinterpret_cast<void**>(&removed_device), sizeof *removed_device));
-    checkGpuErrors(
-        cudaMemcpy(accreted_device, &star.accreted_local, sizeof star.accreted_local, cudaMemcpyHostToDevice));
-    checkGpuErrors(cudaMemcpy(removed_device, &star.removed_local, sizeof star.removed_local, cudaMemcpyHostToDevice));
+    if (last > first)
+    {
+        RemovalStatistics *accreted_device, *removed_device;
+        checkGpuErrors(cudaMalloc(reinterpret_cast<void**>(&accreted_device), sizeof *accreted_device));
+        checkGpuErrors(cudaMalloc(reinterpret_cast<void**>(&removed_device), sizeof *removed_device));
+        checkGpuErrors(
+            cudaMemcpy(accreted_device, &star.accreted_local, sizeof star.accreted_local, cudaMemcpyHostToDevice));
+        checkGpuErrors(
+            cudaMemcpy(removed_device, &star.removed_local, sizeof star.removed_local, cudaMemcpyHostToDevice));
 
-    computeAccretionConditionKernel<numThreads><<<numBlocks, numThreads>>>(
-        first, last, x, y, z, h, keys, m, vx, vy, vz, nc, star.position, star.inner_size * star.inner_size,
-        star.removal_limit_h, ng0, ngmax, accreted_device, removed_device);
+        computeAccretionConditionKernel<numThreads><<<numBlocks, numThreads>>>(
+            first, last, x, y, z, h, keys, m, vx, vy, vz, nc, star.position, star.inner_size * star.inner_size,
+            star.removal_limit_h, ng0, ngmax, accreted_device, removed_device);
 
-    checkGpuErrors(cudaDeviceSynchronize());
-    checkGpuErrors(cudaGetLastError());
+        checkGpuErrors(cudaDeviceSynchronize());
+        checkGpuErrors(cudaGetLastError());
 
-    checkGpuErrors(
-        cudaMemcpy(&star.accreted_local, accreted_device, sizeof star.accreted_local, cudaMemcpyDeviceToHost));
-    checkGpuErrors(cudaMemcpy(&star.removed_local, removed_device, sizeof star.removed_local, cudaMemcpyDeviceToHost));
-    checkGpuErrors(cudaFree(accreted_device));
-    checkGpuErrors(cudaFree(removed_device));
+        checkGpuErrors(
+            cudaMemcpy(&star.accreted_local, accreted_device, sizeof star.accreted_local, cudaMemcpyDeviceToHost));
+        checkGpuErrors(
+            cudaMemcpy(&star.removed_local, removed_device, sizeof star.removed_local, cudaMemcpyDeviceToHost));
+        checkGpuErrors(cudaFree(accreted_device));
+        checkGpuErrors(cudaFree(removed_device));
+    }
 }
 
 #define COMPUTE_ACCRETION_CONDITION_GPU(Treal, Thydro, Tkeys, Tmass, Tn)                                               \
