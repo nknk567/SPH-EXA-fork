@@ -53,12 +53,13 @@ auto accelerationTimestep(size_t first, size_t last, const Dataset& d)
 {
     using T     = typename Dataset::RealType;
     using HType = decltype(d.h)::value_type;
+    if (last <= first) return std::numeric_limits<T>::infinity();
 
     //! @brief minimum value of all {h_i^2 / a_i^2}
     T minDtTerm = std::numeric_limits<T>::infinity();
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
-        //Limit the softening used for timestep calculation, taking into account the central star interaction
+        // Limit the softening used for timestep calculation, taking into account the central star interaction
         minDtTerm = accelerationTimestepGPU(first, last, rawPtr(d.devData.ax), rawPtr(d.devData.ay),
                                             rawPtr(d.devData.az), rawPtr(d.devData.h), HType(0.25));
         //        maxAccSq = cstone::maxNormSquareGpu(rawPtr(d.devData.ax) + first, rawPtr(d.devData.ay) + first,
