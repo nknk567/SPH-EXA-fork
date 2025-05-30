@@ -14,6 +14,7 @@
 #include "buffer_reduce_concepts.hpp"
 #include "cstone/primitives/mpi_wrappers.hpp"
 #include "cstone/util/array.hpp"
+#include "cstone/util/tuple_util.hpp"
 
 namespace disk
 {
