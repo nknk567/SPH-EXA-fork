@@ -227,7 +227,12 @@ public:
                      std::tie(x, y, z, h, m), util::reverse(scratch));
 
         float invThetaEff      = invThetaMinToVec(theta_);
-        std::vector<int> peers = findPeersMac(myRank_, global_.assignment(), global_.octree(), box(), invThetaEff);
+        //std::vector<int> peers = findPeersMac(myRank_, global_.assignment(), global_.octree(), box(), invThetaEff);
+        std::vector<int> peers;
+        for (int r = 0; r < numRanks_; ++r)
+        {
+            if (r != myRank_) { peers.push_back(r); }
+        }
 
         if (firstCall_)
         {
