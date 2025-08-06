@@ -58,7 +58,7 @@ auto accelerationTimestep(size_t first, size_t last, const Dataset& d)
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
         minH2_A2 = accelerationTimestepGPU(first, last, rawPtr(d.devData.ax), rawPtr(d.devData.ay),
-                                           rawPtr(d.devData.az), rawPtr(d.devData.h));
+                                           rawPtr(d.devData.az), rawPtr(d.devData.h), T{0.25});
     }
     else
     {
