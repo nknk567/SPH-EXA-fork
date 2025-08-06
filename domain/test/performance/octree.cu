@@ -96,12 +96,11 @@ int main()
     octree.resize(nNodes(tree));
     auto buildInternal = [&]() { buildOctreeGpu(rawPtr(tree), octree.data()); };
 
-    float internalBuildTime           = timeGpu(buildInternal);
-    std::vector<TreeNodeIndex> ranges = toHost(octree.levelRange);
+    float internalBuildTime = timeGpu(buildInternal);
     std::cout << "internal build time " << internalBuildTime / 1000 << std::endl;
     std::cout << "level ranges: ";
     for (int i = 0; i <= maxTreeLevel<KeyType>{}; ++i)
-        std::cout << ranges[i] << " ";
+        std::cout << octree.levelRange[i] << " ";
     std::cout << std::endl;
 
     // halo discovery benchmark
@@ -112,8 +111,8 @@ int main()
     auto octreeView      = octree.data();
     auto findHalosLambda = [octree = octreeView, &box, &tree, &haloRadii, &flags]()
     {
-        findHalosGpu(octree.prefixes, octree.childOffsets, octree.parents, octree.internalToLeaf, rawPtr(tree),
-                     rawPtr(haloRadii), box, 0, octree.numLeafNodes / 4, rawPtr(flags));
+        findHalosGpu(octree.prefixes, octree.childOffsets, octree.parents, rawPtr(tree), rawPtr(haloRadii), box, 0,
+                     octree.numLeafNodes / 4, rawPtr(flags));
     };
 
     float findTime = timeGpu(findHalosLambda);
@@ -130,8 +129,8 @@ int main()
 
         auto findHalosCpuLambda = [&]()
         {
-            findHalos(h_octree.prefixes, h_octree.childOffsets, h_octree.parents, h_octree.internalToLeaf,
-                      h_tree.data(), radii.data(), box, 0, nNodes(tree) / 4, h_flags.data());
+            findHalos(h_octree.prefixes, h_octree.childOffsets, h_octree.parents, h_tree.data(), radii.data(), box, 0,
+                      nNodes(tree) / 4, h_flags.data());
         };
         float findTimeCpu = timeCpu(findHalosCpuLambda);
         std::cout << "CPU halo discovery " << findTimeCpu << " nNodes(tree): " << nNodes(h_tree)

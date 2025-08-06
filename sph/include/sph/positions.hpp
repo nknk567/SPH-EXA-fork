@@ -177,7 +177,7 @@ void driftPositions(const GroupView& grp, Dataset& d, float dt_forward, float dt
 
 template<class T, class Dataset>
 void computePositions(const GroupView& grp, Dataset& d, const cstone::Box<T>& box, float dt_forward,
-                      util::array<float, Timestep::maxNumRungs> dt_m1, const uint8_t* rung = nullptr, const double u_floor)
+                      util::array<float, Timestep::maxNumRungs> dt_m1, const uint8_t* rung = nullptr, const double u_floor = 0.0)
 {
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {

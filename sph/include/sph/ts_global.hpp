@@ -38,9 +38,8 @@
 
 #include "acceleration_timestep_gpu.hpp"
 #include "cstone/primitives/mpi_wrappers.hpp"
-#include "cstone/primitives/primitives_gpu.h"
+#include "cstone/tree/definitions.h"
 #include "cstone/util/array.hpp"
-// #include "buffer_reduce.hpp"
 #include "kernels.hpp"
 
 namespace sph
@@ -51,38 +50,27 @@ namespace sph
 template<class Dataset>
 auto accelerationTimestep(size_t first, size_t last, const Dataset& d)
 {
-    using T     = typename Dataset::RealType;
-    using HType = decltype(d.h)::value_type;
+    using T = typename Dataset::RealType;
     if (last <= first) return std::numeric_limits<T>::infinity();
 
     //! @brief minimum value of all {h_i^2 / a_i^2}
-    T minDtTerm = std::numeric_limits<T>::infinity();
+    T minH2_A2 = std::numeric_limits<T>::infinity();
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
-        // Limit the softening used for timestep calculation, taking into account the central star interaction
-        minDtTerm = accelerationTimestepGPU(first, last, rawPtr(d.devData.ax), rawPtr(d.devData.ay),
-                                            rawPtr(d.devData.az), rawPtr(d.devData.h), HType(0.25));
-        //        maxAccSq = cstone::maxNormSquareGpu(rawPtr(d.devData.ax) + first, rawPtr(d.devData.ay) + first,
-        //                                            rawPtr(d.devData.az) + first, last - first);
+        minH2_A2 = accelerationTimestepGPU(first, last, rawPtr(d.devData.ax), rawPtr(d.devData.ay),
+                                           rawPtr(d.devData.az), rawPtr(d.devData.h));
     }
     else
     {
-#pragma omp parallel for reduction(min : minDtTerm)
+#pragma omp parallel for reduction(min : minH2_A2)
         for (size_t i = first; i < last; ++i)
         {
             cstone::Vec3<T> A{d.ax[i], d.ay[i], d.az[i]};
-            minDtTerm = std::min(minDtTerm, d.h[i] * d.h[i] / norm2(A));
+            minH2_A2 = std::min(minH2_A2, d.h[i] * d.h[i] / norm2(A));
         }
-        // #pragma omp parallel for reduction(max : maxAccSq)
-        //         for (size_t i = first; i < last; ++i)
-        //         {
-        //             cstone::Vec3<T> X{d.ax[i], d.ay[i], d.az[i]};
-        //             maxAccSq = std::max(norm2(X), maxAccSq);
-        //         }
     }
 
-    return d.etaAcc * std::pow(minDtTerm, 0.25);
-    //    return d.etaAcc * std::sqrt(d.eps / std::sqrt(maxAccSq));
+    return d.etaAcc * std::pow(minH2_A2, 0.25);
 }
 
 //! @brief limit time-step based on divergence of velocity, this is called in the propagator when Divv is available
@@ -120,15 +108,20 @@ void computeTimestep(size_t first, size_t last, Dataset& d, Ts... extraTimesteps
 
     T minDtLoc = std::min({minDtAcc, d.minDtCourant, d.minDtRho, d.maxDtIncrease * d.minDt, extraTimesteps...});
 
-    //    const auto dt_reduced = disk::buffer::mpiAllreduceMin(minDtAcc, d.minDtCourant, d.minDtRho,
-    //                                                          d.maxDtIncrease * d.minDt, extraTimesteps...);
-    //    printf("acc timestep: %lf\n", std::get<0>(dt_reduced));
-    //    printf("courant timestep: %lf\n", std::get<1>(dt_reduced));
-    //    printf("rho timestep: %lf\n", std::get<2>(dt_reduced));
-    //    T minDtGlobal = std::apply([](auto... dt) { return std::min({dt...}); }, dt_reduced);
-
-    T minDtGlobal;
-    MPI_Allreduce(&minDtLoc, &minDtGlobal, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+    util::array<T, 4> varsIn{minDtLoc, 0, 0, -T(d.accSize())}, varsOut;
+    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
+    {
+        varsIn[1] = -int(d.devData.stackUsedNc);
+        varsIn[2] = -int(d.devData.stackUsedGravity);
+    }
+    MPI_Allreduce(varsIn.data(), varsOut.data(), varsIn.size(), MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+    T minDtGlobal = varsOut[0];
+    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
+    {
+        d.devData.stackUsedNc      = int(-varsOut[1]);
+        d.devData.stackUsedGravity = int(-varsOut[2]);
+    }
+    d.maxHalos = int(-varsOut[3]);
 
     d.ttot += minDtGlobal;
 
