@@ -52,11 +52,12 @@ HOST_DEVICE_FUN bool fbcCheck(Tc coord, Th h, Tc top, Tc bottom, bool fbc)
 
 //! @brief update the energy according to Adams-Bashforth (2nd order)
 template<class TU>
-HOST_DEVICE_FUN TU energyUpdate(TU u_old, double dt, double dt_m1, double du, double du_m1)
+HOST_DEVICE_FUN TU energyUpdate(TU u_old, double dt, double dt_m1, double du, double du_m1, double u_floor = 0.0)
 {
     TU u_new = u_old + du * dt + 0.5 * (du - du_m1) / dt_m1 * std::abs(dt) * dt;
     // To prevent u < 0 (when cooling with GRACKLE is active)
     if (u_new < 0.) { u_new = u_old * std::exp(u_new * dt / u_old); }
+    if (u_new < u_floor) { u_new = u_floor; }
     return u_new;
 }
 
@@ -176,7 +177,7 @@ void driftPositions(const GroupView& grp, Dataset& d, float dt_forward, float dt
 
 template<class T, class Dataset>
 void computePositions(const GroupView& grp, Dataset& d, const cstone::Box<T>& box, float dt_forward,
-                      util::array<float, Timestep::maxNumRungs> dt_m1, const uint8_t* rung = nullptr)
+                      util::array<float, Timestep::maxNumRungs> dt_m1, const uint8_t* rung = nullptr, const double u_floor)
 {
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
@@ -188,7 +189,7 @@ void computePositions(const GroupView& grp, Dataset& d, const cstone::Box<T>& bo
                             rawPtr(d.devData.y_m1), rawPtr(d.devData.z_m1), rawPtr(d.devData.ax), rawPtr(d.devData.ay),
                             rawPtr(d.devData.az), rung, rawPtr(d.devData.temp), rawPtr(d.devData.u),
                             rawPtr(d.devData.du), rawPtr(d.devData.du_m1), rawPtr(d.devData.h), d_mui, d.gamma, constCv,
-                            box);
+                            box, u_floor);
     }
     else
     {

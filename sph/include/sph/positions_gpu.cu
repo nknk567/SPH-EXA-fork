@@ -119,7 +119,7 @@ template<class Tc, class Tv, class Ta, class Tdu, class Tm1, class Tt, class Thy
 __global__ void computePositionsKernel(GroupView grp, float dt, util::array<float, Timestep::maxNumRungs> dt_m1, Tc* x,
                                        Tc* y, Tc* z, Tv* vx, Tv* vy, Tv* vz, Tm1* x_m1, Tm1* y_m1, Tm1* z_m1, Ta* ax,
                                        Ta* ay, Ta* az, const uint8_t* rung, Tt* temp, Tt* u, Tdu* du, Tm1* du_m1,
-                                       Thydro* h, Thydro* mui, Tc gamma, Tc constCv, const cstone::Box<Tc> box)
+                                       Thydro* h, Thydro* mui, Tc gamma, Tc constCv, const cstone::Box<Tc> box, const Tc u_floor)
 {
     LocalIndex laneIdx = threadIdx.x & (GpuConfig::warpSize - 1);
     LocalIndex warpIdx = (blockDim.x * blockIdx.x + threadIdx.x) >> GpuConfig::warpSizeLog2;
@@ -162,7 +162,7 @@ __global__ void computePositionsKernel(GroupView grp, float dt, util::array<floa
     }
     else if (u != nullptr)
     {
-        u[i]     = energyUpdate(u[i], dt, dt_m1_rung, du[i], du_m1[i]);
+        u[i]     = energyUpdate(u[i], dt, dt_m1_rung, du[i], du_m1[i], u_floor);
         du_m1[i] = du[i];
     }
 }
@@ -171,7 +171,7 @@ template<class Tc, class Tv, class Ta, class Tdu, class Tm1, class Tt, class Thy
 void computePositionsGpu(const GroupView& grp, float dt, util::array<float, Timestep::maxNumRungs> dt_m1, Tc* x, Tc* y,
                          Tc* z, Tv* vx, Tv* vy, Tv* vz, Tm1* x_m1, Tm1* y_m1, Tm1* z_m1, Ta* ax, Ta* ay, Ta* az,
                          const uint8_t* rung, Tt* temp, Tt* u, Tdu* du, Tm1* du_m1, Thydro* h, Thydro* mui, Tc gamma,
-                         Tc constCv, const cstone::Box<Tc>& box)
+                         Tc constCv, const cstone::Box<Tc>& box, const double u_floor)
 {
     unsigned numThreads       = 256;
     unsigned numWarpsPerBlock = numThreads / GpuConfig::warpSize;
@@ -179,14 +179,14 @@ void computePositionsGpu(const GroupView& grp, float dt, util::array<float, Time
 
     if (numBlocks == 0) { return; }
     computePositionsKernel<<<numBlocks, numThreads>>>(grp, dt, dt_m1, x, y, z, vx, vy, vz, x_m1, y_m1, z_m1, ax, ay, az,
-                                                      rung, temp, u, du, du_m1, h, mui, gamma, constCv, box);
+                                                      rung, temp, u, du, du_m1, h, mui, gamma, constCv, box, u_floor);
 }
 
 #define POS_GPU(Tc, Tv, Ta, Tdu, Tm1, Tt, Thydro)                                                                      \
     template void computePositionsGpu(                                                                                 \
         const GroupView& grp, float dt, util::array<float, Timestep::maxNumRungs> dt_m1, Tc* x, Tc* y, Tc* z, Tv* vx,  \
         Tv* vy, Tv* vz, Tm1* x_m1, Tm1* y_m1, Tm1* z_m1, Ta* ax, Ta* ay, Ta* az, const uint8_t* rung, Tt* temp, Tt* u, \
-        Tdu* du, Tm1* du_m1, Thydro* h, Thydro* mui, Tc gamma, Tc constCv, const cstone::Box<Tc>& box)
+        Tdu* du, Tm1* du_m1, Thydro* h, Thydro* mui, Tc gamma, Tc constCv, const cstone::Box<Tc>& box, double)
 
 //        Tc      Tv     Ta      Tdu     Tm1     Tt      Thydro
 POS_GPU(double, double, double, double, double, double, double);
