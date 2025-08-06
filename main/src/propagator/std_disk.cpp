@@ -7,6 +7,7 @@
 #include "sph/types.hpp"
 #include "propagator.h"
 #include "std_disk.hpp"
+#include "ve_disk.hpp"
 
 namespace sphexa
 {
@@ -16,6 +17,13 @@ std::unique_ptr<Propagator<DomainType, ParticleDataType>>
 PropLib<DomainType, ParticleDataType>::makeDiskProp(std::ostream& output, size_t rank, const InitSettings& settings)
 {
     return std::make_unique<DiskProp<DomainType, ParticleDataType>>(output, rank, settings);
+}
+
+template<class DomainType, class ParticleDataType>
+std::unique_ptr<Propagator<DomainType, ParticleDataType>>
+PropLib<DomainType, ParticleDataType>::makeDiskVeProp(std::ostream& output, size_t rank, const InitSettings& settings)
+{
+    return std::make_unique<DiskVeProp<DomainType, ParticleDataType>>(output, rank, settings);
 }
 
 #ifdef USE_CUDA
