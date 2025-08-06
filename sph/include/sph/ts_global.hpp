@@ -57,8 +57,9 @@ auto accelerationTimestep(size_t first, size_t last, const Dataset& d)
     T minH2_A2 = std::numeric_limits<T>::infinity();
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
+        using AType = typename Dataset::HydroType;
         minH2_A2 = accelerationTimestepGPU(first, last, rawPtr(d.devData.ax), rawPtr(d.devData.ay),
-                                           rawPtr(d.devData.az), rawPtr(d.devData.h), T{0.25});
+                                           rawPtr(d.devData.az), rawPtr(d.devData.h), AType{0.25});
     }
     else
     {
