@@ -109,7 +109,8 @@ void computeTimestep(size_t first, size_t last, Dataset& d, Ts... extraTimesteps
 
     T minDtLoc = std::min({minDtAcc, d.minDtCourant, d.minDtRho, d.maxDtIncrease * d.minDt, extraTimesteps...});
 
-    util::array<T, 4> varsIn{minDtLoc, 0, 0, -T(d.accSize())}, varsOut;
+    util::array<T, 7 + sizeof...(extraTimesteps)>
+        varsIn{minDtLoc, 0, 0, -T(d.accSize()), minDtAcc, d.minDtCourant, d.minDtRho, extraTimesteps...}, varsOut;
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
         varsIn[1] = -int(d.devData.stackUsedNc);
@@ -128,6 +129,16 @@ void computeTimestep(size_t first, size_t last, Dataset& d, Ts... extraTimesteps
 
     d.minDt_m1 = d.minDt;
     d.minDt    = minDtGlobal;
+    printf("acc. ts:\t %g\n", varsOut[4]);
+    printf("cour. ts:\t %g\n", varsOut[5]);
+    printf("rho. ts:\t %g\n", varsOut[6]);
+    printf("du. ts:\t %g");
+    auto f = [&varsOut]<size_t ...I>(std::integer_sequence<size_t, I...>) {
+        ((std::cout << varsOut[7 + I] << "\t"), ...);
+    };
+    f(std::make_index_sequence<sizeof...(extraTimesteps)>{});
+    printf("\n");
+
 }
 
 } // namespace sph
