@@ -132,7 +132,7 @@ void computeTimestep(size_t first, size_t last, Dataset& d, Ts... extraTimesteps
     printf("acc. ts:\t %g\n", varsOut[4]);
     printf("cour. ts:\t %g\n", varsOut[5]);
     printf("rho. ts:\t %g\n", varsOut[6]);
-    printf("du. ts:\t %g");
+    printf("du. ts:\t");
     auto f = [&varsOut]<size_t ...I>(std::integer_sequence<size_t, I...>) {
         ((std::cout << varsOut[7 + I] << "\t"), ...);
     };
