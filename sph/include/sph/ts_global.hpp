@@ -81,23 +81,30 @@ auto rhoTimestep(size_t first, size_t last, const Dataset& d)
     using T = std::decay_t<decltype(d.divv[0])>;
 
     T maxDivv = -INFINITY;
+    T minDivv = INFINITY;
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
         if (d.devData.divv.empty()) { throw std::runtime_error("Divv needs to be available in rhoTimestep\n"); }
         auto minmax = cstone::MinMaxGpu<T>{}(rawPtr(d.devData.divv) + first, rawPtr(d.devData.divv) + last);
         maxDivv     = std::get<1>(minmax);
+        minDivv = std::get<0>(minmax);
     }
     else
     {
         if (d.divv.empty()) { throw std::runtime_error("Divv needs to be available in rhoTimestep\n"); }
 
-#pragma omp parallel for reduction(max : maxDivv)
+#pragma omp parallel for reduction(max : maxDivv) reduction(min : minDivv)
         for (size_t i = first; i < last; ++i)
         {
             maxDivv = std::max(d.divv[i], maxDivv);
+            minDivv = std::min(d.divv[i], minDivv);
         }
     }
-    return d.Krho / std::abs(maxDivv);
+//    maxDivv = std::max(maxDivv, 0.);
+//    minDivv = std::min(minDivv, 0.);
+    const T maxAbsDivv = std::max(std::abs(maxDivv), std::abs(minDivv));
+//    return d.Krho / std::abs(maxDivv);
+    return d.Krho / std::abs(maxAbsDivv);
 }
 
 template<class Dataset, class... Ts>
