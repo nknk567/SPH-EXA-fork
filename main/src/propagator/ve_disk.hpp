@@ -79,7 +79,7 @@ public:
         computeTimestep(first, last, d, star.t_du);
         timer.step("Timestep");
 
-        computePositions(Base::groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)});
+        computePositions(Base::groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)}, nullptr, star.u_floor);
         updateSmoothingLength(Base::groups_.view(), d);
         timer.step("UpdateQuantities");
 
