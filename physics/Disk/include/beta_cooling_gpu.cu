@@ -67,8 +67,6 @@ struct AbsDivide
 template<typename Treal>
 double duTimestepGPU(size_t first, size_t last, const Treal* u, const Treal* du)
 {
-    cstone::LocalIndex numParticles = last - first;
-
     using Tu  = std::decay_t<decltype(*u)>;
     using Tdu = std::decay_t<decltype(*du)>;
 

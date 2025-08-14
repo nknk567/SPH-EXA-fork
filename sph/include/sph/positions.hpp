@@ -54,7 +54,10 @@ HOST_DEVICE_FUN bool fbcCheck(Tc coord, Th h, Tc top, Tc bottom, bool fbc)
 template<class TU>
 HOST_DEVICE_FUN TU energyUpdate(TU u_old, double dt, double dt_m1, double du, double du_m1, double u_floor = 0.0)
 {
+    TU second_order_term =  0.5 * (du - du_m1) / dt_m1 * std::abs(dt) * dt;
     TU u_new = u_old + du * dt + 0.5 * (du - du_m1) / dt_m1 * std::abs(dt) * dt;
+    bool ignore_second = fabs(second_order_term - u_old) > 0.5 * u_old;
+    u_new = ignore_second ? u_old + du * dt : u_new;
     // To prevent u < 0 (when cooling with GRACKLE is active)
 //    if (u_new < 0.) { u_new = u_old * std::exp(u_new * dt / u_old); }
     if (u_new < u_floor) { u_new = u_floor; }
