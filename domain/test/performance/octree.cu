@@ -17,7 +17,7 @@
 
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
-#include <thrust/reduce.h>
+#include <thrust/count.h>
 
 #include "cstone/cuda/thrust_util.cuh"
 #include "cstone/focus/source_center_gpu.h"
@@ -50,6 +50,11 @@ auto benchmarkMacsCpu(const OctreeView<KeyType>& octree,
               << " count: " << std::accumulate(macs.begin(), macs.end(), 0) << std::endl;
     return macs;
 }
+
+struct BiggerZero
+{
+    HOST_DEVICE_FUN bool operator()(uint8_t a) { return a > 0; }
+};
 
 int main(int argc, char** argv)
 {
@@ -132,7 +137,7 @@ int main(int argc, char** argv)
 
     float findTime = timeGpu(findHalosLambda);
     std::cout << "halo discovery " << findTime / 1000 << " nNodes(tree): " << nNodes(tree)
-              << " count: " << thrust::reduce(flags.begin(), flags.end(), 0) << std::endl;
+              << " count: " << thrust::count_if(flags.begin(), flags.end(), BiggerZero{}) << std::endl;
 
     thrust::host_vector<KeyType> h_tree = tree;
     OctreeData<KeyType, CpuTag> h_octreeHarness;
@@ -150,7 +155,7 @@ int main(int argc, char** argv)
         };
         float findTimeCpu = timeCpu(findHalosCpuLambda);
         std::cout << "CPU halo discovery " << findTimeCpu << " nNodes(tree): " << nNodes(h_tree)
-                  << " count: " << thrust::reduce(h_flags.begin(), h_flags.end(), 0) << std::endl;
+                  << " count: " << thrust::count_if(h_flags.begin(), h_flags.end(), BiggerZero{}) << std::endl;
     }
 
     /*****************************************************/
