@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <iostream>
 #include <numeric>
 
@@ -94,6 +95,7 @@ public:
                     const Box<RealType>& box,
                     Vector& scratch)
     {
+        resetTime();
         if (rebalanceStatus_ != valid)
         {
             throw std::runtime_error("update of criteria required before updating the tree structure\n");
@@ -111,6 +113,7 @@ public:
         std::vector<KeyType> enforcedKeys{focusStart, focusEnd};
         focusTransfer<KeyType, useGpu>(leaves_, {leafCountsAcc_.data(), leafCountsAcc_.size()}, bucketSize_, myRank_,
                                        prevFocusStart, prevFocusEnd, focusStart, focusEnd, enforcedKeys);
+        pushTime("let::focusTransfer");
         auto uniqueEnd = std::unique(enforcedKeys.begin(), enforcedKeys.end());
         enforcedKeys.erase(uniqueEnd, enforcedKeys.end());
 
@@ -121,10 +124,12 @@ public:
             converged = CombinedUpdate<KeyType>::updateFocusGpu(
                 octreeAcc_, leavesAcc_, bucketSize_, focusStart, focusEnd, enforcedKeys,
                 {rawPtr(countsAcc_), countsAcc_.size()}, {rawPtr(macsAcc_), macsAcc_.size()}, scratch);
+            pushTime("let::updateFocus");
 
             while (not macRefineGpu(octreeAcc_, leavesAcc_, centersAcc_, macsAcc_, prevFocusStart, prevFocusEnd,
                                     focusStart, focusEnd, invThetaRefine, box))
                 ;
+            pushTime("let::macRefine");
 
             reallocateDestructive(leaves_, leavesAcc_.size(), allocGrowthRate_);
             memcpyD2H(rawPtr(leavesAcc_), leavesAcc_.size(), rawPtr(leaves_));
@@ -152,14 +157,17 @@ public:
             syncTreelets(recvPeers_, sendPeers_, assignment_, octreeAcc_, leaves_, treelets_);
             hostPrefixes_ = octreeAcc_.prefixes;
         }
+        pushTime("let::syncTreelets");
 
         indexTreelets<KeyType>(sendPeers_, hostPrefixes_, octreeAcc_.levelRange, treelets_, treeletIdx_);
+        pushTime("let::indexTreelets");
 
         translateAssignment<KeyType>(assignment, leaves_, assignment_);
         extractPeerRanges(recvPeers_, myRank_, assignment_, peerRanges_);
         std::copy_n(assignment.numNodesPerRankConst().begin(), numRanks_, globNumNodes_.begin());
         std::copy_n(assignment.treeOffsetsConst().begin(), numRanks_ + 1, globDispl_.begin());
         copy(treeletIdx_, treeletIdxAcc_);
+        pushTime("let::uploadTreelets");
 
         /*! Store box for use in all property updates (counts, centers, MACs, etc) until updateTree() is called again.
          *  We store it here in order to disallow calling updateMacs with a changed bounding box, because changing
@@ -208,6 +216,7 @@ public:
             std::size_t numIndices = idxFromGlob.size();
             auto* d_indices        = util::packAllocBuffer<TreeNodeIndex>(scratch, {&numIndices, 1}, 64)[0].data();
             memcpyH2D(idxFromGlob.data(), idxFromGlob.size(), d_indices);
+            pushTime("let::leafCount+");
 
             std::span<const KeyType> leavesAcc{rawPtr(leavesAcc_), leavesAcc_.size()};
             rangeCountGpu<KeyType>(globalTreeLeaves, globalCounts, leavesAcc, {d_indices, idxFromGlob.size()},
@@ -221,6 +230,7 @@ public:
                           rawPtr(countsAcc_));
             std::span<unsigned> countsAccView{rawPtr(countsAcc_), countsAcc_.size()};
             peerExchange(countsAccView, static_cast<int>(P2pTags::focusPeerCounts), scratch);
+            pushTime("let::countGlobPeer");
 
             upsweepSumGpu(maxTreeLevel<KeyType>{}, rawPtr(octreeAcc_.levelRange), rawPtr(octreeAcc_.childOffsets),
                           rawPtr(countsAcc_));
@@ -252,8 +262,10 @@ public:
     template<class T, class DevVec>
     void peerExchange(std::span<T> q, int tag, DevVec& s) const
     {
+        auto t0 = std::chrono::high_resolution_clock::now();
         exchangeTreeletGeneral<T>(sendPeers_, recvPeers_, treeletIdxAcc_.view(), assignment_,
                                   leafToInternal(octreeAcc_), q, tag, s);
+        pushTime(t0, "let::peerExchange" + std::to_string(sizeof(T)));
     }
 
     /*! @brief transfer quantities of leaf cells inside the focus into a global array
@@ -343,8 +355,10 @@ public:
     void gatherGlobalLeaves(std::span<T> gLeafQLoc, std::span<T> gLeafQAll) const
     {
         if constexpr (HaveGpu<Accelerator>{}) { syncGpu(); }
+        auto t0 = std::chrono::high_resolution_clock::now();
         mpiAllgathervGpuDirect<HaveGpu<Accelerator>{}>(gLeafQLoc.data(), globNumNodes_[myRank_], gLeafQAll.data(),
                                                        globNumNodes_.data(), globDispl_.data(), MPI_COMM_WORLD);
+        pushTime(t0, "let::gatherGlobal" + std::to_string(sizeof(T)));
     }
 
     template<class Tm, class DevVec1 = std::vector<LocalIndex>, class DevVec2 = std::vector<LocalIndex>>
@@ -385,6 +399,8 @@ public:
                              d_layout + firstIdx + 1);
             computeLeafSourceCenterGpu(x, y, z, m, octree.leafToInternal + octree.numInternalNodes, octree.numLeafNodes,
                                        d_layout, rawPtr(centersAcc_));
+            syncGpu();
+            pushTime("let::leafCenter+");
             reallocate(scratch1, osz1, 1.0);
         }
         else
@@ -482,10 +498,13 @@ public:
 
         if constexpr (HaveGpu<Accelerator>{})
         {
+            syncGpu();
+            auto t0 = std::chrono::high_resolution_clock::now();
             if (not accumulate) { fillGpu(rawPtr(macsAcc_), rawPtr(macsAcc_) + macsAcc_.size(), uint8_t(0)); }
             markMacsGpu(rawPtr(octreeAcc_.prefixes), rawPtr(octreeAcc_.childOffsets), rawPtr(octreeAcc_.parents),
                         rawPtr(centersAcc_), box_, rawPtr(leavesAcc_) + fAssignStart, fAssignEnd - fAssignStart, false,
                         rawPtr(macsAcc_));
+            pushTime(t0, "let::updateMacs");
         }
         else
         {
@@ -681,7 +700,35 @@ public:
     std::span<const Vec3<RealType>> geoCentersAcc() const { return {rawPtr(geoCentersAcc_), geoCentersAcc_.size()}; }
     std::span<const Vec3<RealType>> geoSizesAcc() const { return {rawPtr(geoSizesAcc_), geoSizesAcc_.size()}; }
 
+    auto getTimeDeltas() const { return std::make_tuple(std::span(tsNames_), std::span(ts_)); }
+
 private:
+    void resetTime()
+    {
+        lastTs_ = std::chrono::high_resolution_clock::now();
+        tsNames_.clear();
+        ts_.clear();
+    }
+
+    void pushTime(const std::string& name)
+    {
+        auto now = std::chrono::high_resolution_clock::now();
+        ts_.push_back(std::chrono::duration<float>(now - lastTs_).count());
+        lastTs_ = now;
+        tsNames_.push_back(name);
+    }
+
+    void pushTime(std::chrono::time_point<std::chrono::high_resolution_clock> t0, const std::string& name) const
+    {
+        auto now = std::chrono::high_resolution_clock::now();
+        ts_.push_back(std::chrono::duration<float>(now - t0).count());
+        tsNames_.push_back(name);
+    }
+
+    std::chrono::time_point<std::chrono::high_resolution_clock> lastTs_;
+    mutable std::vector<std::string> tsNames_;
+    mutable std::vector<float> ts_;
+
     //! @brief compute geometrical center and size of each tree cell in terms of x,y,z coordinates
     void updateGeoCenters()
     {

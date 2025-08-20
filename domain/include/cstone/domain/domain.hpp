@@ -395,7 +395,13 @@ public:
                 focusTree_.geoSizesAcc().data()};
     }
 
-    auto getTimeDeltas() const { return std::make_tuple(std::span(tsNames_), std::span(ts_)); }
+    auto getTimeDeltas()
+    {
+        auto [letNames, letTs] = focusTree_.getTimeDeltas();
+        std::copy(letNames.begin(), letNames.end(), std::back_inserter(tsNames_));
+        std::copy(letTs.begin(), letTs.end(), std::back_inserter(ts_));
+        return std::make_tuple(std::span(tsNames_), std::span(ts_));
+    }
 
 private:
     //! @brief bounds initialization on first call, use all particles

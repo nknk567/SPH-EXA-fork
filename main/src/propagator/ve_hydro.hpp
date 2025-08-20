@@ -137,7 +137,6 @@ public:
         timer.logStatistics("numParticles", domain.nParticles());
         timer.logStatistics("numHalos", domain.nParticlesWithHalos() - domain.nParticles());
         timer.logStatistics("assignment", domain.assignmentStart());
-        timer.logStatistics(domain.getTimeDeltas());
 
         auto& d = simData.hydro;
         d.resizeAcc(domain.nParticlesWithHalos());
@@ -210,6 +209,7 @@ public:
             timer.logStatistics("sumP2P", stats[0] / timer.getLastStepTime());
             timer.logStatistics("sumM2P", stats[2] / timer.getLastStepTime());
         }
+        timer.logStatistics(domain.getTimeDeltas());
     }
 
     void integrate(DomainType& domain, DataType& simData) override
