@@ -116,10 +116,16 @@ public:
         sequence<gpu>(o1.start, numPart, reorderFunctor.getBuf(), growthRate_);
         sortByKey<gpu>(keyView, std::span{reorderFunctor.getMap() + o1.start, keyView.size()}, s0, s1, growthRate_);
         if constexpr (gpu) { syncGpu(); }
-        pushTime("assign::makeGlobalBox");
+        pushTime("assign::sfcSort");
 
-        updateOctreeGlobal<KeyType>(keyView, bucketSize_, tree_, leaves_, d_csTree_, nodeCounts_, d_nodeCounts_);
+        std::vector<float> upt(3);
+        updateOctreeGlobal<KeyType>(keyView, bucketSize_, tree_, leaves_, d_csTree_, nodeCounts_, d_nodeCounts_, upt);
         pushTime("assign::updateOctreeGlobal");
+        std::copy(upt.begin(), upt.end(), std::back_inserter(ts_));
+        tsNames_.push_back("assign::globalUpdate");
+        tsNames_.push_back("assign::allreduce");
+        tsNames_.push_back("assign::seqDl");
+
         if (firstCall_)
         {
             firstCall_ = false;
