@@ -397,9 +397,16 @@ public:
 
     auto getTimeDeltas()
     {
-        auto [letNames, letTs] = focusTree_.getTimeDeltas();
-        std::copy(letNames.begin(), letNames.end(), std::back_inserter(tsNames_));
-        std::copy(letTs.begin(), letTs.end(), std::back_inserter(ts_));
+        {
+            auto [letNames, letTs] = focusTree_.getTimeDeltas();
+            std::copy(letNames.begin(), letNames.end(), std::back_inserter(tsNames_));
+            std::copy(letTs.begin(), letTs.end(), std::back_inserter(ts_));
+        }
+        {
+            auto [assignNames, assignTs] = global_.getTimeDeltas();
+            std::copy(assignNames.begin(), assignNames.end(), std::back_inserter(tsNames_));
+            std::copy(assignTs.begin(), assignTs.end(), std::back_inserter(ts_));
+        }
         return std::make_tuple(std::span(tsNames_), std::span(ts_));
     }
 

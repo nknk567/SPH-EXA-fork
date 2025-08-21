@@ -100,6 +100,7 @@ public:
                       const T* y,
                       const T* z)
     {
+        resetTime();
         // number of locally assigned particles to consider for global tree building
         LocalIndex numPart = o1.end - o1.start;
 
@@ -107,14 +108,18 @@ public:
         auto fittingBox = makeGlobalBox<T, Op>(x + o1.start, y + o1.start, z + o1.start, numPart, box_);
         if (firstCall_) { box_ = fittingBox; }
         else { box_ = limitBoxShrinking(fittingBox, box_); }
+        pushTime("assign::makeGlobalBox");
 
         // compute SFC particle keys only for particles participating in tree build
         std::span<KeyType> keyView(particleKeys + o1.start, numPart);
         computeSfcKeys<gpu>(x + o1.start, y + o1.start, z + o1.start, sfcKindPointer(keyView.data()), numPart, box_);
         sequence<gpu>(o1.start, numPart, reorderFunctor.getBuf(), growthRate_);
         sortByKey<gpu>(keyView, std::span{reorderFunctor.getMap() + o1.start, keyView.size()}, s0, s1, growthRate_);
+        if constexpr (gpu) { syncGpu(); }
+        pushTime("assign::makeGlobalBox");
 
         updateOctreeGlobal<KeyType>(keyView, bucketSize_, tree_, leaves_, d_csTree_, nodeCounts_, d_nodeCounts_);
+        pushTime("assign::updateOctreeGlobal");
         if (firstCall_)
         {
             firstCall_ = false;
@@ -130,6 +135,7 @@ public:
             memcpyD2H(tree_.childOffsets.data(), tree_.childOffsets.size(), hostTree_.childOffsets.data());
             std::copy_n(tree_.levelRange.data(), tree_.levelRange.size(), hostTree_.levelRange.data());
         }
+        pushTime("assign::copyHostTree");
 
         auto newAssignment = makeSfcAssignment(numRanks_, nodeCounts_, leaves_.data());
         limitBoundaryShifts<KeyType>(assignment_, newAssignment, leaves_, nodeCounts_);
@@ -141,6 +147,7 @@ public:
                 createSendRangesGpu<KeyType>(assignment_, keyView, rawPtr(d_boundaryKeys_), rawPtr(d_boundaryIndices_));
         }
         else { exchanges_ = createSendRanges<KeyType>(assignment_, keyView); }
+        pushTime("assign::createSendRanges");
 
         return domain_exchange::exchangeBufferSize(o1, numPresent(), numAssigned());
     }
@@ -270,7 +277,35 @@ public:
     //! @brief number of particles assigned to local subdomain
     LocalIndex numAssigned() const { return assignment_.totalCount(myRank_); }
 
+    auto getTimeDeltas() const { return std::make_tuple(std::span(tsNames_), std::span(ts_)); }
+
 private:
+    void resetTime()
+    {
+        lastTs_ = std::chrono::high_resolution_clock::now();
+        tsNames_.clear();
+        ts_.clear();
+    }
+
+    void pushTime(const std::string& name)
+    {
+        auto now = std::chrono::high_resolution_clock::now();
+        ts_.push_back(std::chrono::duration<float>(now - lastTs_).count());
+        lastTs_ = now;
+        tsNames_.push_back(name);
+    }
+
+    void pushTime(std::chrono::time_point<std::chrono::high_resolution_clock> t0, const std::string& name) const
+    {
+        auto now = std::chrono::high_resolution_clock::now();
+        ts_.push_back(std::chrono::duration<float>(now - t0).count());
+        tsNames_.push_back(name);
+    }
+
+    std::chrono::time_point<std::chrono::high_resolution_clock> lastTs_;
+    mutable std::vector<std::string> tsNames_;
+    mutable std::vector<float> ts_;
+
     int myRank_;
     int numRanks_;
     unsigned bucketSize_;
