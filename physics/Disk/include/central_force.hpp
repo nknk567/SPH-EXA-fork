@@ -19,9 +19,10 @@ template<typename Dataset, typename StarData>
 void computeCentralForceImpl(size_t first, size_t last, Dataset& d, StarData& star)
 {
     cstone::Vec4<double>   force_local{};
-    double t_star{std::numeric_limits<double>::infinity()};
+    float                  t_star{std::numeric_limits<float>::infinity()};
     const double           inner_size2 = star.inner_size * star.inner_size;
-    const CentralForceData data{d.x.data(), d.y.data(), d.z.data(), d.m.data(), d.ax.data(), d.ay.data(), d.az.data(), d.g, star.m, inner_size2, 1.0, star.position};
+    const CentralForceData data{d.x.data(),  d.y.data(), d.z.data(), d.m.data(),  d.ax.data(), d.ay.data(),
+                                d.az.data(), d.g,        star.m,     inner_size2, 1.0,         star.position};
 
 #pragma omp declare reduction(add_force : cstone::Vec4<double> : omp_out = omp_out + omp_in) initializer(omp_priv = {})
 
@@ -36,7 +37,7 @@ void computeCentralForceImpl(size_t first, size_t last, Dataset& d, StarData& st
     }
 
     star.force_local = force_local;
-    star.t_star = t_star;
+    star.t_star      = t_star;
 }
 
 template<typename Dataset, typename StarData>
