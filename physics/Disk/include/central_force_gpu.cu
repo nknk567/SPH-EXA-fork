@@ -75,7 +75,7 @@ __global__ void computeCentralForceGPUKernel(size_t first, size_t last, const Da
     __shared__ typename BlockReduceDt::TempStorage temp_storage_dt;
     BlockReduceDt                                  reduce(temp_storage_dt);
 
-    float t_star_block = reduce.Reduce(temp_storage_dt, cub::Min());
+    float t_star_block = reduce.Reduce(t_star, cub::Min());
     __syncthreads();
 
     if (threadIdx.x == 0)
