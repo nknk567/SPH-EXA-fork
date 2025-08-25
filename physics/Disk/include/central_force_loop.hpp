@@ -33,7 +33,7 @@ struct CentralForceData
 };
 
 template<typename Data>
-HOST_DEVICE_FUN void newtonianGravity(const Data& d, size_t i, cstone::Vec4<double>& star_force_local)
+HOST_DEVICE_FUN void newtonianGravity(const Data& d, size_t i, cstone::Vec4<double>& star_force_local, double& t_star)
 {
     const double dx    = d.x[i] - d.star_position[0];
     const double dy    = d.y[i] - d.star_position[1];
@@ -54,10 +54,11 @@ HOST_DEVICE_FUN void newtonianGravity(const Data& d, size_t i, cstone::Vec4<doub
     star_force_local[1] -= ax_i * d.m[i];
     star_force_local[2] -= ay_i * d.m[i];
     star_force_local[3] -= az_i * d.m[i];
+    t_star = stl::min(t_star, std::sqrt(dist / a_strength));
 }
 
 template<typename Data>
-HOST_DEVICE_FUN void einsteinPrecession(const Data& d, size_t i, cstone::Vec4<double>& star_force_local)
+HOST_DEVICE_FUN void einsteinPrecession(const Data& d, size_t i, cstone::Vec4<double>& star_force_local, double& t_star)
 {
     const double dx    = d.x[i] - d.star_position[0];
     const double dy    = d.y[i] - d.star_position[1];
@@ -81,5 +82,6 @@ HOST_DEVICE_FUN void einsteinPrecession(const Data& d, size_t i, cstone::Vec4<do
     star_force_local[1] -= ax_i * d.m[i];
     star_force_local[2] -= ay_i * d.m[i];
     star_force_local[3] -= az_i * d.m[i];
+    t_star = stl::min(t_star, std::sqrt(dist / a_strength));
 }
 } // namespace disk

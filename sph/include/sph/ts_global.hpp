@@ -81,30 +81,23 @@ auto rhoTimestep(size_t first, size_t last, const Dataset& d)
     using T = std::decay_t<decltype(d.divv[0])>;
 
     T maxDivv = -INFINITY;
-//    T minDivv = INFINITY;
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
         if (d.devData.divv.empty()) { throw std::runtime_error("Divv needs to be available in rhoTimestep\n"); }
         auto minmax = cstone::MinMaxGpu<T>{}(rawPtr(d.devData.divv) + first, rawPtr(d.devData.divv) + last);
         maxDivv     = std::get<1>(minmax);
-//        minDivv = std::get<0>(minmax);
     }
     else
     {
         if (d.divv.empty()) { throw std::runtime_error("Divv needs to be available in rhoTimestep\n"); }
 
-#pragma omp parallel for reduction(max : maxDivv)// reduction(min : minDivv)
+#pragma omp parallel for reduction(max : maxDivv)
         for (size_t i = first; i < last; ++i)
         {
             maxDivv = std::max(d.divv[i], maxDivv);
-//            minDivv = std::min(d.divv[i], minDivv);
         }
     }
-//    maxDivv = std::max(maxDivv, 0.);
-//    minDivv = std::min(minDivv, 0.);
-//    const T maxAbsDivv = std::max(std::abs(maxDivv), std::abs(minDivv));
     return d.Krho / std::abs(maxDivv);
-//    return d.Krho / std::abs(maxAbsDivv);
 }
 
 template<class Dataset, class... Ts>
@@ -116,8 +109,7 @@ void computeTimestep(size_t first, size_t last, Dataset& d, Ts... extraTimesteps
 
     T minDtLoc = std::min({minDtAcc, d.minDtCourant, d.minDtRho, d.maxDtIncrease * d.minDt, extraTimesteps...});
 
-    util::array<T, 7 + sizeof...(extraTimesteps)>
-        varsIn{minDtLoc, 0, 0, -T(d.accSize()), minDtAcc, d.minDtCourant, d.minDtRho, extraTimesteps...}, varsOut;
+    util::array<T, 4> varsIn{minDtLoc, 0, 0, -T(d.accSize() - last + first)}, varsOut;
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
         varsIn[1] = -int(d.devData.stackUsedNc);
@@ -136,16 +128,6 @@ void computeTimestep(size_t first, size_t last, Dataset& d, Ts... extraTimesteps
 
     d.minDt_m1 = d.minDt;
     d.minDt    = minDtGlobal;
-    printf("acc. ts:\t %g\n", varsOut[4]);
-    printf("cour. ts:\t %g\n", varsOut[5]);
-    printf("rho. ts:\t %g\n", varsOut[6]);
-    printf("du. ts:\t");
-    auto f = [&varsOut]<size_t ...I>(std::integer_sequence<size_t, I...>) {
-        ((std::cout << varsOut[7 + I] << "\t"), ...);
-    };
-    f(std::make_index_sequence<sizeof...(extraTimesteps)>{});
-    printf("\n");
-
 }
 
 } // namespace sph

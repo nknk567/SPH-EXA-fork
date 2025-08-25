@@ -113,7 +113,7 @@ public:
         std::vector<KeyType> enforcedKeys;
         enforcedKeys.reserve(peers_.size() * 2);
 
-        assert(leafCountsAcc_.size() == octreeAcc_.numLeafNodes);
+        assert(leafCountsAcc_.size() == size_t(octreeAcc_.numLeafNodes));
         focusTransfer<KeyType, useGpu>(leaves_, {leafCountsAcc_.data(), leafCountsAcc_.size()}, bucketSize_, myRank_,
                                        prevFocusStart, prevFocusEnd, focusStart, focusEnd, enforcedKeys);
         for (int peer : peers_)
@@ -505,19 +505,29 @@ public:
 
     /*! @brief Discover which cells outside myRank's assignment are halos
      *
-     * @param[-]  layout           temporary storage for node count scan
+     * @param[in] x                x local particle coordinates
+     * @param[in] y                y local particle coordinates
+     * @param[in] z                z local particle coordinates
      * @param[in] h                smoothing lengths of locally owned particles
+     * @param[-]  layout           temporary storage for node count scan
      * @param[in] searchExtFact    increases halo search radius to extend the depth of the ghost layer
      * @param[-]  scratch          host or device buffer for temporary use
      */
     template<class Th, class Vector>
-    void discoverHalos(std::span<LocalIndex> layout, const Th* h, float searchExtFact, Vector& scratch, bool accumulate)
+    void discoverHalos(const RealType* x,
+                       const RealType* y,
+                       const RealType* z,
+                       const Th* h,
+                       std::span<LocalIndex> layout,
+                       float searchExtFact,
+                       Vector& scratch,
+                       bool accumulate)
     {
-        TreeNodeIndex firstNode      = assignment_[myRank_].start();
-        TreeNodeIndex lastNode       = assignment_[myRank_].end();
-        auto let                     = octreeViewAcc();
-        TreeNodeIndex numNodesSearch = lastNode - firstNode;
-        TreeNodeIndex numLeafNodes   = let.numLeafNodes;
+        TreeNodeIndex firstNode    = assignment_[myRank_].start();
+        TreeNodeIndex lastNode     = assignment_[myRank_].end();
+        auto let                   = octreeViewAcc();
+        std::size_t numNodesSearch = lastNode - firstNode;
+        std::size_t numLeafNodes   = let.numLeafNodes;
 
         if (accumulate && TreeNodeIndex(macsAcc_.size()) != let.numNodes)
         {
@@ -525,44 +535,41 @@ public:
         }
         reallocate(let.numNodes, allocGrowthRate_, macsAcc_);
 
+        size_t origSize                   = scratch.size();
+        auto [searchCenters, searchSizes] = util::packAllocBuffer(
+            scratch, util::TypeList<Vec3<RealType>, Vec3<RealType>>{}, {numLeafNodes, numLeafNodes}, 128);
+        gatherAcc<useGpu>(let.leafToInternalSpan(), geoCentersAcc_.data(), searchCenters.data());
         if constexpr (HaveGpu<Accelerator>{})
         {
-            size_t radiiBytes = numLeafNodes * sizeof(float);
-            size_t origSize   = reallocateBytes(scratch, radiiBytes, allocGrowthRate_);
-            auto* d_radii     = reinterpret_cast<float*>(rawPtr(scratch));
-
             fillGpu(layout.data() + firstNode, layout.data() + firstNode + 1, LocalIndex{0});
             inclusiveScanGpu(leafCountsAcc_.data() + firstNode, leafCountsAcc_.data() + lastNode,
                              layout.data() + firstNode + 1);
-            segmentMax(h, layout.data() + firstNode, numNodesSearch, d_radii + firstNode);
-            // SPH convention: interaction radius = 2 * h
-            scaleGpu(d_radii, d_radii + numLeafNodes, 2.0f * searchExtFact);
+            computeBoundingBoxGpu(x, y, z, h, layout.data(), firstNode, lastNode, Th(2 * searchExtFact),
+                                  searchCenters.data(), searchSizes.data());
 
             if (not accumulate) { fillGpu(rawPtr(macsAcc_), rawPtr(macsAcc_) + macsAcc_.size(), uint8_t(0)); }
-            findHalosGpu(let.prefixes, let.childOffsets, let.parents, leavesAcc_.data(), d_radii, box_, firstNode,
-                         lastNode, macsAcc_.data());
-
-            reallocate(scratch, origSize, 1.0);
+            findHalosGpu(let.prefixes, let.childOffsets, let.parents, geoCentersAcc_.data(), geoSizesAcc_.data(),
+                         leavesAcc_.data(), searchCenters.data(), searchSizes.data(), box_, firstNode, lastNode,
+                         macsAcc_.data());
         }
         else
         {
             layout[0] = 0;
             std::inclusive_scan(leafCountsAcc_.begin() + firstNode, leafCountsAcc_.begin() + lastNode,
                                 layout.begin() + 1, std::plus{}, LocalIndex{0});
-            std::vector<float> haloRadii(leafCountsAcc_.size(), 0.0f);
 #pragma omp parallel for schedule(static)
-            for (TreeNodeIndex i = 0; i < numNodesSearch; ++i)
+            for (std::size_t i = 0; i < numNodesSearch; ++i)
             {
-                if (layout[i + 1] > layout[i])
-                {
-                    // Note factor 2 due to SPH convention: interaction radius = 2 * h
-                    haloRadii[i + firstNode] = *std::max_element(h + layout[i], h + layout[i + 1]) * 2 * searchExtFact;
-                }
+                auto leafIdx                                           = firstNode + i;
+                std::tie(searchCenters[leafIdx], searchSizes[leafIdx]) = computeBoundingBox(
+                    x, y, z, h, layout[i], layout[i + 1], Th(2 * searchExtFact), searchCenters[leafIdx]);
             }
             if (not accumulate) { std::fill(rawPtr(macsAcc_), rawPtr(macsAcc_) + macsAcc_.size(), uint8_t(0)); }
-            findHalos(let.prefixes, let.childOffsets, let.parents, leaves_.data(), haloRadii.data(), box_, firstNode,
-                      lastNode, macsAcc_.data());
+            findHalos(let.prefixes, let.childOffsets, let.parents, geoCentersAcc_.data(), geoSizesAcc_.data(),
+                      leaves_.data(), searchCenters.data(), searchSizes.data(), box_, firstNode, lastNode,
+                      macsAcc_.data());
         }
+        reallocate(scratch, origSize, 1.0);
     }
 
     int computeLayout(std::span<LocalIndex> layoutAcc, std::span<LocalIndex> layout) const

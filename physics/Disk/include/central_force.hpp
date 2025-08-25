@@ -19,22 +19,24 @@ template<typename Dataset, typename StarData>
 void computeCentralForceImpl(size_t first, size_t last, Dataset& d, StarData& star)
 {
     cstone::Vec4<double>   force_local{};
+    double t_star{std::numeric_limits<double>::infinity()};
     const double           inner_size2 = star.inner_size * star.inner_size;
     const CentralForceData data{d.x.data(), d.y.data(), d.z.data(), d.m.data(), d.ax.data(), d.ay.data(), d.az.data(), d.g, star.m, inner_size2, 1.0, star.position};
 
 #pragma omp declare reduction(add_force : cstone::Vec4<double> : omp_out = omp_out + omp_in) initializer(omp_priv = {})
 
-#pragma omp parallel for reduction(add_force : force_local)
+#pragma omp parallel for reduction(add_force : force_local) reduction(min : t_star)
     for (size_t i = first; i < last; i++)
     {
-        if (star.potentialType == StarPotentialType::newtonian) { newtonianGravity(data, i, force_local); }
+        if (star.potentialType == StarPotentialType::newtonian) { newtonianGravity(data, i, force_local, t_star); }
         else if (star.potentialType == StarPotentialType::einstein_precession)
         {
-            einsteinPrecession(data, i, force_local);
+            einsteinPrecession(data, i, force_local, t_star);
         }
     }
 
     star.force_local = force_local;
+    star.t_star = t_star;
 }
 
 template<typename Dataset, typename StarData>

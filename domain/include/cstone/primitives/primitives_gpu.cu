@@ -68,29 +68,6 @@ void scaleGpu(T* first, T* last, T value)
 template void scaleGpu(double*, double*, double);
 template void scaleGpu(float*, float*, float);
 
-template<class T>
-struct IncrementFunctor
-{
-    const T s;
-
-    IncrementFunctor(T s_)
-        : s(s_)
-    {
-    }
-
-    __host__ __device__ T operator()(const T& x) const { return x + s; }
-};
-
-template<class T>
-void incrementGpu(const T* first, const T* last, T* d_first, T value)
-{
-    thrust::transform(thrust::device, first, last, d_first, IncrementFunctor<T>(value));
-}
-
-#define INCREMENT_GPU(T) template void incrementGpu(const T* first, const T* last, T* d_first, T value)
-INCREMENT_GPU(unsigned);
-INCREMENT_GPU(uint64_t);
-
 template<class TS, class TD, class IndexType>
 __global__ void gatherGpuKernel(const IndexType* map, size_t n, const TS* source, TD* destination)
 {
@@ -113,9 +90,11 @@ template void gatherGpu(const int*, size_t, const uint8_t*, uint32_t*);
 template void gatherGpu(const int*, size_t, const int*, int*);
 template void gatherGpu(const int*, size_t, const uint32_t*, uint32_t*);
 template void gatherGpu(const int*, size_t, const uint64_t*, uint64_t*);
+template void gatherGpu(const int*, size_t, const util::array<float, 3>*, util::array<float, 3>*);
 template void gatherGpu(const int*, size_t, const util::array<float, 4>*, util::array<float, 4>*);
 template void gatherGpu(const int*, size_t, const util::array<float, 8>*, util::array<float, 8>*);
 template void gatherGpu(const int*, size_t, const util::array<float, 12>*, util::array<float, 12>*);
+template void gatherGpu(const int*, size_t, const util::array<double, 3>*, util::array<double, 3>*);
 template void gatherGpu(const int*, size_t, const util::array<double, 4>*, util::array<double, 4>*);
 template void gatherGpu(const int*, size_t, const util::array<double, 8>*, util::array<double, 8>*);
 template void gatherGpu(const int*, size_t, const util::array<double, 12>*, util::array<double, 12>*);
@@ -137,7 +116,7 @@ template void gatherGpu(const unsigned*, size_t, const util::array<float, 4>*, u
 template<class T, class IndexType>
 __global__ void scatterGpuKernel(const IndexType* map, size_t n, const T* source, T* destination)
 {
-    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < n) { destination[map[tid]] = source[tid]; }
 }
@@ -254,44 +233,6 @@ template void lowerBoundGpu(const unsigned*, const unsigned*, const unsigned*, c
 template void lowerBoundGpu(const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*, unsigned*);
 template void lowerBoundGpu(const unsigned*, const unsigned*, const unsigned*, const unsigned*, uint64_t*);
 template void lowerBoundGpu(const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*, uint64_t*);
-
-template<class Tin, class Tout, class IndexType>
-__global__ void segmentMaxKernel(const Tin* input, const IndexType* segments, size_t numSegments, Tout* output)
-{
-    IndexType tid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (tid < numSegments)
-    {
-        Tin localMax = 0;
-
-        IndexType segStart = segments[tid];
-        IndexType segEnd   = segments[tid + 1];
-
-        for (IndexType i = segStart; i < segEnd; ++i)
-        {
-            localMax = max(localMax, input[i]);
-        }
-
-        output[tid] = Tout(localMax);
-    }
-}
-
-template<class Tin, class Tout, class IndexType>
-void segmentMax(const Tin* input, const IndexType* segments, size_t numSegments, Tout* output)
-{
-    int numThreads = 256;
-    int numBlocks  = iceil(numSegments, numThreads);
-
-    if (numBlocks == 0) { return; }
-    segmentMaxKernel<<<numBlocks, numThreads>>>(input, segments, numSegments, output);
-}
-
-template void segmentMax(const float*, const unsigned*, size_t, float*);
-template void segmentMax(const double*, const unsigned*, size_t, float*);
-template void segmentMax(const double*, const unsigned*, size_t, double*);
-template void segmentMax(const float*, const uint64_t*, size_t, float*);
-template void segmentMax(const double*, const uint64_t*, size_t, float*);
-template void segmentMax(const double*, const uint64_t*, size_t, double*);
 
 template<class T1, class T2, class Tout>
 void sequenceMax(const T1* i1_begin, const T1* i1_end, const T2* i2, Tout* output)

@@ -13,6 +13,7 @@ namespace disk
 {
 
 static __device__ cstone::Vec4<double> force_device;
+static __device__ double               t_star_device;
 
 template<typename T>
 __device__ void atomicAddVec4(cstone::Vec4<T>* x, const cstone::Vec4<T>& y)
@@ -32,6 +33,7 @@ __global__ void computeCentralForceGPUKernel(size_t first, size_t last, const Da
 {
     cstone::LocalIndex   i = first + blockDim.x * blockIdx.x + threadIdx.x;
     cstone::Vec4<double> force{0., 0., 0., 0.};
+    double               t_star{INFINITY};
 
     //    const CentralForceData data{
     //        d.x, d.y, d.z, d.m, d.ax, d.ay, d.az, d.g, star.position, star.m, star.inner_size * star.inner_size, 1.0};
@@ -39,8 +41,8 @@ __global__ void computeCentralForceGPUKernel(size_t first, size_t last, const Da
     if (i >= last) { force = {0., 0., 0., 0.}; }
     else
     {
-        if (potentialType == StarPotentialType::newtonian) { newtonianGravity(d, i, force); }
-        else if (potentialType == StarPotentialType::einstein_precession) { einsteinPrecession(d, i, force); }
+        if (potentialType == StarPotentialType::newtonian) { newtonianGravity(d, i, force, t_star); }
+        else if (potentialType == StarPotentialType::einstein_precession) { einsteinPrecession(d, i, force, t_star); }
         //        const double dx    = x[i] - star_position[0];
         //        const double dy    = y[i] - star_position[1];
         //        const double dz    = z[i] - star_position[2];
@@ -67,7 +69,18 @@ __global__ void computeCentralForceGPUKernel(size_t first, size_t last, const Da
 
     cstone::Vec4<double> force_block = BlockReduce(temp_storage).Sum(force);
     __syncthreads();
-    if (threadIdx.x == 0) { atomicAddVec4(&force_device, force_block); }
+
+    typedef cub::BlockReduce<double, numThreads>   BlockReduceDt;
+    __shared__ typename BlockReduceDt::TempStorage temp_storage_dt;
+
+    double t_star_block = BlockReduceDt(temp_storage_dt).min(temp_storage_dt);
+    __syncthreads();
+
+    if (threadIdx.x == 0)
+    {
+        atomicAddVec4(&force_device, force_block);
+        atomicMin(&t_star_device, t_star_block);
+    }
 }
 
 template<typename Treal, typename Thydro, typename Tmass>
@@ -79,7 +92,9 @@ void computeCentralForceGPU(size_t first, size_t last, const Treal* x, const Tre
     unsigned           numBlocks    = (numParticles + numThreads - 1) / numThreads;
 
     cstone::Vec4<double> force_local{0., 0., 0., 0.};
+    double               t_star_local{INFINITY};
     checkGpuErrors(cudaMemcpyToSymbol(GPU_SYMBOL(force_device), &force_local, sizeof(force_local)));
+    checkGpuErrors(cudaMemcpyToSymbol(GPU_SYMBOL(t_star_device), &t_star_local, sizeof(t_star_local)));
 
     const double     inner_size2 = star.inner_size * star.inner_size;
     CentralForceData data{x, y, z, m, ax, ay, az, g, star.m, inner_size2, 1.0};
@@ -92,7 +107,10 @@ void computeCentralForceGPU(size_t first, size_t last, const Treal* x, const Tre
         checkGpuErrors(cudaGetLastError());
     }
     checkGpuErrors(cudaMemcpyFromSymbol(&force_local, GPU_SYMBOL(force_device), sizeof(force_local)));
+    checkGpuErrors(cudaMemcpyFromSymbol(&t_star_local, GPU_SYMBOL(t_star_device), sizeof(t_star_local)));
+
     star.force_local = force_local;
+    star.t_star      = t_star_local;
 }
 
 #define COMPUTE_CENTRAL_FORCE_GPU(Treal, Thydro, Tmass)                                                                \
