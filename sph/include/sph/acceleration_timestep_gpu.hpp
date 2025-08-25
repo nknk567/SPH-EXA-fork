@@ -7,5 +7,5 @@
 namespace sph
 {
 template<typename T>
-T accelerationTimestepGPU(size_t first, size_t last, const T* x, const T* y, const T* z, const T* h, const T h_max);
+T accelerationTimestepGPU(size_t first, size_t last, const T* x, const T* y, const T* z, const T* h);
 }

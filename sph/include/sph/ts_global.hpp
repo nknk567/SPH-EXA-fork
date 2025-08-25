@@ -59,7 +59,7 @@ auto accelerationTimestep(size_t first, size_t last, const Dataset& d)
     {
         using AType = typename Dataset::HydroType;
         minH2_A2 = accelerationTimestepGPU(first, last, rawPtr(d.devData.ax), rawPtr(d.devData.ay),
-                                           rawPtr(d.devData.az), rawPtr(d.devData.h), AType{0.25});
+                                           rawPtr(d.devData.az), rawPtr(d.devData.h));
     }
     else
     {
