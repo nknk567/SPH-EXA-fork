@@ -4,6 +4,7 @@
 #include "cstone/cuda/cub.hpp"
 #include "cstone/cuda/cuda_utils.cuh"
 #include "cstone/primitives/math.hpp"
+#include "cstone/primitives/warpscan.cuh"
 
 #include "central_force_gpu.hpp"
 #include "central_force_loop.hpp"
