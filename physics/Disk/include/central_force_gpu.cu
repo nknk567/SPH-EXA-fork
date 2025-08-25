@@ -14,7 +14,7 @@ namespace disk
 {
 
 static __device__ cstone::Vec4<double> force_device;
-static __device__ float               t_star_device;
+static __device__ float                t_star_device;
 
 template<typename T>
 __device__ void atomicAddVec4(cstone::Vec4<T>* x, const cstone::Vec4<T>& y)
@@ -34,7 +34,7 @@ __global__ void computeCentralForceGPUKernel(size_t first, size_t last, const Da
 {
     cstone::LocalIndex   i = first + blockDim.x * blockIdx.x + threadIdx.x;
     cstone::Vec4<double> force{0., 0., 0., 0.};
-    float               t_star{INFINITY};
+    float                t_star{INFINITY};
 
     //    const CentralForceData data{
     //        d.x, d.y, d.z, d.m, d.ax, d.ay, d.az, d.g, star.position, star.m, star.inner_size * star.inner_size, 1.0};
@@ -71,10 +71,11 @@ __global__ void computeCentralForceGPUKernel(size_t first, size_t last, const Da
     cstone::Vec4<double> force_block = BlockReduce(temp_storage).Sum(force);
     __syncthreads();
 
-    typedef cub::BlockReduce<float, numThreads>   BlockReduceDt;
+    typedef cub::BlockReduce<float, numThreads>    BlockReduceDt;
     __shared__ typename BlockReduceDt::TempStorage temp_storage_dt;
+    BlockReduceDt                                  reduce(temp_storage_dt);
 
-    float t_star_block = BlockReduceDt.Reduce(temp_storage_dt, cub::Min());
+    float t_star_block = reduce.Reduce(temp_storage_dt, cub::Min());
     __syncthreads();
 
     if (threadIdx.x == 0)
@@ -93,7 +94,7 @@ void computeCentralForceGPU(size_t first, size_t last, const Treal* x, const Tre
     unsigned           numBlocks    = (numParticles + numThreads - 1) / numThreads;
 
     cstone::Vec4<double> force_local{0., 0., 0., 0.};
-    float               t_star_local{INFINITY};
+    float                t_star_local{INFINITY};
     checkGpuErrors(cudaMemcpyToSymbol(GPU_SYMBOL(force_device), &force_local, sizeof(force_local)));
     checkGpuErrors(cudaMemcpyToSymbol(GPU_SYMBOL(t_star_device), &t_star_local, sizeof(t_star_local)));
 
