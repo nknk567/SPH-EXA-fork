@@ -79,7 +79,7 @@ __global__ void computeCentralForceGPUKernel(size_t first, size_t last, const Da
     if (threadIdx.x == 0)
     {
         atomicAddVec4(&force_device, force_block);
-        atomicMin(&t_star_device, t_star_block);
+        cstone::atomicMinFloat(&t_star_device, t_star_block);
     }
 }
 
