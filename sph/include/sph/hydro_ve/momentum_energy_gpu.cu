@@ -82,28 +82,39 @@ __global__ void momentumEnergyGpu(Tc K, Tc Kcour, T Atmin, T Atmax, T ramp, unsi
         LocalIndex i         = bodyBegin + laneIdx;
 
         auto ncTrue = traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax, globalPool);
-        unsigned ncCapped = stl::min(ncTrue[0], ngmax);
-        T        maxvsignal;
 
-        if (i < bodyEnd)
+        if ((1 + ncTrue[0] >= 100 / 4) && ((ncTrue[0]) <= ngmax))
         {
-            momentumAndEnergyJLoop<avClean, TravConfig::targetSize>(
-                i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, vx, vy, vz, h, m, prho, tdpdTrho, c, c11, c12,
-                c13, c22, c23, c33, Atmin, Atmax, ramp, wh, kx, xm, alpha, dV11, dV12, dV13, dV22, dV23, dV33, grad_P_x,
-                grad_P_y, grad_P_z, du, &maxvsignal);
-        }
+            unsigned ncCapped = stl::min(ncTrue[0], ngmax);
+            T        maxvsignal;
 
-        auto dt_lane = (i < bodyEnd) ? tsKCourant(maxvsignal, h[i], c[i], Kcour) : INFINITY;
-        if (groupDt != nullptr)
-        {
-            auto min_dt_group = cstone::warpMin(dt_lane);
-            if ((threadIdx.x & (GpuConfig::warpSize - 1)) == 0)
+            if (i < bodyEnd)
             {
-                groupDt[targetIdx] = stl::min(groupDt[targetIdx], min_dt_group);
+                momentumAndEnergyJLoop<avClean, TravConfig::targetSize>(
+                    i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, vx, vy, vz, h, m, prho, tdpdTrho, c, c11,
+                    c12, c13, c22, c23, c33, Atmin, Atmax, ramp, wh, kx, xm, alpha, dV11, dV12, dV13, dV22, dV23, dV33,
+                    grad_P_x, grad_P_y, grad_P_z, du, &maxvsignal);
             }
-        }
 
-        dt_i = stl::min(dt_i, dt_lane);
+            auto dt_lane = (i < bodyEnd) ? tsKCourant(maxvsignal, h[i], c[i], Kcour) : INFINITY;
+            if (groupDt != nullptr)
+            {
+                auto min_dt_group = cstone::warpMin(dt_lane);
+                if ((threadIdx.x & (GpuConfig::warpSize - 1)) == 0)
+                {
+                    groupDt[targetIdx] = stl::min(groupDt[targetIdx], min_dt_group);
+                }
+            }
+
+            dt_i = stl::min(dt_i, dt_lane);
+        }
+        else
+        {
+            du[i]       = 0.;
+            grad_P_x[i] = 0.;
+            grad_P_y[i] = 0.;
+            grad_P_z[i] = 0.;
+        }
     }
 
     typedef cub::BlockReduce<T, TravConfig::numThreads> BlockReduce;

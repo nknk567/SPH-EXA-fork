@@ -78,11 +78,19 @@ iadDivvCurlvGpu(Tc K, unsigned ngmax, const cstone::Box<Tc> box, const LocalInde
         if (i >= bodyEnd) continue;
 
         unsigned ncCapped = stl::min(ncTrue[0], ngmax);
-        IADJLoop<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, h, wh, whd, xm, kx, c11,
-                                         c12, c13, c22, c23, c33);
-        divV_curlVJLoop<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, vx, vy, vz, h,
-                                                c11, c12, c13, c22, c23, c33, wh, whd, kx, xm, divv, curlv, dV11, dV12,
-                                                dV13, dV22, dV23, dV33, doGradV);
+        if (1 + ncTrue[0] < 100 / 4 || (ncTrue[0]) > ngmax)
+        {
+            c11[i] = c12[i] = c13[i] = c22[i] = c23[i] = c33[i] = 0.;
+            divv[i] = curlv[i] = dV11[i] = dV12[i] = dV13[i] = dV22[i] = dV23[i] = dV33[i] = 0.;
+        }
+        else
+        {
+            IADJLoop<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, h, wh, whd, xm, kx,
+                                             c11, c12, c13, c22, c23, c33);
+            divV_curlVJLoop<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x, y, z, vx, vy, vz,
+                                                    h, c11, c12, c13, c22, c23, c33, wh, whd, kx, xm, divv, curlv, dV11,
+                                                    dV12, dV13, dV22, dV23, dV33, doGradV);
+        }
     }
 }
 
