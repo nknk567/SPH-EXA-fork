@@ -757,7 +757,9 @@ private:
         auto extPeers =
             focusPeers<KeyType>({assignment.data(), size_t(numRanks_ + 1)}, numRanks_, myRank_, globalLeaves, leaves_);
         std::vector<int> intPeers(numRanks_, 0);
+        auto t0 = std::chrono::high_resolution_clock::now();
         MPI_Alltoall(extPeers.data(), 1, MPI_INT, intPeers.data(), 1, MPI_INT, MPI_COMM_WORLD);
+        pushTime(t0, "let::alltoall");
 
         sendPeers_.clear();
         recvPeers_.clear();
