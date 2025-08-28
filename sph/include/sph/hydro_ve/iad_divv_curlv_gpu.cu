@@ -81,7 +81,9 @@ iadDivvCurlvGpu(Tc K, unsigned ngmax, const cstone::Box<Tc> box, const LocalInde
         if (1 + ncTrue[0] < 100 / 4 || (ncTrue[0]) > ngmax)
         {
             c11[i] = c12[i] = c13[i] = c22[i] = c23[i] = c33[i] = 0.;
-            divv[i] = curlv[i] = dV11[i] = dV12[i] = dV13[i] = dV22[i] = dV23[i] = dV33[i] = 0.;
+            divv[i]                                             = 0.;
+            if (doGradV) { dV11[i] = dV12[i] = dV13[i] = dV22[i] = dV23[i] = dV33[i] = 0.; }
+            if (curlv != nullptr) { curlv[i] = 0.; }
         }
         else
         {
