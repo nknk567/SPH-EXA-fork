@@ -58,7 +58,7 @@ __global__ void computeAccretionConditionKernel(size_t first, size_t last, const
         const double dist2 = dx * dx + dy * dy + dz * dz;
 
         const double v2 = vx[i] * vx[i] + vy[i] * vy[i] + vz[i] + vz[i];
-        const double e = 0.5 * v2 + 1. / std::sqrt(dist2);
+        const double e = 0.5 * v2 - 1. / std::sqrt(dist2);
         const bool unbound = (e > 1e-3);
 
         if (dist2 < star_size2) { markForRemovalAndAdd(accreted, i, keys, m, vx, vy, vz); }
