@@ -4,6 +4,7 @@
 #include "gtest/gtest.h"
 #include <cmath>
 #include <mpi.h>
+#include <limits>
 #include "central_force.hpp"
 #include "exchange_star_position.hpp"
 #include "star_data.hpp"
@@ -60,7 +61,7 @@ TEST(CentralPotentials, testNewtonian)
     double ay[2]{};
     double az[2]{};
 
-    disk::CentralForceData d{
+    disk::CentralPotentialData d{
         .x             = x,
         .y             = y,
         .z             = z,
@@ -77,8 +78,9 @@ TEST(CentralPotentials, testNewtonian)
 
     cstone::Vec4<double> star_force{};
 
-    disk::newtonianGravity(d, 0, star_force);
-    disk::newtonianGravity(d, 1, star_force);
+    float dt{std::numeric_limits<float>::infinity()};
+    disk::newtonianGravity(d, 0, star_force, dt);
+    disk::newtonianGravity(d, 1, star_force, dt);
 
     EXPECT_NEAR(ax[0], -1.0, 1e-8);
     EXPECT_NEAR(ay[0], 0.0, 1e-8);
@@ -90,6 +92,7 @@ TEST(CentralPotentials, testNewtonian)
 
     EXPECT_NEAR(std::sqrt(norm2(cstone::Vec3<double>{star_force[1], star_force[2], star_force[3]})), M_SQRT2, 1e-8);
     EXPECT_NEAR(star_force[0], -2.0, 1e-8);
+    EXPECT_NEAR(dt, 1.0, 1e-8);
 }
 
 TEST(CentralPotentials, testEinsteinPrecession)
@@ -107,7 +110,7 @@ TEST(CentralPotentials, testEinsteinPrecession)
     std::array<double, 2> ay_newton{};
     std::array<double, 2> az_newton{};
 
-    disk::CentralForceData d{
+    disk::CentralPotentialData d{
         .x             = x.data(),
         .y             = y.data(),
         .z             = z.data(),
@@ -121,7 +124,7 @@ TEST(CentralPotentials, testEinsteinPrecession)
         .c_light       = 1.,
         .star_position = {0., 0., 0.},
     };
-    disk::CentralForceData d_newton{
+    disk::CentralPotentialData d_newton{
         .x             = x.data(),
         .y             = y.data(),
         .z             = z.data(),
@@ -139,10 +142,11 @@ TEST(CentralPotentials, testEinsteinPrecession)
     cstone::Vec4<double> star_force{};
     cstone::Vec4<double> star_force_newton{};
 
-    disk::einsteinPrecession(d, 0, star_force);
-    disk::einsteinPrecession(d, 1, star_force);
-    disk::newtonianGravity(d_newton, 0, star_force_newton);
-    disk::newtonianGravity(d_newton, 1, star_force_newton);
+    float dt{std::numeric_limits<float>::infinity()};
+    disk::einsteinPrecession(d, 0, star_force, dt);
+    disk::einsteinPrecession(d, 1, star_force, dt);
+    disk::newtonianGravity(d_newton, 0, star_force_newton, dt);
+    disk::newtonianGravity(d_newton, 1, star_force_newton, dt);
 
     const double r_grav = d.g * d.m_star / (d.c_light * d.c_light);
     // For a particle distance of 1
@@ -155,4 +159,8 @@ TEST(CentralPotentials, testEinsteinPrecession)
     EXPECT_NEAR(ax[1], ax_newton[1] * correction_factor, 1e-8);
     EXPECT_NEAR(ay[1], ay_newton[1] * correction_factor, 1e-8);
     EXPECT_NEAR(az[1], az_newton[1] * correction_factor, 1e-8);
+
+    const double a_abs = correction_factor * std::sqrt(ax_newton[0] * ax_newton[0] + ax_newton[1] * ax_newton[1] +
+                                                       ax_newton[2] * ax_newton[2]);
+    EXPECT_NEAR(dt, std::sqrt(dist / a_abs), 1e-8);
 }
