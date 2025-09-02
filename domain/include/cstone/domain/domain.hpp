@@ -251,7 +251,7 @@ public:
         int fail = 0;
         do
         {
-            focusTree_.updateMacs(global_.assignment(), centerDriftTol_ / theta_, false);
+            focusTree_.updateMacs(global_.assignment(), centerDriftTol_ / theta_, true/*false*/);
             focusTree_.updateTree(peers, global_.assignment(), box(), std::get<0>(scratch));
             focusTree_.updateCounts(keyView, global_.treeLeaves(), global_.nodeCounts(), std::get<0>(scratch));
             focusTree_.updateCenters(rawPtr(x), rawPtr(y), rawPtr(z), rawPtr(m), global_.octree(), std::get<0>(scratch),
@@ -268,8 +268,9 @@ public:
 
             if (fail)
             {
-                centerDriftTol_ += 0.05;
-                if (myRank_ == 0) { std::cout << "Increased centerDriftTol to " << centerDriftTol_ << std::endl; }
+                if (myRank_ == 0) { std::cout << "LET refinement, mode=" << fail << std::endl; }
+//                centerDriftTol_ += 0.05;
+//                if (myRank_ == 0) { std::cout << "Increased centerDriftTol to " << centerDriftTol_ << std::endl; }
             }
         } while (fail);
 
