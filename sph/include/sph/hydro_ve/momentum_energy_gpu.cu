@@ -59,7 +59,7 @@ __global__ void momentumEnergyGpu(Tc K, Tc Kcour, T Atmin, T Atmax, T ramp, unsi
                                   const T* c23, const T* c33, const T* wh, const T* kx, const T* xm, const T* alpha,
                                   const T* dV11, const T* dV12, const T* dV13, const T* dV22, const T* dV23,
                                   const T* dV33, T* grad_P_x, T* grad_P_y, T* grad_P_z, Tm1* du, LocalIndex* nidx,
-                                  TreeNodeIndex* globalPool, float* groupDt)
+                                  TreeNodeIndex* globalPool, float* groupDt, T* dtCourant)
 {
     unsigned laneIdx     = threadIdx.x & (GpuConfig::warpSize - 1);
     unsigned targetIdx   = 0;
@@ -97,6 +97,7 @@ __global__ void momentumEnergyGpu(Tc K, Tc Kcour, T Atmin, T Atmax, T ramp, unsi
             }
 
             auto dt_lane = (i < bodyEnd) ? tsKCourant(maxvsignal, h[i], c[i], Kcour) : INFINITY;
+            if (i < bodyEnd) { dtCourant[i] = dt_lane; }
             if (groupDt != nullptr)
             {
                 auto min_dt_group = cstone::warpMin(dt_lane);
@@ -146,7 +147,7 @@ void computeMomentumEnergy(const GroupView& grp, float* groupDt, Dataset& d,
         rawPtr(d.devData.wh), rawPtr(d.devData.kx), rawPtr(d.devData.xm), rawPtr(d.devData.alpha),
         rawPtr(d.devData.dV11), rawPtr(d.devData.dV12), rawPtr(d.devData.dV13), rawPtr(d.devData.dV22),
         rawPtr(d.devData.dV23), rawPtr(d.devData.dV33), rawPtr(d.devData.ax), rawPtr(d.devData.ay),
-        rawPtr(d.devData.az), rawPtr(d.devData.du), nidxPool, traversalPool, groupDt);
+        rawPtr(d.devData.az), rawPtr(d.devData.du), nidxPool, traversalPool, groupDt, rawPtr(d.devData.dtCourant));
     checkGpuErrors(cudaGetLastError());
 
     float minDt;
