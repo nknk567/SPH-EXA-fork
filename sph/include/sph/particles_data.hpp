@@ -251,6 +251,7 @@ public:
     FieldVector<uint64_t>  id;                                 // unique particle id
     FieldVector<unsigned>  nb_it_stat;
     FieldVector<HydroType> dtCourant;
+
     //! @brief Indices of neighbors for each particle, length is number of assigned particles * ngmax. CPU version only.
     std::vector<cstone::LocalIndex>         neighbors;
     cstone::OctreeNsView<RealType, KeyType> treeView;
@@ -268,7 +269,6 @@ public:
         "tdpdTrho", "h",   "m",    "c",    "ugrav", "ax",   "ay",   "az",   "du",   "du_m1", "c11",   "c12",   "c13",
         "c22",      "c23", "c33",  "mue",  "mui",   "temp", "cv",   "xm",   "kx",   "divv",  "curlv", "alpha", "gradh",
         "keys",     "nc",  "dV11", "dV12", "dV13",  "dV22", "dV23", "dV33", "rung", "id", "nb_it_stat", "dtCourant"};
-
     //! @brief dataset prefix to be prepended to fieldNames for structured output
     static const inline std::string prefix{};
 
