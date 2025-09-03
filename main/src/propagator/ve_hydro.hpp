@@ -137,6 +137,7 @@ public:
         timer.logStatistics("numParticles", domain.nParticles());
         timer.logStatistics("numHalos", domain.nParticlesWithHalos() - domain.nParticles());
         timer.logStatistics("assignment", domain.assignmentStart());
+        timer.logStatistics(domain.getTimeDeltas());
 
         auto& d = simData.hydro;
         d.resizeAcc(domain.nParticlesWithHalos());

@@ -64,6 +64,14 @@ public:
         std::get<std::vector<T>>(perfStats[name]).push_back(value);
     }
 
+    void logStatistics(std::tuple<std::span<const std::string>, std::span<const float>> deltas)
+    {
+        for (std::size_t i = 0; i < std::get<0>(deltas).size(); ++i)
+        {
+            logStatistics(std::get<0>(deltas)[i], std::get<1>(deltas)[i]);
+        }
+    }
+
     //! @brief time elapsed between tstart and last call of step()
     [[nodiscard]] float sumOfSteps() const { return std::chrono::duration_cast<Time>(tlast - tstart).count(); }
 

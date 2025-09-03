@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include <chrono>
+
 #include "cstone/cuda/cuda_utils.hpp"
 #include "cstone/domain/assignment.hpp"
 #include "cstone/domain/layout.hpp"
@@ -170,6 +172,7 @@ public:
               std::tuple<Vectors1&...> particleProperties,
               std::tuple<Vectors2&...> scratchBuffers)
     {
+        resetTime();
         staticChecks<KeyVec, VectorX, VectorH, Vectors1...>(scratchBuffers);
         auto& sfcOrder = std::get<sizeof...(Vectors2) - 1>(scratchBuffers);
         SfcSorter sorter(sfcOrder);
@@ -178,6 +181,7 @@ public:
 
         auto [exchangeStart, keyView] =
             distribute(sorter, particleKeys, x, y, z, std::tuple_cat(std::tie(h), particleProperties), scratch);
+        pushTime("domain::exchange");
         // x,y,z,h is already reordered here for use in halo discovery
         gatherArrays({sorter.getMap() + global_.postExchangeStart(bufDesc_), global_.numAssigned()}, 0,
                      std::tie(x, y, z, h), util::reverse(scratch));
@@ -190,6 +194,7 @@ public:
         }
         focusTree_.updateMinMac(global_.assignment(), invThetaEff, true);
         focusTree_.updateTree(global_.assignment(), global_.treeLeaves(), box(), std::get<0>(scratch));
+        pushTime("domain::updateTree");
         focusTree_.updateCounts(keyView, global_.treeLeaves(), global_.nodeCounts(), std::get<0>(scratch));
 
         reallocate(focusTree_.octreeViewAcc().numLeafNodes + 1, allocGrowthRate_, layout_, layoutAcc_);
@@ -201,6 +206,8 @@ public:
         updateLayout(sorter, keyView, particleKeys, std::tie(x, y, z, h), particleProperties, scratch);
         setupHalos(particleKeys, x, y, z, h, scratch);
         firstCall_ = false;
+        if constexpr (HaveGpu<Accelerator>{}) { syncGpu(); }
+        pushTime("domain::updateLayout");
     }
 
     template<class KeyVec, class VectorX, class VectorH, class VectorM, class... Vectors1, class... Vectors2>
@@ -213,6 +220,7 @@ public:
                   std::tuple<Vectors1&...> particleProperties,
                   std::tuple<Vectors2&...> scratchBuffers)
     {
+        resetTime();
         staticChecks<KeyVec, VectorX, VectorH, VectorM, Vectors1...>(scratchBuffers);
         auto& sfcOrder = std::get<sizeof...(Vectors2) - 1>(scratchBuffers);
         SfcSorter sorter(sfcOrder);
@@ -221,6 +229,7 @@ public:
 
         auto [exchangeStart, keyView] =
             distribute(sorter, particleKeys, x, y, z, std::tuple_cat(std::tie(h, m), particleProperties), scratch);
+        pushTime("domain::exchange");
         gatherArrays({sorter.getMap() + global_.postExchangeStart(bufDesc_), global_.numAssigned()}, 0,
                      std::tie(x, y, z, h, m), util::reverse(scratch));
 
@@ -248,18 +257,24 @@ public:
         {
             focusTree_.updateMacs(global_.assignment(), centerDriftTol_ / theta_, true);
             focusTree_.updateTree(global_.assignment(), global_.treeLeaves(), box(), std::get<0>(scratch));
+            pushTime("domain::updateTree");
             focusTree_.updateCounts(keyView, global_.treeLeaves(), global_.nodeCounts(), std::get<0>(scratch));
+            pushTime("domain::updateCounts");
             focusTree_.updateCenters(rawPtr(x), rawPtr(y), rawPtr(z), rawPtr(m), global_.octree(), std::get<0>(scratch),
                                      std::get<1>(scratch));
+            pushTime("domain::updateCenters");
             focusTree_.updateMacs(global_.assignment(), 1.0 / theta_, false);
 
             reallocate(focusTree_.octreeViewAcc().numLeafNodes + 1, allocGrowthRate_, layout_, layoutAcc_);
             focusTree_.discoverHalos(rawPtr(x), rawPtr(y), rawPtr(z), rawPtr(h),
                                      {rawPtr(layoutAcc_), layoutAcc_.size()}, haloSearchExt_, get<0>(scratch), true);
             fail = focusTree_.computeLayout({rawPtr(layoutAcc_), layoutAcc_.size()}, layout_);
+            pushTime("domain::macsHalosLayout");
             MPI_Allreduce(MPI_IN_PLACE, &fail, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+            pushTime("domain::letCheck");
 
             halos_.exchangeRequests(focusTree_.treeLeaves(), focusTree_.assignment(), layout_);
+            pushTime("domain::exchangeRequests");
 
             if (fail)
             {
@@ -273,6 +288,8 @@ public:
         updateLayout(sorter, keyView, particleKeys, std::tie(x, y, z, h, m), particleProperties, scratch);
         setupHalos(particleKeys, x, y, z, h, scratch);
         firstCall_ = false;
+        if constexpr (HaveGpu<Accelerator>{}) { syncGpu(); }
+        pushTime("domain::updateLayout");
     }
 
     /*! @brief reapply exchange synchronization pattern from previous call to sync(Grav)() to additional particle fields
@@ -378,6 +395,8 @@ public:
                 focusTree_.geoSizesAcc().data()};
     }
 
+    auto getTimeDeltas() const { return std::make_tuple(std::span(tsNames_), std::span(ts_)); }
+
 private:
     //! @brief bounds initialization on first call, use all particles
     void initBounds(std::size_t bufferSize)
@@ -447,6 +466,7 @@ private:
         // Global tree build and assignment
         auto exchangeSize = global_.assign(bufDesc_, sorter, std::get<0>(scratchBuffers), std::get<1>(scratchBuffers),
                                            rawPtr(keys), rawPtr(x), rawPtr(y), rawPtr(z));
+        pushTime("domain::assign");
         lowMemReallocate(exchangeSize, allocGrowthRate_, distributedArrays, scratchBuffers);
 
         // Must zero new memory to exclude possibility of special value (removeKey) in uninitialized memory
@@ -599,6 +619,25 @@ private:
             MPI_Barrier(MPI_COMM_WORLD);
         }
     }
+
+    void resetTime()
+    {
+        lastTs_ = std::chrono::high_resolution_clock::now();
+        tsNames_.clear();
+        ts_.clear();
+    }
+
+    void pushTime(const std::string& name)
+    {
+        auto now = std::chrono::high_resolution_clock::now();
+        ts_.push_back(std::chrono::duration<float>(now - lastTs_).count());
+        lastTs_ = now;
+        tsNames_.push_back(name);
+    }
+
+    std::chrono::time_point<std::chrono::high_resolution_clock> lastTs_;
+    std::vector<std::string> tsNames_;
+    std::vector<float> ts_;
 
     int myRank_;
     int numRanks_;
