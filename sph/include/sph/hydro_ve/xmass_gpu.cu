@@ -57,7 +57,7 @@ template<class Tc, class Tm, class T, class KeyType>
 __global__ void xmassGpu(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<Tc> box, const LocalIndex* grpStart,
                          const LocalIndex* grpEnd, LocalIndex numGroups, const cstone::OctreeNsView<Tc, KeyType> tree,
                          unsigned* nc, const Tc* x, const Tc* y, const Tc* z, T* h, const Tm* m, const T* wh,
-                         const T* whd, T* xm, LocalIndex* nidx, TreeNodeIndex* globalPool, const unsigned* nb_it_stat)
+                         const T* whd, T* xm, LocalIndex* nidx, TreeNodeIndex* globalPool, unsigned* nb_it_stat)
 {
     unsigned laneIdx     = threadIdx.x & (GpuConfig::warpSize - 1);
     unsigned targetIdx   = 0;
