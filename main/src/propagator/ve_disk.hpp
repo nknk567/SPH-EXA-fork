@@ -113,6 +113,8 @@ public:
         disk::exchangeAndAccreteOnStar(star, d.minDt_m1, Base::rank_);
         timer.step("exchangeAndAccreteOnStar");
 
+        printNbItStatistics(simData, first, last);
+
         if (Base::rank_ == 0)
         {
             std::printf("star position: %lf\t%lf\t%lf\n", star.position[0], star.position[1], star.position[2]);
