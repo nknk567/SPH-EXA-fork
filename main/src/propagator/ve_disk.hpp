@@ -51,11 +51,13 @@ public:
 
     void computeForces(DomainType& domain, DataType& simData) override
     {
-        Base::computeForces(domain, simData);
-
         auto&        d     = simData.hydro;
         const size_t first = domain.startIndex();
         const size_t last  = domain.endIndex();
+
+        fill(get<"nb_it_stat">(d), first, last, 0);
+        Base::computeForces(domain, simData);
+
 
         disk::betaCooling(first, last, d, simData.star);
         timer.step("betaCooling");
