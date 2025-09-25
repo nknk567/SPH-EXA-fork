@@ -153,6 +153,7 @@ public:
         timer.step("FindNeighbors");
         pmReader.step();
 
+        fill(get<"nb_it_stat">(d), first, last, unsigned{0});
         computeXMass(groups_.view(), d, domain.box());
         timer.step("XMass");
         domain.exchangeHalos(std::tie(get<"xm">(d)), get<"ax">(d), get<"keys">(d));

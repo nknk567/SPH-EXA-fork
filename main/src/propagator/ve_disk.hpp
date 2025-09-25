@@ -55,7 +55,6 @@ public:
         const size_t first = domain.startIndex();
         const size_t last  = domain.endIndex();
 
-        fill(get<"nb_it_stat">(d), first, last, unsigned{0});
         Base::computeForces(domain, simData);
 
         disk::betaCooling(first, last, d, simData.star);
