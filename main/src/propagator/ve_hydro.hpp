@@ -160,7 +160,9 @@ public:
         timer.step("mpi::synchronizeHalos");
 
         smoothXMass(groups_.view(), d, domain.box());
+        timer.step("smoothXMass");
         domain.exchangeHalos(std::tie(get<"xm">(d)), get<"ax">(d), get<"keys">(d));
+        timer.step("mpi::synchronizeHalos");
 
         release(d, "ay");
         acquire(d, "gradh");
