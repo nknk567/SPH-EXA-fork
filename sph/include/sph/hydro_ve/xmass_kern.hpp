@@ -78,4 +78,33 @@ HOST_DEVICE_FUN inline T xmassJLoop(cstone::LocalIndex i, Tc K, const cstone::Bo
     return xmassi;
 }
 
+template<size_t stride = 1, class Tc, class T>
+HOST_DEVICE_FUN inline T xmassSmoothJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box,
+                                     const cstone::LocalIndex* neighbors, unsigned neighborsCount, const Tc* x,
+                                     const Tc* y, const Tc* z, const T* h, const T* xm_old, const T* wh,
+                                     const T* /*whd*/)
+{
+    auto xi         = x[i];
+    auto yi         = y[i];
+    auto zi         = z[i];
+    auto hi         = h[i];
+    auto xm_old_i = xm_old[i];
+
+    T hInv  = 1.0 / hi;
+    T h3Inv = hInv * hInv * hInv;
+
+    // self-contribution; assume the volume element is X = m/rho_0.
+    T xm = xm_old_i * xm_old_i;
+    for (unsigned pj = 0; pj < neighborsCount; ++pj)
+    {
+        cstone::LocalIndex j = neighbors[stride * pj];
+
+        T dist = distancePBC(box, hi, xi, yi, zi, x[j], y[j], z[j]);
+        T vloc = dist * hInv;
+        T w    = lt::lookup(wh, vloc);
+        xm += w * xm_old[j] * xm_old[j];
+    }
+    return xm * K * h3Inv;
+}
+
 } // namespace sph

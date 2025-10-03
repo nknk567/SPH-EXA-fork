@@ -73,4 +73,11 @@ void computeXMass(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box)
     else { computeXMassImpl(grp.firstBody, grp.lastBody, d, box); }
 }
 
+template<typename Tc, class Dataset>
+void smoothXMass(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box)
+{
+    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{}) { gpu::smoothXMass(grp, d, box); }
+//    else { computeXMassImpl(grp.firstBody, grp.lastBody, d, box); }
+}
+
 } // namespace sph

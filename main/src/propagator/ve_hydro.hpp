@@ -159,6 +159,9 @@ public:
         domain.exchangeHalos(std::tie(get<"xm">(d)), get<"ax">(d), get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
 
+        smoothXMass(groups_.view(), d, domain.box());
+        domain.exchangeHalos(std::tie(get<"xm">(d)), get<"ax">(d), get<"keys">(d));
+
         release(d, "ay");
         acquire(d, "gradh");
         computeVeDefGradh(groups_.view(), d, domain.box());

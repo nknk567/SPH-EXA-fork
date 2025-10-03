@@ -136,6 +136,62 @@ void computeXMass(const GroupView& grp, Dataset& d, const cstone::Box<typename D
 template void computeXMass(const GroupView& grp, sphexa::ParticlesData<cstone::GpuTag>& d,
                            const cstone::Box<SphTypes::CoordinateType>&);
 
+template<class Tc, class Tm, class T, class KeyType>
+__global__ void smoothXMassGPU(Tc K, unsigned ng0, unsigned ngmax, const cstone::Box<Tc> box,
+                               const LocalIndex* grpStart, const LocalIndex* grpEnd, LocalIndex numGroups,
+                               const cstone::OctreeNsView<Tc, KeyType> tree, unsigned* nc, const Tc* x, const Tc* y,
+                               const Tc* z, T* h, const Tm* m, const T* wh, const T* whd, T* xm_smoothed, T* xm_old,
+                               LocalIndex* nidx, TreeNodeIndex* globalPool)
+{
+    unsigned laneIdx     = threadIdx.x & (GpuConfig::warpSize - 1);
+    unsigned targetIdx   = 0;
+    unsigned warpIdxGrid = (blockDim.x * blockIdx.x + threadIdx.x) >> GpuConfig::warpSizeLog2;
+
+    LocalIndex* neighborsWarp = nidx + ngmax * TravConfig::targetSize * warpIdxGrid;
+
+    while (true)
+    {
+        // first thread in warp grabs next target
+        if (laneIdx == 0) { targetIdx = atomicAdd(&cstone::targetCounterGlob, 1); }
+        targetIdx = cstone::shflSync(targetIdx, 0);
+
+        if (targetIdx >= numGroups) return;
+
+        LocalIndex bodyBegin = grpStart[targetIdx];
+        LocalIndex bodyEnd   = grpEnd[targetIdx];
+        LocalIndex i         = bodyBegin + laneIdx;
+
+        unsigned ncSph =
+            1 + traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax, globalPool)[0];
+
+        if (i >= bodyEnd) continue;
+
+        unsigned ncCapped = stl::min(ncSph - 1, ngmax);
+        xm_smoothed[i] = sph::xmassSmoothJLoop<TravConfig::targetSize>(i, K, box, neighborsWarp + laneIdx, ncCapped, x,
+                                                                       y, z, h, xm_old, wh, whd);
+        nc[i]          = ncSph;
+    }
+}
+
+template<class Dataset>
+void smoothXMass(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>& box)
+{
+    swap(d.devData.xm, d.devData.kx);
+
+    auto [traversalPool, nidxPool] = cstone::allocateNcStacks(d.devData.traversalStack, d.ngmax);
+    cstone::resetTraversalCounters<<<1, 1>>>();
+
+    smoothXMassGPU<<<TravConfig::numBlocks(), TravConfig::numThreads>>>(
+        d.K, d.ng0, d.ngmax, box, grp.groupStart, grp.groupEnd, grp.numGroups, d.treeView, rawPtr(d.devData.nc),
+        rawPtr(d.devData.x), rawPtr(d.devData.y), rawPtr(d.devData.z), rawPtr(d.devData.h), rawPtr(d.devData.m),
+        rawPtr(d.devData.wh), rawPtr(d.devData.whd), rawPtr(d.devData.xm), rawPtr(d.devData.kx), nidxPool,
+        traversalPool);
+    checkGpuErrors(cudaDeviceSynchronize());
+}
+
+template void smoothXMass(const GroupView& grp, sphexa::ParticlesData<cstone::GpuTag>& d,
+                          const cstone::Box<SphTypes::CoordinateType>&);
+
 template<class Tm, class Trho>
 __global__ void convertXmassToRho(const LocalIndex* grpStart, const LocalIndex* grpEnd, LocalIndex numGroups,
                                   const Tm* m, Trho* rho)

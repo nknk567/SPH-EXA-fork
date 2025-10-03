@@ -29,6 +29,9 @@ template<class Dataset>
 extern void computeXMass(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
 template<class Dataset>
+extern void smoothXMass(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>& box);
+
+template<class Dataset>
 void computeDensity(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>& box);
 
 template<class Dataset>
