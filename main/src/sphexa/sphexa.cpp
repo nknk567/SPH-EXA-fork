@@ -44,6 +44,7 @@
 #include "io/factory.hpp"
 #include "observables/factory.hpp"
 #include "propagator/factory.hpp"
+#include "visual/visualizer.hpp"
 #include "sph/types.hpp"
 #include "util/timer.hpp"
 #include "util/utils.hpp"
@@ -106,7 +107,10 @@ int main(int argc, char** argv)
     auto fileWriter  = fileWriterFactory(ascii, MPI_COMM_WORLD);
     auto fileReader  = fileReaderFactory(ascii, MPI_COMM_WORLD);
     auto simInit     = initializerFactory<Dataset>(initCond, glassBlock, fileReader.get());
-    auto propagator  = propagatorFactory<Domain, Dataset>(propChoice, avClean, output, rank, simInit->constants());
+//    auto propagator  = propagatorFactory<Domain, Dataset>(propChoice, avClean, output, rank, simInit->constants());
+    auto visual = visual::Visualizer<Domain, Dataset>(rank, simInit->constants());
+//    auto server = ;
+
     auto observables = observablesFactory<Dataset>(simInit->constants(), constantsFile);
 
     Dataset simData;
@@ -116,13 +120,13 @@ int main(int argc, char** argv)
     MPI_Barrier(MPI_COMM_WORLD);
     totalTimer.start();
 
-    propagator->addCounters(pmroot, getNumLocalRanks(numRanks));
-    propagator->activateFields(simData);
-    propagator->load(initCond, fileReader.get());
+//    visual->addCounters(pmroot, getNumLocalRanks(numRanks));
+    visual.activateFields(simData);
+    visual.load(initCond, fileReader.get());
     auto box = simInit->init(rank, numRanks, problemSize, simData, fileReader.get());
 
     auto& d = simData.hydro;
-    simData.setOutputFields(outputFields.empty() ? propagator->conservedFields() : outputFields);
+    simData.setOutputFields(outputFields.empty() ? visual.conservedFields() : outputFields);
 
     if (parser.exists("--G")) { d.g = parser.get<double>("--G"); }
     bool  haveGrav = (d.g != 0.0);
@@ -138,63 +142,63 @@ int main(int argc, char** argv)
     Domain   domain(rank, numRanks, bucketSize, bucketSizeFocus, theta, box);
     domain.setGrowthAllocRate(simData.hydro.getAllocGrowthRate());
 
-    propagator->sync(domain, simData);
+    visual.sync(domain, simData);
     if (rank == 0) std::cout << "Domain synchronized, nLocalParticles " << d.x.size() << std::endl;
+    visual.visualize(domain, simData);
+//    viz::init_catalyst(argc, argv);
+//    viz::init_ascent(d, domain.startIndex());
+//
+//    size_t startIteration    = d.iteration;
+//    bool   isOutputTriggered = false;
 
-    viz::init_catalyst(argc, argv);
-    viz::init_ascent(d, domain.startIndex());
-
-    size_t startIteration    = d.iteration;
-    bool   isOutputTriggered = false;
-
-    for (bool keepRunning = true; keepRunning; d.iteration++)
-    {
-        propagator->computeForces(domain, simData);
-        box = domain.box();
-
-        if (propagator->isSynced())
-        {
-            observables->computeAndWrite(simData, domain.startIndex(), domain.endIndex(), box);
-        }
-
-        bool isWallClockReached = syncedWallClockElapsed(totalTimer.elapsed(), simDuration, propagator->stepElapsed());
-
-        isOutputTriggered =
-            (isOutputStep(d.iteration, writeFreqStr) || isOutputTime(d.ttot - d.minDt, d.ttot, writeFreqStr) ||
-             isExtraOutputStep(d.iteration, d.ttot - d.minDt, d.ttot, writeExtra) ||
-             (isWallClockReached && writeEnabled) || isOutputTriggered) &&
-            d.iteration > startIteration;
-
-        if (isOutputTriggered && propagator->isSynced())
-        {
-            fileWriter->addStep(domain.startIndex(), domain.endIndex(), outFile);
-            simData.hydro.loadOrStoreAttributes(fileWriter.get());
-            box.loadOrStore(fileWriter.get());
-            propagator->saveFields(fileWriter.get(), domain.startIndex(), domain.endIndex(), simData, box);
-            propagator->save(fileWriter.get());
-            fileWriter->closeStep();
-            isOutputTriggered = false;
-        }
-        keepRunning = not(stopConditionReached(d.iteration, d.ttot, maxStepStr) || isWallClockReached) ||
-                      not propagator->isSynced();
-
-        viz::execute(d, domain.startIndex(), domain.endIndex());
-
-        propagator->integrate(domain, simData);
-        propagator->printIterationTimings(domain, simData);
-
-        if (isOutputStep(d.iteration, profFreqStr) || isOutputTime(d.ttot - d.minDt, d.ttot, profFreqStr) ||
-            isWallClockReached)
-        {
-            auto fileWriterSeq = fileWriterFactory(ascii, MPI_COMM_WORLD, true);
-            if (profEnabled) { propagator->writeMetrics(fileWriterSeq.get(), profFile); }
-        }
-    }
-    totalTimer.step("Total execution time of " + std::to_string(d.iteration - startIteration) + " iterations of " +
-                    initCond + " up to t = " + std::to_string(d.ttot));
+//    for (bool keepRunning = true; keepRunning; d.iteration++)
+//    {
+//        propagator->computeForces(domain, simData);
+//        box = domain.box();
+//
+//        if (propagator->isSynced())
+//        {
+//            observables->computeAndWrite(simData, domain.startIndex(), domain.endIndex(), box);
+//        }
+//
+//        bool isWallClockReached = syncedWallClockElapsed(totalTimer.elapsed(), simDuration, propagator->stepElapsed());
+//
+//        isOutputTriggered =
+//            (isOutputStep(d.iteration, writeFreqStr) || isOutputTime(d.ttot - d.minDt, d.ttot, writeFreqStr) ||
+//             isExtraOutputStep(d.iteration, d.ttot - d.minDt, d.ttot, writeExtra) ||
+//             (isWallClockReached && writeEnabled) || isOutputTriggered) &&
+//            d.iteration > startIteration;
+//
+//        if (isOutputTriggered && propagator->isSynced())
+//        {
+//            fileWriter->addStep(domain.startIndex(), domain.endIndex(), outFile);
+//            simData.hydro.loadOrStoreAttributes(fileWriter.get());
+//            box.loadOrStore(fileWriter.get());
+//            propagator->saveFields(fileWriter.get(), domain.startIndex(), domain.endIndex(), simData, box);
+//            propagator->save(fileWriter.get());
+//            fileWriter->closeStep();
+//            isOutputTriggered = false;
+//        }
+//        keepRunning = not(stopConditionReached(d.iteration, d.ttot, maxStepStr) || isWallClockReached) ||
+//                      not propagator->isSynced();
+//
+//        viz::execute(d, domain.startIndex(), domain.endIndex());
+//
+//        propagator->integrate(domain, simData);
+//        propagator->printIterationTimings(domain, simData);
+//
+//        if (isOutputStep(d.iteration, profFreqStr) || isOutputTime(d.ttot - d.minDt, d.ttot, profFreqStr) ||
+//            isWallClockReached)
+//        {
+//            auto fileWriterSeq = fileWriterFactory(ascii, MPI_COMM_WORLD, true);
+//            if (profEnabled) { propagator->writeMetrics(fileWriterSeq.get(), profFile); }
+//        }
+//    }
+//    totalTimer.step("Total execution time of " + std::to_string(d.iteration - startIteration) + " iterations of " +
+//                    initCond + " up to t = " + std::to_string(d.ttot));
 
     constantsFile.close();
-    viz::finalize();
+//    viz::finalize();
     return exitSuccess();
 }
 
