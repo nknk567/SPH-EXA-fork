@@ -198,28 +198,28 @@ public:
 
     void integrate(DomainType& domain, DataType& simData) override
     {
-        auto&  d     = simData.hydro;
-        size_t first = domain.startIndex();
-        size_t last  = domain.endIndex();
-
-        const auto&& rho = toHost(d.rho);
-        const auto&& u   = toHost(d.u);
-
-        auto minDtCooling = cooling::coolingTimestep(first, last, rho.data(), u.data(), cooling_data, simData.chem);
-        computeTimestep(first, last, d, minDtCooling);
-        timer.step("Timestep");
-
-        auto&& du = toHost(d.du);
-        cooling_data.cool_particles(T(d.minDt), rho.data(), u.data(),
-                                    cstone::getPointers(get<CoolingFields>(simData.chem), 0), du.data(), first, last);
-
-        d.du = std::move(du);
-        timer.step("GRACKLE chemistry and cooling");
-
-        computePositions(groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)});
-        timer.step("UpdateQuantities");
-        updateSmoothingLength(groups_.view(), d);
-        timer.step("UpdateSmoothingLength");
+//        auto&  d     = simData.hydro;
+//        size_t first = domain.startIndex();
+//        size_t last  = domain.endIndex();
+//
+//        const auto&& rho = toHost(d.rho);
+//        const auto&& u   = toHost(d.u);
+//
+//        auto minDtCooling = cooling::coolingTimestep(first, last, rho.data(), u.data(), cooling_data, simData.chem);
+//        computeTimestep(first, last, d, minDtCooling);
+//        timer.step("Timestep");
+//
+//        auto&& du = toHost(d.du);
+//        cooling_data.cool_particles(T(d.minDt), rho.data(), u.data(),
+//                                    cstone::getPointers(get<CoolingFields>(simData.chem), 0), du.data(), first, last);
+//
+//        d.du = std::move(du);
+//        timer.step("GRACKLE chemistry and cooling");
+//
+//        computePositions(groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)});
+//        timer.step("UpdateQuantities");
+//        updateSmoothingLength(groups_.view(), d);
+//        timer.step("UpdateSmoothingLength");
     }
 };
 

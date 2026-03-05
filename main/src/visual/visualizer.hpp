@@ -5,8 +5,10 @@
 #pragma once
 
 #include "cstone/fields/field_get.hpp"
+#include "grid.hpp"
 #include "init/settings.hpp"
 #include "io/ifile_io.hpp"
+#include "size_categorization.hpp"
 
 namespace visual
 {
@@ -67,7 +69,10 @@ struct Visualizer
         size_t first = domain.startIndex();
         size_t last  = domain.endIndex();
         printf("number of particles: %zu\n", last - first);
-        //        sizeCategorization();
+        auto& d = simData.hydro;
+
+        Grid grid;
+        sizeCategorization(first, last, simData, grid);
         //        renderSmall();
         //        renderMedium();
         //        renderLarge();
