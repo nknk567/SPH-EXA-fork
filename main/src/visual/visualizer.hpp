@@ -72,8 +72,8 @@ struct Visualizer
         auto& d = simData.hydro;
 
         Grid grid;
-        sizeCategorization(first, last, simData, grid);
-        //        renderSmall();
+        sizeCategorization(first, last, d, grid);
+        renderSmall();
         //        renderMedium();
         //        renderLarge();
         //        reduceImages();
