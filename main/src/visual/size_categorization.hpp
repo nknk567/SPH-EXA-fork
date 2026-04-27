@@ -27,4 +27,22 @@ void sizeCategorization(size_t startIndex, size_t endIndex, Dataset& d, const Gr
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{}) {}
     else { sizeCategorizationImpl(startIndex, endIndex, d, g); }
 }
+
+template<typename Dataset>
+void sortByCategory(size_t startIndex, size_t endIndex, Dataset& d)
+{
+    std::vector<size_t> tile(endIndex - startIndex);
+
+    cstone::sort_by_key(begin(tile), end(tile), begin(d.x));
+
+
+}
+
+template<class Dataset>
+void sortByCategory(size_t startIndex, size_t endIndex, Dataset& d)
+{
+    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{}) {}
+    else { sortByCategory(startIndex, endIndex, d); }
+}
+
 } // namespace visual

@@ -73,6 +73,7 @@ struct Visualizer
 
         Grid grid;
         sizeCategorization(first, last, d, grid);
+        sortByCategory(first, last, d);
         renderSmall();
         //        renderMedium();
         //        renderLarge();

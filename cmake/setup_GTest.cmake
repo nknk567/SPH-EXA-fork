@@ -1,8 +1,8 @@
 #####################################################
 # GTest, find system first, download if necessary
 #####################################################
-find_package(GTest)
-
+#find_package(GTest)
+#
 if (NOT GTest_FOUND)
     message(STATUS "Configure GTest from github")
 
