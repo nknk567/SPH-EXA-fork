@@ -114,6 +114,12 @@ template void gatherGpu(const unsigned*, size_t, const util::array<float, 2>*, u
 template void gatherGpu(const unsigned*, size_t, const util::array<float, 3>*, util::array<float, 3>*);
 template void gatherGpu(const unsigned*, size_t, const util::array<float, 4>*, util::array<float, 4>*);
 
+template void gatherGpu(const unsigned long*, size_t, const double*, double*);
+template void gatherGpu(const unsigned long*, size_t, const float*, float*);
+template void gatherGpu(const unsigned long*, size_t, const unsigned*, unsigned*);
+template void gatherGpu(const unsigned long*, size_t, const unsigned long*, unsigned long*);
+template void gatherGpu(const unsigned long*, size_t, const unsigned long long*, unsigned long long*);
+
 template<class T, class IndexType>
 __global__ void scatterGpuKernel(const IndexType* map, size_t n, const T* source, T* destination)
 {
@@ -252,6 +258,7 @@ Tout reduceGpu(const Tin* input, size_t numElements, Tout init)
 }
 
 template size_t reduceGpu(const unsigned*, size_t, size_t);
+template size_t reduceGpu(const size_t*, size_t, size_t);
 
 template<class IndexType>
 void sequenceGpu(IndexType* input, size_t numElements, IndexType init)
@@ -349,6 +356,7 @@ SORT_BY_KEY_GPU_DB(uint64_t, unsigned);
 SORT_BY_KEY_GPU_DB(uint64_t, int);
 SORT_BY_KEY_GPU_DB(uint64_t, uint64_t);
 SORT_BY_KEY_GPU_DB(float, unsigned);
+SORT_BY_KEY_GPU_DB(uint8_t, uint64_t);
 
 template<class KeyType, class ValueType>
 void sortByKeyGpu(KeyType* first, KeyType* last, ValueType* values)
@@ -361,6 +369,7 @@ template void sortByKeyGpu(unsigned*, unsigned*, int*);
 template void sortByKeyGpu(uint64_t*, uint64_t*, unsigned*);
 template void sortByKeyGpu(uint64_t*, uint64_t*, int*);
 template void sortByKeyGpu(uint64_t*, uint64_t*, uint64_t*);
+template void sortByKeyGpu(uint8_t*, uint8_t*, uint64_t*);
 
 template<class IndexType, class SumType>
 void exclusiveScanGpu(const IndexType* first, const IndexType* last, SumType* output, SumType init)
@@ -373,6 +382,7 @@ template void exclusiveScanGpu(const int*, const int*, unsigned*, unsigned);
 template void exclusiveScanGpu(const int*, const int*, uint64_t*, uint64_t);
 template void exclusiveScanGpu(const unsigned*, const unsigned*, unsigned*, unsigned);
 template void exclusiveScanGpu(const unsigned*, const unsigned*, uint64_t*, uint64_t);
+template void exclusiveScanGpu(const unsigned long*, const unsigned long*, unsigned long*, unsigned long);
 
 template<class IndexType, class SumType>
 void inclusiveScanGpu(const IndexType* first, const IndexType* last, SumType* output)

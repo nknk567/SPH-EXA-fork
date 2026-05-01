@@ -31,6 +31,23 @@ inline void dump_to_file_c(const std::vector<double>& data, const char* filename
     fclose(f);
 }
 
+template<template<typename> class FieldVector>
+struct RenderData
+{
+    //
+    FieldVector<uint8_t> size_category;
+
+    // Buffers
+    FieldVector<double>   buf1;
+    FieldVector<float>    buf2;
+    FieldVector<unsigned> buf3;
+    FieldVector<size_t>   buf4;
+    FieldVector<uint64_t> buf5;
+    FieldVector<uint8_t>  buf6;
+
+    auto buffers() { return std::tie(buf1, buf2, buf3, buf4, buf5, buf6); }
+};
+
 template<typename DomainType, typename Dataset>
 struct Visualizer
 {
@@ -40,8 +57,13 @@ struct Visualizer
     using ConservedFields = util::FieldList<"u", "vx", "vy", "vz">;
 
     //! @brief the list of dependent particle fields, these may be used as scratch space during domain sync
+    //    using DependentFields =
+    //        util::FieldList<"rho", "p", "c", "ax", "ay", "az", "du", "c11", "c12", "c13", "c22", "c23", "c33", "nc">;
     using DependentFields =
         util::FieldList<"rho", "p", "c", "ax", "ay", "az", "du", "c11", "c12", "c13", "c22", "c23", "c33", "nc">;
+    using RenderingFields = util::FieldList<"rho">;
+
+    RenderData<Dataset::HydroData::template FieldVector> render_data;
 
     const size_t rank;
     Visualizer(const size_t rank, const sphexa::InitSettings& settings)
@@ -85,6 +107,38 @@ struct Visualizer
         d.treeView = domain.octreeProperties();
     }
 
+    std::vector<double> render(const Grid& grid, Dataset& simData, size_t first, size_t last)
+    {
+        auto& d = simData.hydro;
+
+        sphexa::Timer timer(std::cout);
+        timer.start();
+
+        //        typename Dataset::HydroData::FieldVector<size_t> tile_gpu;
+        //        typename Dataset::HydroData::FieldVector<uint8_t> tile_gpu(last - first);
+        //        timer.step("Device vector");
+
+        //        std::vector<size_t> tile;
+        const auto [n_small, n_large] = sizeCategorization(first, last, d, grid, render_data.size_category);
+        timer.step("sizeCategorization");
+
+        printf("n_small: %zu\n", n_small);
+        printf("n_large: %zu\n", n_large);
+
+        sortByKey<ConservedFields, RenderingFields>(first, last, d, render_data.size_category, render_data);
+        timer.step("sortByKey");
+
+        // sort order:
+        // small particles; large particles with ascending tile size; out of bound
+
+        std::vector<double> result(grid.pixel_width * grid.pixel_height, 0.);
+        renderSmall(first, first + n_small, d, grid, result);
+        timer.step("renderSmall");
+
+        renderMedium(first + n_small, first + n_small + n_large, d, grid, result);
+        timer.step("renderMedium");
+        return result;
+    }
     void visualize(DomainType& domain, Dataset& simData)
     {
         sphexa::Timer timer(std::cout);
@@ -105,29 +159,20 @@ struct Visualizer
         timer.step("SPH");
 
         printf("number of particles: %zu\n", last - first);
+        render_data.size_category.resize(last - first);
+        timer.step("resize");
 
         Grid                grid;
-        std::vector<size_t> tile;
-        const auto [n_small, n_large] = sizeCategorization(first, last, d, grid, tile);
-        timer.step("sizeCategorization");
-
-        printf("n_small: %zu\n", n_small);
-        printf("n_large: %zu\n", n_large);
-
-        sortByKey<ConservedFields, DependentFields>(first, last, d, tile);
-        timer.step("sortByKey");
-
-        // sort order:
-        // small particles; large particles with ascending tile size; out of bound
-
-        std::vector<double> result(grid.pixel_width * grid.pixel_height, 0.);
-        renderSmall(first, first + n_small, d, grid, result);
-        timer.step("renderSmall");
-
-        renderMedium(first + n_small, first + n_small + n_large, d, grid, result);
-        timer.step("renderMedium");
-
+        std::vector<double> result = render(grid, simData, first, last);
+        timer.step("render 1");
         dump_to_file_c(result, "render.txt");
+        timer.step("write 1");
+
+        Grid                grid2(-1000, 1000, -1000);
+        std::vector<double> result2 = render(grid2, simData, first, last);
+        timer.step("render 2");
+        dump_to_file_c(result2, "render2.txt");
+        timer.step("write 2");
     }
 };
 } // namespace visual

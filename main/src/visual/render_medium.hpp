@@ -4,6 +4,16 @@
 
 #pragma once
 
+#include "cstone/cuda/device_vector.h"
+#include "grid.hpp"
+#include "render_medium_gpu.hpp"
+
+#include <algorithm>
+#include <numeric>
+#include <span>
+#include <type_traits>
+#include <vector>
+
 namespace visual
 {
 
@@ -30,7 +40,7 @@ void computeTileCount(size_t startIndex, size_t endIndex, Dataset& d, const Grid
         for (size_t iy = iy_min; iy < iy_max; iy++)
             for (size_t ix = ix_min; ix < ix_max; ix++)
             {
-                const size_t tile_id = iy * g.n_tiles_x() + ix;
+                const size_t tile_id = iy * g.n_tiles_x + ix;
                 tile_counts[tile_id]++;
             }
     }
@@ -53,7 +63,7 @@ void computeTileList(size_t startIndex, size_t endIndex, Dataset& d, const Grid&
         for (size_t ix = ix_min; ix < ix_max; ix++)
             for (size_t iy = iy_min; iy < iy_max; iy++)
             {
-                const size_t tile_id         = iy * g.n_tiles_x() + ix;
+                const size_t tile_id         = iy * g.n_tiles_x + ix;
                 const size_t local_id        = tile_fill[tile_id]++;
                 const size_t offset          = tile_offsets[tile_id];
                 tile_list[offset + local_id] = i;
@@ -113,7 +123,7 @@ void renderTile(Dataset& d, const Grid& g, size_t tile_id, std::span<const size_
         for (size_t ix = ix_start; ix < ix_end; ix++)
         {
             // Get pixel
-            const size_t pixel_id = flattenPixel(ix, iy, g); // pixel_iy * g.pixel_width + ix;
+            const size_t pixel_id = flattenPixel(ix, iy, g);
             pixels[pixel_id] += renderPixel(d, g, pixel_id, tile_list);
         }
 }
@@ -134,11 +144,46 @@ void renderTileList(Dataset& d, const Grid& g, std::span<const size_t> tile_offs
 template<class Dataset>
 void renderMedium(size_t startIndex, size_t endIndex, Dataset& d, const Grid& g, std::vector<double>& pixels)
 {
-    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{}) {}
+    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
+    {
+        cstone::DeviceVector<size_t> tile_counts(g.n_tiles, 0);
+        computeTileCountGPU(startIndex, endIndex, g, rawPtr(d.rho), rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h),
+                            rawPtr(d.m), rawPtr(d.rho), rawPtr(d.wh), rawPtr(tile_counts));
+
+        const size_t tile_list_size = cstone::reduceGpu(rawPtr(tile_counts), g.n_tiles, size_t(0));
+        printf("tile_list_size: %zu\n", tile_list_size);
+
+        // So last element stays tile_list_size
+        cstone::DeviceVector<size_t> tile_offsets(g.n_tiles + 1, tile_list_size);
+        cstone::exclusiveScanGpu(tile_counts.begin(), tile_counts.end(), tile_offsets.begin(), size_t(0));
+
+        cstone::DeviceVector<size_t> tile_list(tile_list_size, 0);
+
+        computeTileListGPU(startIndex, endIndex, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), g,
+                           rawPtr(tile_offsets), rawPtr(tile_list));
+
+        renderMediumGPU(startIndex, endIndex, rawPtr(d.rho), rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h),
+                        rawPtr(d.m), rawPtr(d.rho), g, rawPtr(d.wh), d.K, pixels, rawPtr(tile_offsets),
+                        rawPtr(tile_list));
+        //        template<typename T, typename Ta, typename Th, typename Tm, typename Trho, typename Twh>
+        //        void renderMediumGPU(size_t startIndex, size_t endIndex, const Ta* a, const T* x, const T* y, const T*
+        //        z, const Th* h,
+        //                             const Tm* m, const Trho* rho, const Grid& g, const Twh* wh, T K,
+        //                             std::span<double> pixels, size_t* tile_offsets, size_t* tile_lists)
+
+        //        void computeTileListGPU(size_t startIndex, size_t endIndex, const T* x, const T* y, const T* z, const
+        //        Th* h,
+        //                                const Grid& g, const size_t* tile_offsets, size_t* tile_list)
+
+        //        void computeTileCount(size_t startIndex, size_t endIndex, const Grid& g, const Ta* a, const T* x,
+        //        const T* y,
+        //                              const T* z, const Th* h, const Tm* m, const Trho* rho, const Tw* w, size_t*
+        //                              tile_counts)
+    }
     else
     {
         TileRenderData render_data;
-        render_data.tile_offsets.resize(g.n_tiles() + 1);
+        render_data.tile_offsets.resize(g.n_tiles + 1);
 
         computeTileCount(startIndex, endIndex, d, g, render_data.tile_offsets);
         const size_t tile_list_size = render_data.tile_offsets.back();

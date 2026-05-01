@@ -4,9 +4,15 @@
 
 #pragma once
 
+#include "cstone/cuda/device_vector.h"
+
 #include "grid.hpp"
+#include "size_categorization_helper.hpp"
+#include "size_categorization_gpu.hpp"
 #include <tuple>
 #include <vector>
+
+#include "util/timer.hpp"
 
 namespace visual
 {
@@ -15,57 +21,32 @@ template<typename Dataset>
 std::tuple<size_t, size_t> sizeCategorizationImpl(size_t startIndex, size_t endIndex, Dataset& d, const Grid& g,
                                                   auto& tileVec)
 {
-    auto outside = [&g](double x, double y, double z, double search_radius)
-    {
-        const auto dz = z - g.z;
-        if (std::abs(dz) > search_radius) return true;
-        const auto r2 = search_radius * search_radius - dz * dz;
+    using T = typename std::decay_t<decltype(tileVec)>::value_type;
 
-        auto       x_clamp = std::clamp(x, g.xmin, g.xmax);
-        auto       y_clamp = std::clamp(y, g.ymin, g.ymax());
-        const auto dx      = x - x_clamp;
-        const auto dy      = y - y_clamp;
-        return (dx * dx + dy * dy > r2);
-    };
-    tileVec.resize(endIndex - startIndex);
-    size_t n_small{};
-    size_t n_large{};
     for (size_t i = startIndex; i < endIndex; i++)
     {
-        const double search_radius = 2. * d.h[i];
-        if (outside(d.x[i], d.y[i], d.z[i], search_radius)) { tileVec[i - startIndex] = -1; }
-        else if (search_radius < g.h_small_max)
-        {
-            tileVec[i - startIndex] = 0;
-            n_small++;
-        }
-        //        else if (d.h[i] < g.h_medium_max) { tileVec[i - startIndex] = -3; }
-        else
-        {
-            // Determine sizes as multiple of a tile
-            //            const auto     h                      = d.h[i]; // This can be projected
-
-            const auto     relation               = search_radius / (g.tile_size * g.delta());
-            const uint64_t min_tile_size_multiple = static_cast<uint64_t>(std::ceil(relation));
-
-            tileVec[i - startIndex] = std::max(uint64_t(1), min_tile_size_multiple);
-            n_large++;
-        }
+        tileVec[i - startIndex] = categorize<T>(d.x[i], d.y[i], d.z[i], d.h[i], g);
     }
+    const size_t n_small = std::count(tileVec.begin(), tileVec.end(), T(0));
+    const size_t n_large = std::count(tileVec.begin(), tileVec.end(), T(1));
     return std::make_tuple(n_small, n_large);
 }
 
 // Particles outside: -2; small particles inside: -1; rest: 0
-template<class Dataset>
+template<class Dataset, typename Tc>
 std::tuple<size_t, size_t> sizeCategorization(size_t startIndex, size_t endIndex, Dataset& d, const Grid& g,
-                                              std::vector<size_t>& tileVec)
+                                              Tc& size_category)
 {
-    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{}) { return {0, 0}; }
-    else { return sizeCategorizationImpl(startIndex, endIndex, d, g, tileVec); }
+    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
+    {
+        return sizeCategorizationGPU(startIndex, endIndex, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), g,
+                                     size_category);
+    }
+    else { return sizeCategorizationImpl(startIndex, endIndex, d, g, size_category); }
 }
 
-template<class... Arrays1, class... Arrays2>
-void gather(std::span<const size_t> ordering, const size_t offset, std::tuple<Arrays1&...> arrays,
+template<typename Tk, class... Arrays1, class... Arrays2>
+void gather(std::span<const Tk> ordering, const size_t offset, std::tuple<Arrays1&...> arrays,
             std::tuple<Arrays2&...> scratchBuffers)
 {
     auto reorderArray = [ordering, &scratchBuffers, offset](auto& array)
@@ -80,13 +61,14 @@ void gather(std::span<const size_t> ordering, const size_t offset, std::tuple<Ar
 
     util::for_each_tuple(reorderArray, arrays);
 }
+
 template<typename ConservedFields, typename DependentFields, typename Dataset>
 void sortByKeysImpl(size_t startIndex, size_t endIndex, Dataset& d, auto& keysVec)
 {
-    std::vector<size_t> order(keysVec.size());
-    std::iota(order.begin(), order.end(), 0zu);
+    //    std::vector<size_t> order(keysVec.size());
+    std::iota(d.keys.begin(), d.keys.end(), 0zu);
 
-    cstone::sort_by_key(keysVec.begin(), keysVec.end(), order.begin());
+    cstone::sort_by_key(keysVec.begin(), keysVec.end(), d.keys.begin());
 
     std::vector<double>   buf1;
     std::vector<float>    buf2;
@@ -98,14 +80,67 @@ void sortByKeysImpl(size_t startIndex, size_t endIndex, Dataset& d, auto& keysVe
     using DefaultFields = util::FieldList<"x", "y", "z", "h", "m", "keys">;
 
     using Fields = decltype(DefaultFields{} + ConservedFields{} + DependentFields{});
-    gather(std::span(std::as_const(order)), startIndex, get<Fields>(d), buffers);
+    gather(std::span(std::as_const(d.keys)), startIndex, get<Fields>(d), buffers);
 }
 
-template<typename ConservedFields, typename DependentFields, class Dataset>
-void sortByKey(size_t startIndex, size_t endIndex, Dataset& d, std::vector<size_t>& keys)
+template<typename ConservedFields, typename RenderingFields, typename Dataset, typename RenderData>
+void sortByKeysGPU(size_t startIndex, size_t endIndex, Dataset& d, auto& keysVecDevice, RenderData& render_data)
 {
-    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{}) {}
-    else { sortByKeysImpl<ConservedFields, DependentFields>(startIndex, endIndex, d, keys); }
+//    printf("start sortByKeysGPU\n");
+    //    sphexa::Timer timer(std::cout);
+    //    timer.start();
+
+    using RenderCategoryType = typename std::decay_t<decltype(keysVecDevice)>::value_type;
+
+    //    cstone::DeviceVector<size_t> order(keysVecDevice.size());
+    //    timer.step("DeviceVector");
+    assert(keysVecDevice.size() <= d.keys.size());
+    cstone::sequenceAcc<true>(d.keys.begin(), d.keys.end(), size_t(0));
+//    timer.step("sequenceAcc");
+
+    // oder cstone::sequece(0, order.size(), order.data (rawptr), 1.0); // growth rate = 1
+
+    //    cstone::sort_by_key(keysVec.begin(), keysVec.end(), order.begin());
+    //    raw pointer cast
+    // Allocate key and value buffers
+    //    cstone::DeviceVector<size_t> keysVecDevice(keysVec);
+
+    //    cstone::DeviceVector<RenderCategoryType> key_buffer(keysVecDevice.size());
+    using KeyType = typename Dataset::KeyType;
+    //    cstone::DeviceVector<KeyType> value_buffer(keysVecDevice.size() * 4);
+    //    timer.step("DeviceVector");
+
+    cstone::sortByKey<true>(std::span<RenderCategoryType>(rawPtr(keysVecDevice), keysVecDevice.size()),
+                            std::span<KeyType>(rawPtr(d.keys), keysVecDevice.size()), render_data.buf6,
+                            render_data.buf5, 1.0);
+    //    cstone::sortByKeyGpu(rawPtr(keysVecDevice), rawPtr(keysVecDevice) + keysVecDevice.size(), rawPtr(d.keys));
+//    timer.step("sortByKey");
+
+    //    cstone::DeviceVector<double>   buf1;
+    //    cstone::DeviceVector<float>    buf2;
+    //    cstone::DeviceVector<unsigned> buf3;
+    //    cstone::DeviceVector<uint64_t> buf4;
+
+    //    auto buffers = std::tie(buf1, buf2, buf3, buf4);
+
+    using DefaultFields = util::FieldList<"x", "y", "z", "h", "m", "keys">;
+
+    //    using Fields = decltype(DefaultFields{} + ConservedFields{} + DependentFields{});
+    using Fields = decltype(DefaultFields{} + ConservedFields{} + RenderingFields{});
+    gather(std::span<const KeyType>(rawPtr(d.keys), keysVecDevice.size()), startIndex, get<Fields>(d),
+           std::tuple_cat(get<"p", "c", "ax", "ay", "az", "du", "c11", "c12", "c13", "c22", "c23", "c33", "nc">(d),
+                          render_data.buffers()));
+//    timer.step("gather");
+}
+
+template<typename ConservedFields, typename DependentFields, class Dataset, typename Tc, typename RenderData>
+void sortByKey(size_t startIndex, size_t endIndex, Dataset& d, Tc& size_category, RenderData& render_data)
+{
+    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
+    {
+        sortByKeysGPU<ConservedFields, DependentFields>(startIndex, endIndex, d, size_category, render_data);
+    }
+    else { sortByKeysImpl<ConservedFields, DependentFields>(startIndex, endIndex, d, size_category); }
 }
 
 } // namespace visual

@@ -3,6 +3,7 @@
 //
 
 #include "grid.hpp"
+#include "render_small_gpu.hpp"
 
 #include "cstone/primitives/primitives_gpu.h"
 #include "evaluate.hpp"
@@ -29,9 +30,9 @@ template<typename Twh, typename Tk>
 struct renderFunctor
 {
 
-    const Grid& g;
-    const Twh*  wh;
-    const Tk    K;
+    const Grid g;
+    const Twh* wh;
+    const Tk   K;
 
     template<typename Tuple>
     __device__ auto operator()(const Tuple& X) const
@@ -44,8 +45,8 @@ struct renderFunctor
         const auto rho = thrust::get<5>(X);
         const auto A   = thrust::get<6>(X);
 
-        const size_t ix = discretize(x, g.xmin, g.delta(), g.pixel_width);
-        const size_t iy = discretize(y, g.ymin, g.delta(), g.pixel_height);
+        const size_t ix = discretize(x, g.xmin, g.delta, g.pixel_width);
+        const size_t iy = discretize(y, g.ymin, g.delta, g.pixel_height);
 
         auto pixel_index = flattenPixel(ix, iy, g);
 
@@ -83,6 +84,8 @@ void renderSmallGPU(size_t startIndex, size_t endIndex, Ta* a, T* x, T* y, T* z,
 
     cstone::scatterGpu(thrust::raw_pointer_cast(out_keys.data()), n_out, thrust::raw_pointer_cast(out_vals.data()),
                        thrust::raw_pointer_cast(pixels_gpu.data()));
+    thrust::copy(pixels_gpu.begin(), pixels_gpu.end(), pixels.begin());
+
 }
 
 template void renderSmallGPU(size_t, size_t, float*, double*, double*, double*, float*, float*, float*, const Grid&,
@@ -92,6 +95,6 @@ template void renderSmallGPU(size_t, size_t, float*, double*, double*, double*, 
 //    template void renderSmallGPU(size_t, size_t, Ta*, T*, T*, T*, Th*, Tm*, Trho*, const Grid&, Twh*, T,               \
 //                                 std::span<double>);
 //
-//RENDER_SMALL_GPU(double, float, float, float, float, float);
+// RENDER_SMALL_GPU(double, float, float, float, float, float);
 
 } // namespace visual

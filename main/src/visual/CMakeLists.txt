@@ -5,6 +5,10 @@
 
 set(VISUAL_GPU_KERNELS
         render_small.cu
+        size_categorization.cu
+        render_medium.cu
+        render_medium_tile_list.cu
+        render_medium_kernel.cu
 )
 
 if (CMAKE_HIP_COMPILER)

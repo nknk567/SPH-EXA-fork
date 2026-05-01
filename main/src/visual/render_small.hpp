@@ -21,21 +21,24 @@ inline size_t discretize(const double x, const double xmin, const double delta_x
     return ix;
 }
 
-template<typename Dataset>
-void renderSmallImpl(size_t startIndex, size_t endIndex, Dataset& d, const Grid& g, auto& pixels)
+template<typename Ta, typename T, typename Th, typename Tm, typename Trho, typename Tw>
+void renderSmallImpl(size_t startIndex, size_t endIndex, const Ta* A, const T* x, const T* y, const T* z, const Th* h,
+                     const Tm* m, const Trho* rho, const Tw* w, const auto K, const Grid& g, auto& pixels)
 {
     std::vector<size_t> pixel_index(endIndex - startIndex);
     std::vector<double> contribution(endIndex - startIndex);
     for (size_t i = startIndex; i < endIndex; i++)
     {
-        const size_t ix = discretize(d.x[i], g.xmin, g.delta(), g.pixel_width);
-        const size_t iy = discretize(d.y[i], g.ymin, g.delta(), g.pixel_height);
+        //        const size_t ix = discretize(d.x[i], g.xmin, g.delta(), g.pixel_width);
+        //        const size_t iy = discretize(d.y[i], g.ymin, g.delta(), g.pixel_height);
+        const size_t ix = discretize(x[i], g.xmin, g.delta, g.pixel_width);
+        const size_t iy = discretize(y[i], g.ymin, g.delta, g.pixel_height);
 
         pixel_index[i - startIndex] = flattenPixel(ix, iy, g);
 
-        const auto A = d.rho[i];
-        contribution[i - startIndex] =
-            evaluate(ix, iy, g, A, d.x[i], d.y[i], d.z[i], d.h[i], d.m[i], d.rho[i], d.wh.data()) * d.K;
+        //        const auto A = d.rho[i];
+
+        contribution[i - startIndex] = evaluate(ix, iy, g, A[i], x[i], y[i], z[i], h[i], m[i], rho[i], w) * K;
     }
 
     for (size_t i = 0; i < pixel_index.size(); i++)
@@ -52,7 +55,22 @@ void renderSmall(size_t startIndex, size_t endIndex, Dataset& d, const Grid& g, 
         renderSmallGPU(startIndex, endIndex, rawPtr(d.rho), rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h),
                        rawPtr(d.m), rawPtr(d.rho), g, rawPtr(d.wh), d.K, pixels);
     }
-    else { renderSmallImpl(startIndex, endIndex, d, g, pixels); }
+    else
+    {
+        renderSmallImpl(startIndex, endIndex, rawPtr(d.rho), rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h),
+                        rawPtr(d.m), rawPtr(d.rho), d.wh.data(), d.K, g, pixels);
+    }
+
+    //    const auto x   = toHost(d.x);
+    //    const auto y   = toHost(d.y);
+    //    const auto z   = toHost(d.z);
+    //    const auto h   = toHost(d.h);
+    //    const auto m   = toHost(d.m);
+    //    const auto rho = toHost(d.rho);
+    //    const auto wh  = toHost(d.wh);
+    //
+    //    renderSmallImpl(startIndex, endIndex, rawPtr(rho), rawPtr(x), rawPtr(y), rawPtr(z), rawPtr(h), rawPtr(m),
+    //                    rawPtr(rho), rawPtr(wh), d.K, g, pixels);
 }
 
 } // namespace visual

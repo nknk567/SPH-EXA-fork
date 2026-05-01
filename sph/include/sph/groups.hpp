@@ -42,7 +42,7 @@ template<class Dataset>
 void computeSpatialGroups(cstone::LocalIndex startIndex, cstone::LocalIndex endIndex, Dataset& d,
                           const cstone::Box<typename Dataset::RealType>& box, GroupData<cstone::GpuTag>& groups)
 {
-    float tolFactor = 2.0f;
+    float tolFactor = 1.0f;
     cstone::computeGroupSplits(startIndex, endIndex, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z),
                                rawPtr(d.h), d.treeView.leaves, d.treeView.numLeafNodes, d.treeView.layout, box,
                                nsGroupSize(), tolFactor, d.traversalStack, groups.data);
