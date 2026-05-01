@@ -134,17 +134,21 @@ void renderTileList(Dataset& d, const Grid& g, std::span<const size_t> tile_offs
 template<class Dataset>
 void renderMedium(size_t startIndex, size_t endIndex, Dataset& d, const Grid& g, std::vector<double>& pixels)
 {
-    TileRenderData render_data;
-    render_data.tile_offsets.resize(g.n_tiles() + 1);
+    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{}) {}
+    else
+    {
+        TileRenderData render_data;
+        render_data.tile_offsets.resize(g.n_tiles() + 1);
 
-    computeTileCount(startIndex, endIndex, d, g, render_data.tile_offsets);
-    const size_t tile_list_size = render_data.tile_offsets.back();
-    printf("tile list size: %zu\n", tile_list_size);
+        computeTileCount(startIndex, endIndex, d, g, render_data.tile_offsets);
+        const size_t tile_list_size = render_data.tile_offsets.back();
+        printf("tile list size: %zu\n", tile_list_size);
 
-    render_data.tile_list.resize(tile_list_size);
-    computeTileList(startIndex, endIndex, d, g, render_data.tile_offsets, render_data.tile_list);
+        render_data.tile_list.resize(tile_list_size);
+        computeTileList(startIndex, endIndex, d, g, render_data.tile_offsets, render_data.tile_list);
 
-    renderTileList(d, g, render_data.tile_offsets, render_data.tile_list, pixels);
+        renderTileList(d, g, render_data.tile_offsets, render_data.tile_list, pixels);
+    }
 
     /*
      *

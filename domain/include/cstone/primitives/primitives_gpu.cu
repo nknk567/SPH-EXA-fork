@@ -141,6 +141,7 @@ template void scatterGpu(const int*, size_t, const util::array<float, 12>*, util
 template void scatterGpu(const int*, size_t, const util::array<double, 4>*, util::array<double, 4>*);
 template void scatterGpu(const int*, size_t, const util::array<double, 8>*, util::array<double, 8>*);
 template void scatterGpu(const int*, size_t, const util::array<double, 12>*, util::array<double, 12>*);
+template void scatterGpu(const size_t*, size_t, const double*, double*);
 
 template<class T, class IndexType>
 __global__ void

@@ -4,6 +4,10 @@
 
 #pragma once
 
+#include "cstone/cuda/annotation.hpp"
+#include <cmath>
+#include <tuple>
+
 namespace visual
 {
 
@@ -12,9 +16,9 @@ struct Grid
     //    double xmin = -142.;
     //    double xmax = -140.;
     //    double ymin = -189.;
-    double xmin = -900;
-    double xmax = -700;
-    double ymin = 300;
+    double xmin = -500;
+    double xmax = 500;
+    double ymin = -500;
 
     //    double ymax         = -187.;
 
@@ -33,19 +37,19 @@ struct Grid
     size_t n_tiles_y() const { return (pixel_height + tile_size - 1) / tile_size; }
     size_t n_tiles() const { return n_tiles_x() * n_tiles_y(); }
 
-    double ymax() const { return ymin + pixel_height * delta(); }
-    double delta() const { return (xmax - xmin) / pixel_width; }
-    double pixel_x(size_t i) const { return xmin + (i + 0.5) * delta(); }
-    double pixel_y(size_t i) const { return ymin + (i + 0.5) * delta(); }
+    double                 ymax() const { return ymin + pixel_height * delta(); }
+    HOST_DEVICE_FUN double delta() const { return (xmax - xmin) / pixel_width; }
+    HOST_DEVICE_FUN double pixel_x(size_t i) const { return xmin + (i + 0.5) * delta(); }
+    HOST_DEVICE_FUN double pixel_y(size_t i) const { return ymin + (i + 0.5) * delta(); }
 };
 
 template<typename T>
-auto limit_h(T h, const Grid& g)
+HOST_DEVICE_FUN auto limit_h(T h, const Grid& g)
 {
     return std::max(h, T(g.delta() / 2.));
 }
 
-auto particleTiles(double x, double y, double z, double h, const Grid& g)
+inline auto particleTiles(double x, double y, double z, double h, const Grid& g)
 {
     const double dz = z - g.z;
     // Projected search_radius; maybe cache in a first round
@@ -74,9 +78,12 @@ auto particleTiles(double x, double y, double z, double h, const Grid& g)
 
     return std::make_tuple(ix_min, ix_max, iy_min, iy_max);
 }
-inline size_t flattenPixel(const size_t ix, const size_t iy, const Grid& g) { return iy * g.pixel_width + ix; }
+HOST_DEVICE_FUN inline size_t flattenPixel(const size_t ix, const size_t iy, const Grid& g)
+{
+    return iy * g.pixel_width + ix;
+}
 
-auto tilePixels(const Grid& g, size_t tile_id)
+inline auto tilePixels(const Grid& g, size_t tile_id)
 {
     const size_t tile_ix = tile_id % g.n_tiles_x();
     const size_t tile_iy = tile_id / g.n_tiles_x();

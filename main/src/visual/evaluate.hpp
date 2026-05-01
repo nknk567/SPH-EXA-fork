@@ -5,13 +5,15 @@
 #pragma once
 
 #include <cmath>
+#include "cstone/cuda/annotation.hpp"
 #include "grid.hpp"
 #include "sph/table_lookup.hpp"
 
 namespace visual
 {
-double evaluate(size_t pixel_ix, size_t pixel_iy, const Grid& g, auto A, auto x, auto y, auto z, auto h, auto m,
-                auto rho, const auto* wh)
+
+HOST_DEVICE_FUN double evaluate(size_t pixel_ix, size_t pixel_iy, const Grid& g, auto A, auto x, auto y, auto z, auto h,
+                                auto m, auto rho, const auto* wh)
 {
     const auto x_pixel = g.pixel_x(pixel_ix);
     const auto y_pixel = g.pixel_y(pixel_iy);
@@ -35,4 +37,5 @@ double evaluate(size_t pixel_ix, size_t pixel_iy, const Grid& g, auto A, auto x,
     //    const double A_i = d.rho[i];
     return A * factor * h3_inv;
 }
+
 } // namespace visual

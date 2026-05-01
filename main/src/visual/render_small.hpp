@@ -4,12 +4,11 @@
 
 #pragma once
 
-// #include <algorithm>
 #include <vector>
 
 #include "evaluate.hpp"
 #include "grid.hpp"
-// #include "sph/table_lookup.hpp"
+#include "render_small_gpu.hpp"
 
 namespace visual
 {
@@ -48,7 +47,11 @@ void renderSmallImpl(size_t startIndex, size_t endIndex, Dataset& d, const Grid&
 template<class Dataset>
 void renderSmall(size_t startIndex, size_t endIndex, Dataset& d, const Grid& g, std::vector<double>& pixels)
 {
-    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{}) {}
+    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
+    {
+        renderSmallGPU(startIndex, endIndex, rawPtr(d.rho), rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h),
+                       rawPtr(d.m), rawPtr(d.rho), g, rawPtr(d.wh), d.K, pixels);
+    }
     else { renderSmallImpl(startIndex, endIndex, d, g, pixels); }
 }
 
