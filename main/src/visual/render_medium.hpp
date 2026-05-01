@@ -113,7 +113,7 @@ void renderTile(Dataset& d, const Grid& g, size_t tile_id, std::span<const size_
         for (size_t ix = ix_start; ix < ix_end; ix++)
         {
             // Get pixel
-            const size_t pixel_id = flattenPixel(ix, iy, g); // iy * g.pixel_width + ix;
+            const size_t pixel_id = flattenPixel(ix, iy, g); // pixel_iy * g.pixel_width + ix;
             pixels[pixel_id] += renderPixel(d, g, pixel_id, tile_list);
         }
 }

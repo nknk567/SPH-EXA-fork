@@ -4,8 +4,12 @@
 
 #include "grid.hpp"
 
+namespace visual
+{
+
+template<typename T, typename Th>
 void renderSmallGPU(size_t startIndex, size_t endIndex, T* x, T* y, T* z, Th* h, const Grid& g,
                     std::span<double> pixels)
 {
-
 }
+} // namespace visual
