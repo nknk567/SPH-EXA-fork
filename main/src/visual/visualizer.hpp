@@ -33,7 +33,7 @@ inline void dump_to_file_c(const std::vector<double>& data, const char* filename
     fclose(f);
 }
 
-template<template<typename> class FieldVector>
+template<template<typename> typename FieldVector>
 struct RenderData
 {
     //
@@ -131,9 +131,9 @@ struct Visualizer
         printf("n_small: %zu\n", n_small);
         printf("n_large: %zu\n", n_large);
 
-        sortByKey<ConservedFields, RenderingFields, BufferTypes>(first, last, d, render_data.size_category,
+        sortByCategory<ConservedFields, RenderingFields, BufferTypes>(first, last, d, render_data.size_category,
                                                                  render_data);
-        timer.step("sortByKey");
+        timer.step("sortByCategory");
 
         // sort order:
         // small particles; large particles with ascending tile size; out of bound
