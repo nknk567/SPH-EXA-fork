@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <type_traits>
 #include <vector>
 
 #include "evaluate.hpp"
@@ -44,15 +45,22 @@ void renderSmallImpl(const auto& fields_span, const Grid& g, const auto* w, cons
     }
 }
 
-template<class Dataset>
-void renderSmall(size_t startIndex, size_t endIndex, Dataset& d, const Grid& g, auto& pixelsVec)
+template<typename BufferTypes, typename Dataset, typename RenderData>
+void renderSmall(size_t startIndex, size_t endIndex, Dataset& d, const Grid& g, auto& pixelsVec,
+                 RenderData& render_data)
 {
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
-        auto                         fields = makeRenderFieldsSpan<"rho">(d, startIndex, endIndex);
-        cstone::DeviceVector<size_t> buf1, buf2;
-        cstone::DeviceVector<double> buf3, buf4;
-        renderSmallGPU(fields, g, rawPtr(d.wh), d.K, pixelsVec, buf1, buf2, buf3, buf4);
+        auto fields = makeRenderFieldsSpan<"rho">(d, startIndex, endIndex);
+        //        using ImageType = std::decay_t<decltype(pixelsVec)>::value_type;
+        auto buffers = std::tuple_cat(get<BufferTypes>(d), render_data.buffers());
+
+        //Use 32-bit to reduce memory usage
+        using PixelIndexType   = uint32_t;
+        auto& pixelValueBuffer = util::pickType<decltype(pixelsVec)>(buffers);
+        auto& pixelIndexBuffer = util::pickType<cstone::DeviceVector<PixelIndexType>&>(buffers);
+
+        renderSmallGPU(fields, g, rawPtr(d.wh), d.K, pixelsVec, pixelIndexBuffer, pixelValueBuffer);
     }
     else
     {

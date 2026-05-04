@@ -46,8 +46,10 @@ struct RenderData
     FieldVector<size_t>   buf4;
     FieldVector<uint64_t> buf5;
     FieldVector<uint8_t>  buf6;
+    FieldVector<size_t>   buf7;
+    FieldVector<size_t>   buf8;
 
-    auto buffers() { return std::tie(buf1, buf2, buf3, buf4, buf5, buf6); }
+    auto buffers() { return std::tie(buf1, buf2, buf3, buf4, buf5, buf6, buf7, buf8); }
 };
 
 template<typename DomainType, typename Dataset>
@@ -67,6 +69,7 @@ struct Visualizer
     //    using BufferTypes     = Excludes<RenderingFields, DependentFields>;
     using BufferTypes =
         util::FieldList<"p", "c", "ax", "ay", "az", "du", "c11", "c12", "c13", "c22", "c23", "c33", "nc">;
+
     RenderData<Dataset::HydroData::template FieldVector> render_data;
 
     const size_t rank;
@@ -123,7 +126,7 @@ struct Visualizer
         //        timer.step("Device vector");
 
         //        std::vector<size_t> tile;
-//        const auto fields = makeRenderFieldsSpan<"rho">(d, first, last);
+        //        const auto fields = makeRenderFieldsSpan<"rho">(d, first, last);
 
         const auto [n_small, n_large] = sizeCategorization(first, last, d, grid, render_data.size_category);
         timer.step("sizeCategorization");
@@ -132,7 +135,7 @@ struct Visualizer
         printf("n_large: %zu\n", n_large);
 
         sortByCategory<ConservedFields, RenderingFields, BufferTypes>(first, last, d, render_data.size_category,
-                                                                 render_data);
+                                                                      render_data);
         timer.step("sortByCategory");
 
         // sort order:
@@ -140,7 +143,7 @@ struct Visualizer
 
         //        std::vector<double> result(grid.pixel_width * grid.pixel_height, 0.);
         typename Dataset::HydroData::FieldVector<double> result(grid.pixel_width * grid.pixel_height, 0.);
-        renderSmall(first, first + n_small, d, grid, result);
+        renderSmall<BufferTypes>(first, first + n_small, d, grid, result, render_data);
         timer.step("renderSmall");
 
         renderMedium(first + n_small, first + n_small + n_large, d, grid, result);

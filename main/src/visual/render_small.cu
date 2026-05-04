@@ -28,7 +28,7 @@ __device__ inline size_t discretize(const double x, const double xmin, const dou
     const size_t ix          = static_cast<size_t>(x_rel_clamp);
     return ix;
 }
-template<typename Twh, typename Tk>
+template<typename IndexType, typename Twh, typename Tk>
 struct renderFunctor
 {
 
@@ -50,7 +50,7 @@ struct renderFunctor
         const size_t ix = discretize(x, g.xmin, g.delta, g.pixel_width);
         const size_t iy = discretize(y, g.ymin, g.delta, g.pixel_height);
 
-        auto pixel_index = flattenPixel(ix, iy, g);
+        auto pixel_index = IndexType(flattenPixel(ix, iy, g));
 
         auto contribution = evaluate(ix, iy, g, A, x, y, z, h, m, rho, wh) * K;
 
@@ -58,43 +58,43 @@ struct renderFunctor
     }
 };
 
+template<typename IndexType, typename Twh, typename Tk>
+renderFunctor<IndexType, Twh, Tk> make_renderFunctor(const Grid& g, const Twh* wh, Tk K)
+{
+    return {g, wh, K};
+}
+
 template<typename RenderSpan, typename Twh, typename PixelsVecType, typename T, typename PixelIndexBuffer,
          typename PixelValueBuffer>
 void renderSmallGPU(const RenderSpan& rs, const Grid& g, Twh* wh, T K, PixelsVecType& pixels,
-                    PixelIndexBuffer& pixel_index_buffer1, PixelIndexBuffer& pixel_index_buffer2,
-                    PixelValueBuffer& pixel_value_buffer1, PixelValueBuffer& pixel_value_buffer2)
+                    PixelIndexBuffer& pixel_index_buffer, PixelValueBuffer& pixel_value_buffer)
 {
-    static_assert(std::is_integral_v<typename PixelIndexBuffer::value_type>);
+    using IndexType = typename PixelIndexBuffer::value_type;
+    static_assert(std::is_integral_v<IndexType>);
     static_assert(std::is_same_v<typename PixelsVecType::value_type, typename PixelValueBuffer::value_type>);
 
-    const size_t n_particles  = rs.size; // endIndex - startIndex;
-    auto&        pixel_index  = pixel_index_buffer1;
-    auto&        contribution = pixel_value_buffer1;
+    const size_t n_particles = rs.size; // endIndex - startIndex;
 
-    //    thrust::device_vector<size_t> pixel_index(n_particles);
-    //    thrust::device_vector<double> contribution(n_particles);
+    const size_t n_pixels = g.pixel_width * g.pixel_height;
+    pixel_index_buffer.resize(n_particles + n_pixels);
+    pixel_value_buffer.resize(n_particles + n_pixels);
+
+    std::span pixel_index{pixel_index_buffer.data(), n_particles};
+    std::span out_keys{pixel_index_buffer.data() + n_particles, n_pixels};
+
+    std::span contribution{pixel_value_buffer.data(), n_particles};
+    std::span out_vals{pixel_value_buffer.data() + n_particles, n_pixels};
 
     auto begin =
         thrust::make_zip_iterator(thrust::make_tuple(rs.x, rs.y, rs.z, rs.h, rs.m, rs.rho, rs.render_quantity));
 
     auto end = begin + n_particles;
-    pixel_index.resize(n_particles);
-    contribution.resize(n_particles);
-    //    thrust::transform(thrust::device, begin, end,
-    //                      thrust::make_zip_iterator(thrust::make_tuple(pixel_index.begin(), contribution.begin())),
-    //                      renderFunctor{g, wh, K});
+
     thrust::transform(thrust::device, begin, end,
-                      thrust::make_zip_iterator(thrust::make_tuple(rawPtr(pixel_index), contribution.begin())),
-                      renderFunctor{g, wh, K});
+                      thrust::make_zip_iterator(thrust::make_tuple(pixel_index.data(), contribution.begin())),
+                      make_renderFunctor<IndexType>(g, wh, K));
 
     thrust::sort_by_key(thrust::device, pixel_index.begin(), pixel_index.end(), contribution.begin());
-
-    //    thrust::device_vector<size_t> out_keys(n_particles);
-    //    thrust::device_vector<double> out_vals(n_particles);
-    auto& out_keys = pixel_index_buffer2;
-    auto& out_vals = pixel_value_buffer2;
-    out_keys.resize(n_particles);
-    out_vals.resize(n_particles);
 
     auto   new_end = thrust::reduce_by_key(thrust::device, pixel_index.begin(), pixel_index.end(), contribution.begin(),
                                            out_keys.begin(), out_vals.begin());
@@ -105,8 +105,7 @@ void renderSmallGPU(const RenderSpan& rs, const Grid& g, Twh* wh, T K, PixelsVec
 }
 
 template void renderSmallGPU(const RenderFieldsSpan<double, float, float, float, float>&, const Grid&, float*, double,
-                             cstone::DeviceVector<double>&, cstone::DeviceVector<size_t>&,
-                             cstone::DeviceVector<size_t>&, cstone::DeviceVector<double>&,
+                             cstone::DeviceVector<double>&, cstone::DeviceVector<uint32_t>&,
                              cstone::DeviceVector<double>&);
 
 //#define RENDER_SMALL_GPU(T, Th, Tm, Ta, Trho, Twh)                                                                     \
