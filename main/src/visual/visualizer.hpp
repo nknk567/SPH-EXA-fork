@@ -15,6 +15,7 @@
 #include "size_categorization.hpp"
 #include "render_small.hpp"
 #include "render_medium.hpp"
+#include "FieldListExclude.hpp"
 
 namespace visual
 {
@@ -62,6 +63,7 @@ struct Visualizer
     using DependentFields =
         util::FieldList<"rho", "p", "c", "ax", "ay", "az", "du", "c11", "c12", "c13", "c22", "c23", "c33", "nc">;
     using RenderingFields = util::FieldList<"rho">;
+    using BufferTypes     = Excludes<RenderingFields, DependentFields>;
 
     RenderData<Dataset::HydroData::template FieldVector> render_data;
 
@@ -125,7 +127,7 @@ struct Visualizer
         printf("n_small: %zu\n", n_small);
         printf("n_large: %zu\n", n_large);
 
-        sortByKey<ConservedFields, RenderingFields>(first, last, d, render_data.size_category, render_data);
+        sortByKey<ConservedFields, RenderingFields, BufferTypes>(first, last, d, render_data.size_category, render_data);
         timer.step("sortByKey");
 
         // sort order:

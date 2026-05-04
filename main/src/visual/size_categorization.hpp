@@ -62,7 +62,7 @@ void gather(std::span<const Tk> ordering, const size_t offset, std::tuple<Arrays
     util::for_each_tuple(reorderArray, arrays);
 }
 
-template<typename ConservedFields, typename DependentFields, typename Dataset>
+template<typename ConservedFields, typename DependentFields, typename BufferFields, typename Dataset>
 void sortByKeysImpl(size_t startIndex, size_t endIndex, Dataset& d, auto& keysVec)
 {
     //    std::vector<size_t> order(keysVec.size());
@@ -83,10 +83,11 @@ void sortByKeysImpl(size_t startIndex, size_t endIndex, Dataset& d, auto& keysVe
     gather(std::span(std::as_const(d.keys)), startIndex, get<Fields>(d), buffers);
 }
 
-template<typename ConservedFields, typename RenderingFields, typename Dataset, typename RenderData>
+template<typename ConservedFields, typename RenderingFields, typename BufferFields, typename Dataset,
+         typename RenderData>
 void sortByKeysGPU(size_t startIndex, size_t endIndex, Dataset& d, auto& keysVecDevice, RenderData& render_data)
 {
-//    printf("start sortByKeysGPU\n");
+    //    printf("start sortByKeysGPU\n");
     //    sphexa::Timer timer(std::cout);
     //    timer.start();
 
@@ -96,7 +97,7 @@ void sortByKeysGPU(size_t startIndex, size_t endIndex, Dataset& d, auto& keysVec
     //    timer.step("DeviceVector");
     assert(keysVecDevice.size() <= d.keys.size());
     cstone::sequenceAcc<true>(d.keys.begin(), d.keys.end(), size_t(0));
-//    timer.step("sequenceAcc");
+    //    timer.step("sequenceAcc");
 
     // oder cstone::sequece(0, order.size(), order.data (rawptr), 1.0); // growth rate = 1
 
@@ -114,7 +115,7 @@ void sortByKeysGPU(size_t startIndex, size_t endIndex, Dataset& d, auto& keysVec
                             std::span<KeyType>(rawPtr(d.keys), keysVecDevice.size()), render_data.buf6,
                             render_data.buf5, 1.0);
     //    cstone::sortByKeyGpu(rawPtr(keysVecDevice), rawPtr(keysVecDevice) + keysVecDevice.size(), rawPtr(d.keys));
-//    timer.step("sortByKey");
+    //    timer.step("sortByKey");
 
     //    cstone::DeviceVector<double>   buf1;
     //    cstone::DeviceVector<float>    buf2;
@@ -127,20 +128,24 @@ void sortByKeysGPU(size_t startIndex, size_t endIndex, Dataset& d, auto& keysVec
 
     //    using Fields = decltype(DefaultFields{} + ConservedFields{} + DependentFields{});
     using Fields = decltype(DefaultFields{} + ConservedFields{} + RenderingFields{});
+
     gather(std::span<const KeyType>(rawPtr(d.keys), keysVecDevice.size()), startIndex, get<Fields>(d),
-           std::tuple_cat(get<"p", "c", "ax", "ay", "az", "du", "c11", "c12", "c13", "c22", "c23", "c33", "nc">(d),
-                          render_data.buffers()));
-//    timer.step("gather");
+           get<BufferFields>(d),
+           // std::tuple_cat(get<"p", "c", "ax", "ay", "az", "du", "c11", "c12", "c13", "c22", "c23", "c33", "nc">(d),
+           render_data.buffers());
+    //    timer.step("gather");
 }
 
-template<typename ConservedFields, typename DependentFields, class Dataset, typename Tc, typename RenderData>
+template<typename ConservedFields, typename DependentFields, typename BufferFields, class Dataset, typename Tc,
+         typename RenderData>
 void sortByKey(size_t startIndex, size_t endIndex, Dataset& d, Tc& size_category, RenderData& render_data)
 {
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
-        sortByKeysGPU<ConservedFields, DependentFields>(startIndex, endIndex, d, size_category, render_data);
+        sortByKeysGPU<ConservedFields, DependentFields, BufferFields>(startIndex, endIndex, d, size_category,
+                                                                      render_data);
     }
-    else { sortByKeysImpl<ConservedFields, DependentFields>(startIndex, endIndex, d, size_category); }
+    else { sortByKeysImpl<ConservedFields, DependentFields, BufferFields>(startIndex, endIndex, d, size_category); }
 }
 
 } // namespace visual
