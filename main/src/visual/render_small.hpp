@@ -9,6 +9,7 @@
 #include "evaluate.hpp"
 #include "grid.hpp"
 #include "render_small_gpu.hpp"
+#include "RenderFieldsSpan.hpp"
 
 namespace visual
 {
@@ -48,17 +49,20 @@ void renderSmallImpl(size_t startIndex, size_t endIndex, const Ta* A, const T* x
 }
 
 template<class Dataset>
-void renderSmall(size_t startIndex, size_t endIndex, Dataset& d, const Grid& g, std::vector<double>& pixels)
+void renderSmall(size_t startIndex, size_t endIndex, Dataset& d, const Grid& g, auto& pixelsVec)
 {
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
-        renderSmallGPU(startIndex, endIndex, rawPtr(d.rho), rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h),
-                       rawPtr(d.m), rawPtr(d.rho), g, rawPtr(d.wh), d.K, pixels);
+        auto fields = makeRenderFieldsSpan<"rho">(d, startIndex, endIndex);
+        //        renderSmallGPU(startIndex, endIndex, fields, g, rawPtr(d.wh), d.K, pixelsVec);
+        cstone::DeviceVector<size_t> buf1, buf2;
+        cstone::DeviceVector<double> buf3, buf4;
+        renderSmallGPU(fields, g, rawPtr(d.wh), d.K, pixelsVec, buf1, buf2, buf3, buf4);
     }
     else
     {
         renderSmallImpl(startIndex, endIndex, rawPtr(d.rho), rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h),
-                        rawPtr(d.m), rawPtr(d.rho), d.wh.data(), d.K, g, pixels);
+                        rawPtr(d.m), rawPtr(d.rho), d.wh.data(), d.K, g, pixelsVec);
     }
 
     //    const auto x   = toHost(d.x);

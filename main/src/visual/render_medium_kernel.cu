@@ -67,22 +67,21 @@ __global__ void renderTilesKernel(Grid g, const Ta* A, const T* __restrict__ x, 
 }
 template<typename T, typename Ta, typename Th, typename Tm, typename Trho, typename Twh>
 void renderMediumGPU(size_t startIndex, size_t endIndex, const Ta* a, const T* x, const T* y, const T* z, const Th* h,
-                     const Tm* m, const Trho* rho, const Grid& g, const Twh* wh, T K, std::span<double> pixels,
+                     const Tm* m, const Trho* rho, const Grid& g, const Twh* wh, T K, double* pixels,
                      size_t* tile_offsets, size_t* tile_lists)
 {
-    const unsigned                numBlocks  = g.n_tiles;
-    const unsigned                numThreads = g.tile_size * g.tile_size;
-    thrust::device_vector<double> pixels_gpu(pixels.size());
+    const unsigned numBlocks  = g.n_tiles;
+    const unsigned numThreads = g.tile_size * g.tile_size;
+    //    thrust::device_vector<double> pixels_gpu(pixels.size());
 
-    thrust::copy(pixels.begin(), pixels.end(), pixels_gpu.begin());
-    renderTilesKernel<<<numBlocks, numThreads>>>(g, rho, x, y, z, h, m, rho, wh, tile_offsets, tile_lists, K,
-                                                 thrust::raw_pointer_cast(pixels_gpu.data()));
-    thrust::copy(pixels_gpu.begin(), pixels_gpu.end(), pixels.begin());
+    //    thrust::copy(pixels.begin(), pixels.end(), pixels_gpu.begin());
+    renderTilesKernel<<<numBlocks, numThreads>>>(g, rho, x, y, z, h, m, rho, wh, tile_offsets, tile_lists, K, pixels);
+    //    thrust::copy(pixels_gpu.begin(), pixels_gpu.end(), pixels.begin());
 }
 
 #define RENDER_MEDIUM_GPU(T, Ta, Th, Tm, Trho, Twh)                                                                    \
     template void renderMediumGPU(size_t, size_t, const Ta*, const T*, const T*, const T*, const Th*, const Tm*,       \
-                                  const Trho*, const Grid&, const Twh*, T, std::span<double>, size_t*, size_t*);
+                                  const Trho*, const Grid&, const Twh*, T, double*, size_t*, size_t*);
 
 RENDER_MEDIUM_GPU(double, float, float, float, float, float);
 } // namespace visual

@@ -16,6 +16,7 @@
 #include "render_small.hpp"
 #include "render_medium.hpp"
 #include "FieldListExclude.hpp"
+#include "RenderFieldsSpan.hpp"
 
 namespace visual
 {
@@ -63,8 +64,9 @@ struct Visualizer
     using DependentFields =
         util::FieldList<"rho", "p", "c", "ax", "ay", "az", "du", "c11", "c12", "c13", "c22", "c23", "c33", "nc">;
     using RenderingFields = util::FieldList<"rho">;
-    using BufferTypes     = Excludes<RenderingFields, DependentFields>;
-
+    //    using BufferTypes     = Excludes<RenderingFields, DependentFields>;
+    using BufferTypes =
+        util::FieldList<"p", "c", "ax", "ay", "az", "du", "c11", "c12", "c13", "c22", "c23", "c33", "nc">;
     RenderData<Dataset::HydroData::template FieldVector> render_data;
 
     const size_t rank;
@@ -121,25 +123,29 @@ struct Visualizer
         //        timer.step("Device vector");
 
         //        std::vector<size_t> tile;
+//        const auto fields = makeRenderFieldsSpan<"rho">(d, first, last);
+
         const auto [n_small, n_large] = sizeCategorization(first, last, d, grid, render_data.size_category);
         timer.step("sizeCategorization");
 
         printf("n_small: %zu\n", n_small);
         printf("n_large: %zu\n", n_large);
 
-        sortByKey<ConservedFields, RenderingFields, BufferTypes>(first, last, d, render_data.size_category, render_data);
+        sortByKey<ConservedFields, RenderingFields, BufferTypes>(first, last, d, render_data.size_category,
+                                                                 render_data);
         timer.step("sortByKey");
 
         // sort order:
         // small particles; large particles with ascending tile size; out of bound
 
-        std::vector<double> result(grid.pixel_width * grid.pixel_height, 0.);
+        //        std::vector<double> result(grid.pixel_width * grid.pixel_height, 0.);
+        typename Dataset::HydroData::FieldVector<double> result(grid.pixel_width * grid.pixel_height, 0.);
         renderSmall(first, first + n_small, d, grid, result);
         timer.step("renderSmall");
 
         renderMedium(first + n_small, first + n_small + n_large, d, grid, result);
         timer.step("renderMedium");
-        return result;
+        return toHost(result);
     }
     void visualize(DomainType& domain, Dataset& simData)
     {

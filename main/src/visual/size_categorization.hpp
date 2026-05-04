@@ -129,10 +129,12 @@ void sortByKeysGPU(size_t startIndex, size_t endIndex, Dataset& d, auto& keysVec
     //    using Fields = decltype(DefaultFields{} + ConservedFields{} + DependentFields{});
     using Fields = decltype(DefaultFields{} + ConservedFields{} + RenderingFields{});
 
-    gather(std::span<const KeyType>(rawPtr(d.keys), keysVecDevice.size()), startIndex, get<Fields>(d),
-           get<BufferFields>(d),
-           // std::tuple_cat(get<"p", "c", "ax", "ay", "az", "du", "c11", "c12", "c13", "c22", "c23", "c33", "nc">(d),
-           render_data.buffers());
+    gather(
+        std::span<const KeyType>(rawPtr(d.keys), keysVecDevice.size()), startIndex, get<Fields>(d),
+        std::tuple_cat(
+            get<BufferFields>(d),
+            // std::tuple_cat(get<"p", "c", "ax", "ay", "az", "du", "c11", "c12", "c13", "c22", "c23", "c33", "nc">(d),
+            render_data.buffers()));
     //    timer.step("gather");
 }
 

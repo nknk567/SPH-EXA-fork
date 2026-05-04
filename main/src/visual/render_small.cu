@@ -4,8 +4,10 @@
 
 #include "grid.hpp"
 #include "render_small_gpu.hpp"
+#include "RenderFieldsSpan.hpp"
 
 #include "cstone/primitives/primitives_gpu.h"
+#include "cstone/cuda/device_vector.h"
 #include "evaluate.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
@@ -56,40 +58,56 @@ struct renderFunctor
     }
 };
 
-template<typename T, typename Th, typename Tm, typename Ta, typename Trho, typename Twh>
-void renderSmallGPU(size_t startIndex, size_t endIndex, Ta* a, T* x, T* y, T* z, Th* h, Tm* m, Trho* rho, const Grid& g,
-                    Twh* wh, T K, std::span<double> pixels)
+template<typename RenderSpan, typename Twh, typename PixelsVecType, typename T, typename PixelIndexBuffer,
+         typename PixelValueBuffer>
+void renderSmallGPU(const RenderSpan& rs, const Grid& g, Twh* wh, T K, PixelsVecType& pixels,
+                    PixelIndexBuffer& pixel_index_buffer1, PixelIndexBuffer& pixel_index_buffer2,
+                    PixelValueBuffer& pixel_value_buffer1, PixelValueBuffer& pixel_value_buffer2)
 {
-    const size_t                  n_particles = endIndex - startIndex;
-    thrust::device_vector<size_t> pixel_index(n_particles);
-    thrust::device_vector<double> contribution(n_particles);
+    static_assert(std::is_integral_v<typename PixelIndexBuffer::value_type>);
+    static_assert(std::is_same_v<typename PixelsVecType::value_type, typename PixelValueBuffer::value_type>);
+
+    const size_t n_particles  = rs.size; // endIndex - startIndex;
+    auto&        pixel_index  = pixel_index_buffer1;
+    auto&        contribution = pixel_value_buffer1;
+
+    //    thrust::device_vector<size_t> pixel_index(n_particles);
+    //    thrust::device_vector<double> contribution(n_particles);
 
     auto begin =
-        thrust::make_zip_iterator(thrust::make_tuple(x + startIndex, y + startIndex, z + startIndex, h + startIndex,
-                                                     m + startIndex, rho + startIndex, a + startIndex));
+        thrust::make_zip_iterator(thrust::make_tuple(rs.x, rs.y, rs.z, rs.h, rs.m, rs.rho, rs.render_quantity));
+
     auto end = begin + n_particles;
-    thrust::transform(begin, end,
-                      thrust::make_zip_iterator(thrust::make_tuple(pixel_index.begin(), contribution.begin())),
+    pixel_index.resize(n_particles);
+    contribution.resize(n_particles);
+    //    thrust::transform(thrust::device, begin, end,
+    //                      thrust::make_zip_iterator(thrust::make_tuple(pixel_index.begin(), contribution.begin())),
+    //                      renderFunctor{g, wh, K});
+    thrust::transform(thrust::device, begin, end,
+                      thrust::make_zip_iterator(thrust::make_tuple(rawPtr(pixel_index), contribution.begin())),
                       renderFunctor{g, wh, K});
 
-    thrust::sort_by_key(pixel_index.begin(), pixel_index.end(), contribution.begin());
+    thrust::sort_by_key(thrust::device, pixel_index.begin(), pixel_index.end(), contribution.begin());
 
-    thrust::device_vector<size_t> out_keys(n_particles);
-    thrust::device_vector<double> out_vals(n_particles);
-    auto new_end = thrust::reduce_by_key(pixel_index.begin(), pixel_index.end(), contribution.begin(), out_keys.begin(),
-                                         out_vals.begin());
-    size_t n_out = new_end.first - out_keys.begin();
+    //    thrust::device_vector<size_t> out_keys(n_particles);
+    //    thrust::device_vector<double> out_vals(n_particles);
+    auto& out_keys = pixel_index_buffer2;
+    auto& out_vals = pixel_value_buffer2;
+    out_keys.resize(n_particles);
+    out_vals.resize(n_particles);
 
-    thrust::device_vector<double> pixels_gpu(pixels.size());
+    auto   new_end = thrust::reduce_by_key(thrust::device, pixel_index.begin(), pixel_index.end(), contribution.begin(),
+                                           out_keys.begin(), out_vals.begin());
+    size_t n_out   = new_end.first - out_keys.begin();
 
     cstone::scatterGpu(thrust::raw_pointer_cast(out_keys.data()), n_out, thrust::raw_pointer_cast(out_vals.data()),
-                       thrust::raw_pointer_cast(pixels_gpu.data()));
-    thrust::copy(pixels_gpu.begin(), pixels_gpu.end(), pixels.begin());
-
+                       thrust::raw_pointer_cast(pixels.data()));
 }
 
-template void renderSmallGPU(size_t, size_t, float*, double*, double*, double*, float*, float*, float*, const Grid&,
-                             float*, double, std::span<double>);
+template void renderSmallGPU(const RenderFieldsSpan<double, float, float, float, float>&, const Grid&, float*, double,
+                             cstone::DeviceVector<double>&, cstone::DeviceVector<size_t>&,
+                             cstone::DeviceVector<size_t>&, cstone::DeviceVector<double>&,
+                             cstone::DeviceVector<double>&);
 
 //#define RENDER_SMALL_GPU(T, Th, Tm, Ta, Trho, Twh)                                                                     \
 //    template void renderSmallGPU(size_t, size_t, Ta*, T*, T*, T*, Th*, Tm*, Trho*, const Grid&, Twh*, T,               \

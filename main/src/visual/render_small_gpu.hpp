@@ -9,7 +9,10 @@
 
 namespace visual
 {
-template<typename T, typename Th, typename Tm, typename Ta, typename Trho, typename Twh>
-extern void renderSmallGPU(size_t startIndex, size_t endIndex, Ta* a, T* x, T* y, T* z, Th* h, Tm* m, Trho* rho,
-                           const Grid& g, Twh* wh, T K, std::span<double> pixels);
+template<typename RenderSpan, typename Twh, typename PixelsVecType, typename T, typename PixelIndexBuffer,
+         typename PixelValueBuffer>
+void renderSmallGPU(const RenderSpan& rs, const Grid& g, Twh* wh, T K, PixelsVecType& pixels,
+                    PixelIndexBuffer& pixel_index_buffer1, PixelIndexBuffer& pixel_index_buffer2,
+                    PixelValueBuffer& pixel_value_buffer1, PixelValueBuffer& pixel_value_buffer2);
+
 }
