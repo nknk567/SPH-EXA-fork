@@ -126,7 +126,7 @@ __global__ __launch_bounds__(TravConfig::numThreads) void runIjLoopDepthFirst(
         for (unsigned warpTarget = 0; warpTarget < TravConfig::nwt; ++warpTarget)
         {
             const cstone::LocalIndex i = bodyBegin + warpTarget * GpuConfig::warpSize + laneIdx;
-            const LocalIndex* nidx     = warpNidx + warpTarget * GpuConfig::warpSize + laneIdx;
+            LocalIndex* nidx     = warpNidx + warpTarget * GpuConfig::warpSize + laneIdx;
 
             if (i < bodyEnd)
             {
