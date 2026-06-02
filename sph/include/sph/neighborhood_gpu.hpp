@@ -76,16 +76,18 @@ struct DeviceNeighborhoodData<depth_first>::Impl
     std::optional<NBSType> subgroupNeighborhood;
 };
 
+template <bool depth_first>
 template<class Dataset, class T>
-void DeviceNeighborhoodData::build(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box,
+void DeviceNeighborhoodData<depth_first>::build(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box,
                                    bool subgroups)
 {
     assert(impl);
     impl->build(groups, d, box, subgroups);
 }
 
+template <bool depth_first>
 template<class... Args>
-void DeviceNeighborhoodData::ijLoop(Args&&... args) const
+void DeviceNeighborhoodData<depth_first>::ijLoop(Args&&... args) const
 {
     assert(impl);
     impl->ijLoop(std::forward<Args>(args)...);
