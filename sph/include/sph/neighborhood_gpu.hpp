@@ -67,12 +67,12 @@ struct DeviceNeighborhoodData<depth_first>::Impl
 
     using NBTBreadthFirst = NeighborhoodDataType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder>;
     using NBTDepthFirst   = NeighborhoodDataType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodDepthFirstBuilder>;
-    using NBType          = std::conditional_t<depth_first, NBTBreadthFirst, NBTDepthFirst>;
+    using NBType          = std::conditional_t<depth_first, NBTDepthFirst, NBTBreadthFirst>;
     NBType neighborhood;
 
     using NBSTBreadthFirst = NeighborhoodSubgroupType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder>;
     using NBSTDepthFirst   = NeighborhoodSubgroupType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodDepthFirstBuilder>;
-    using NBSType = std::conditional_t<depth_first, NBSTBreadthFirst, NBSTDepthFirst>;
+    using NBSType = std::conditional_t<depth_first, NBSTDepthFirst, NBSTBreadthFirst>;
     std::optional<NBSType> subgroupNeighborhood;
 };
 
