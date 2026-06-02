@@ -251,8 +251,9 @@ public:
     FieldVector<uint64_t>  id;                                 // unique particle id
     FieldVector<HydroType> dtCourant;                          // per-particle timestep restriction
 
-    std::conditional_t<cstone::HaveGpu<AccType>{}, sph::DeviceNeighborhoodData, sph::NeighborhoodData> neighborhood;
-    cstone::OctreeNsView<RealType, KeyType>                                                            treeView;
+    std::conditional_t<cstone::HaveGpu<AccType>{}, sph::DeviceNeighborhoodData<true>, sph::NeighborhoodData>
+                                            neighborhood;
+    cstone::OctreeNsView<RealType, KeyType> treeView;
 
     //! @brief lookup tables for the SPH-kernel and its derivative
     FieldVector<HydroType> wh, whd;

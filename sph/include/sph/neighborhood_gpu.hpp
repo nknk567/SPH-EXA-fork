@@ -14,6 +14,7 @@
 namespace sph
 {
 
+template<bool depth_first = false>
 struct DeviceNeighborhoodData
 {
     DeviceNeighborhoodData();
@@ -31,7 +32,8 @@ private:
 };
 
 #if defined(__CUDACC__) || defined(__HIP__)
-struct DeviceNeighborhoodData::Impl
+template<bool depth_first>
+struct DeviceNeighborhoodData<depth_first>::Impl
 {
     template<class Dataset, class T>
     void build(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box, bool subgroups)
@@ -63,8 +65,15 @@ struct DeviceNeighborhoodData::Impl
             runIjLoop(neighborhood);
     }
 
-    NeighborhoodDataType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder>                    neighborhood;
-    std::optional<NeighborhoodSubgroupType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder>> subgroupNeighborhood;
+    using NBTBreadthFirst = NeighborhoodDataType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder>;
+    using NBTDepthFirst   = NeighborhoodDataType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodDepthFirstBuilder>;
+    using NBType          = std::conditional_t<depth_first, NBTBreadthFirst, NBTDepthFirst>;
+    NBType neighborhood;
+
+    using NBSTBreadthFirst = NeighborhoodSubgroupType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder>;
+    using NBSTDepthFirst   = NeighborhoodSubgroupType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodDepthFirstBuilder>;
+    using NBSType = std::conditional_t<depth_first, NSTBreadthFirst, NSTDepthFirst>;
+    std::optional<NBSType> subgroupNeighborhood;
 };
 
 template<class Dataset, class T>
