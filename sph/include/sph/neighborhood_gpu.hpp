@@ -35,6 +35,9 @@ private:
 template<bool depth_first>
 struct DeviceNeighborhoodData<depth_first>::Impl
 {
+    using Builder = std::conditional_t<depth_first, cstone::ijloop::GpuAlwaysTraverseNeighborhoodDepthFirstBuilder,
+                                       cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder>;
+
     template<class Dataset, class T>
     void build(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box, bool subgroups)
     {
@@ -48,7 +51,7 @@ struct DeviceNeighborhoodData<depth_first>::Impl
             neighborhood = {};
             subgroupNeighborhood.reset();
 
-            auto builder = cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder{d.ngmax};
+            auto builder = Builder{d.ngmax};
 
             neighborhood =
                 builder.build(d.treeView, box, d.size(), groups, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h));
@@ -65,27 +68,28 @@ struct DeviceNeighborhoodData<depth_first>::Impl
             runIjLoop(neighborhood);
     }
 
-    using NBTBreadthFirst = NeighborhoodDataType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder>;
-    using NBTDepthFirst   = NeighborhoodDataType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodDepthFirstBuilder>;
-    using NBType          = std::conditional_t<depth_first, NBTDepthFirst, NBTBreadthFirst>;
-    NBType neighborhood;
+    //    using NBTBreadthFirst = NeighborhoodDataType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder>;
+    //    using NBTDepthFirst   = NeighborhoodDataType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodDepthFirstBuilder>;
+    //    using NBType          = std::conditional_t<depth_first, NBTDepthFirst, NBTBreadthFirst>;
+    NeighborhoodDataType<Builder> neighborhood;
 
-    using NBSTBreadthFirst = NeighborhoodSubgroupType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder>;
-    using NBSTDepthFirst   = NeighborhoodSubgroupType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodDepthFirstBuilder>;
-    using NBSType = std::conditional_t<depth_first, NBSTDepthFirst, NBSTBreadthFirst>;
-    std::optional<NBSType> subgroupNeighborhood;
+    //    using NBSTBreadthFirst = NeighborhoodSubgroupType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder>;
+    //    using NBSTDepthFirst   =
+    //    NeighborhoodSubgroupType<cstone::ijloop::GpuAlwaysTraverseNeighborhoodDepthFirstBuilder>; using NBSType =
+    //    std::conditional_t<depth_first, NBSTDepthFirst, NBSTBreadthFirst>;
+    std::optional<NeighborhoodSubgroupType<Builder>> subgroupNeighborhood;
 };
 
-template <bool depth_first>
+template<bool depth_first>
 template<class Dataset, class T>
 void DeviceNeighborhoodData<depth_first>::build(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box,
-                                   bool subgroups)
+                                                bool subgroups)
 {
     assert(impl);
     impl->build(groups, d, box, subgroups);
 }
 
-template <bool depth_first>
+template<bool depth_first>
 template<class... Args>
 void DeviceNeighborhoodData<depth_first>::ijLoop(Args&&... args) const
 {
