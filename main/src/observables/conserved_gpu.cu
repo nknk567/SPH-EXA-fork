@@ -97,16 +97,17 @@ template<typename Tg>
 struct EnergyFromEntropyVe
 {
     Tg gamma_minus_one;
-    template<typename Tentropy, typename Txm, typename Tkx, typename Tm>
-    HOST_DEVICE_FUN Tentropy operator()(const thrust::tuple<Tentropy, Txm, Tkx, Tm>& t) const
+
+    template<class Tuple>
+    HOST_DEVICE_FUN auto operator()(const Tuple& t) const
     {
         const auto entropy = thrust::get<0>(t);
         const auto xm      = thrust::get<1>(t);
         const auto kx      = thrust::get<2>(t);
         const auto m       = thrust::get<3>(t);
 
-        Tentropy rho_i = kx * m / xm;
-        Tentropy u     = entropy * std::pow(rho_i, gamma_minus_one) / gamma_minus_one;
+        auto rho_i = kx * m / xm;
+        auto u     = entropy * pow(rho_i, gamma_minus_one) / gamma_minus_one;
 
         return m * u;
     }
