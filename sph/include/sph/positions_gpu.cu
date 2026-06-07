@@ -196,16 +196,17 @@ void computePositionsGpu(const GroupView& grp, float dt, util::array<float, Time
                                                       constCv, box, anyFBC);
 }
 
-#define POS_GPU(Tc, Tv, Ta, Tdu, Tm1, Tt, Thydro)                                                                      \
-    template void computePositionsGpu(                                                                                 \
-        const GroupView& grp, float dt, util::array<float, Timestep::maxNumRungs> dt_m1, Tc* x, Tc* y, Tc* z, Tv* vx,  \
-        Tv* vy, Tv* vz, Tm1* x_m1, Tm1* y_m1, Tm1* z_m1, Ta* ax, Ta* ay, Ta* az, const uint8_t* rung, Tt* temp, Tt* u, \
-        Tt* entropy, Tdu* du, Tm1* du_m1, Thydro* h, Thydro* mui, Tc gamma, Tc constCv, const cstone::Box<Tc>& box)
+#define POS_GPU(Tc, Tv, Ta, Tdu, Tm1, Tt, Thydro, Tm)                                                                  \
+    template void computePositionsGpu(const GroupView& grp, float dt, util::array<float, Timestep::maxNumRungs> dt_m1, \
+                                      Tc* x, Tc* y, Tc* z, Tv* vx, Tv* vy, Tv* vz, Tm1* x_m1, Tm1* y_m1, Tm1* z_m1,    \
+                                      Ta* ax, Ta* ay, Ta* az, const uint8_t* rung, Tt* temp, Tt* u, Tt* entropy,       \
+                                      Tdu* du, Tm1* du_m1, Thydro* h, Thydro* mui, Tv* rho, Tv* xm, Tv* kx, Tm* m,     \
+                                      Tc gamma, Tc constCv, const cstone::Box<Tc>& box)
 
 //        Tc      Tv     Ta      Tdu     Tm1     Tt      Thydro
-POS_GPU(double, double, double, double, double, double, double);
-POS_GPU(float, float, float, float, float, float, float);
-POS_GPU(double, double, double, float, float, double, double);
-POS_GPU(double, float, float, double, float, double, float);
+POS_GPU(double, double, double, double, double, double, double, double);
+POS_GPU(float, float, float, float, float, float, float, double);
+POS_GPU(double, double, double, float, float, double, double, double);
+POS_GPU(double, float, float, double, float, double, float, double);
 
 } // namespace sph
