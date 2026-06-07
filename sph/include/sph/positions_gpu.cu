@@ -204,9 +204,9 @@ void computePositionsGpu(const GroupView& grp, float dt, util::array<float, Time
                                       Tc gamma, Tc constCv, const cstone::Box<Tc>& box)
 
 //        Tc      Tv     Ta      Tdu     Tm1     Tt      Thydro
-POS_GPU(double, double, double, double, double, double, double, double);
-POS_GPU(float, float, float, float, float, float, float, double);
-POS_GPU(double, double, double, float, float, double, double, double);
-POS_GPU(double, float, float, double, float, double, float, double);
+POS_GPU(double, double, double, double, double, double, double, float);
+POS_GPU(float, float, float, float, float, float, float, float);
+POS_GPU(double, double, double, float, float, double, double, float);
+POS_GPU(double, float, float, double, float, double, float, float);
 
 } // namespace sph
