@@ -240,7 +240,8 @@ void computePositions(const GroupView& grp, Dataset& d, const cstone::Box<T>& bo
         computePositionsGpu(grp, dt_forward, dt_m1, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.vx), rawPtr(d.vy),
                             rawPtr(d.vz), rawPtr(d.x_m1), rawPtr(d.y_m1), rawPtr(d.z_m1), rawPtr(d.ax), rawPtr(d.ay),
                             rawPtr(d.az), rung, rawPtr(d.temp), rawPtr(d.u), rawPtr(d.entropy), rawPtr(d.du),
-                            rawPtr(d.du_m1), rawPtr(d.h), d_mui, d.gamma, constCv, box);
+                            rawPtr(d.du_m1), rawPtr(d.h), d_mui, rawPtr(d.rho), rawPtr(d.xm), rawPtr(d.kx), rawPtr(d.m),
+                            d.gamma, constCv, box);
     }
     else
     {
