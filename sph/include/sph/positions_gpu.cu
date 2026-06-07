@@ -191,12 +191,6 @@ void computePositionsGpu(const GroupView& grp, float dt, util::array<float, Time
                   box.boundaryZ() == cstone::BoundaryType::fixed;
 
     if (numBlocks == 0) { return; }
-    GroupView grp, float dt, util::array<float, Timestep::maxNumRungs> dt_m1, Tc* x,
-                                           Tc* y, Tc* z, Tv* vx, Tv* vy, Tv* vz, Tm1* x_m1, Tm1* y_m1, Tm1* z_m1, Ta* ax,
-                                           Ta* ay, Ta* az, const uint8_t* rung, Tt* temp, Tt* u, Tt* entropy, Tdu* du,
-                                           Tm1* du_m1, Thydro* h, Thydro* mui, Thydro* rho, Thydro* xm, Thydro* kx,
-                                           Tmass* m, Tc gamma, Tc constCv, const cstone::Box<Tc> box, bool anyFBC)
-
     computePositionsKernel<<<numBlocks, numThreads>>>(grp, dt, dt_m1, x, y, z, vx, vy, vz, x_m1, y_m1, z_m1, ax, ay, az,
                                                       rung, temp, u, entropy, du, du_m1, h, mui, rho, xm, kx, gamma, constCv, box,
                                                       anyFBC);
