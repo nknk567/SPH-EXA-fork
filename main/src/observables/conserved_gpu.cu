@@ -106,8 +106,8 @@ struct EnergyFromEntropyVe
         const auto kx      = thrust::get<2>(t);
         const auto m       = thrust::get<3>(t);
 
-        const auto auto rho_i = kx * m / xm;
-        const auto auto u     = entropy * pow(rho_i, gamma_minus_one) / gamma_minus_one;
+        const auto rho_i = kx * m / xm;
+        const auto u     = entropy * pow(rho_i, gamma_minus_one) / gamma_minus_one;
 
         return m * u;
     }
