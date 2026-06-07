@@ -56,8 +56,8 @@ namespace sphexa
  */
 template<class Tc, class Tv, class Tt, class Tm>
 extern std::tuple<double, double, cstone::Vec3<double>, cstone::Vec3<double>>
-conservedQuantitiesGpu(double cv, const Tc* x, const Tc* y, const Tc* z, const Tv* vx, const Tv* vy, const Tv* vz,
-                       const Tt* temp, const Tt* u, const Tt* entropy, const Tm* m, const Tv* xm, const Tv* kx,
-                       const Tv* rho, size_t first, size_t last);
+conservedQuantitiesGpu(double cv, double gamma, const Tc* x, const Tc* y, const Tc* z, const Tv* vx, const Tv* vy,
+                       const Tv* vz, const Tt* temp, const Tt* u, const Tt* entropy, const Tm* m, const Tv* xm,
+                       const Tv* kx, const Tv* rho, size_t first, size_t last);
 
 } // namespace sphexa
