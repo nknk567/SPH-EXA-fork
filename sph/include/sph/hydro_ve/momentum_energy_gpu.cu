@@ -76,10 +76,10 @@ __global__ void reduceDt(const LocalIndex* __restrict__ grpStart, const LocalInd
 
 template<bool avClean, class Dataset>
 void computeMomentumEnergy(const GroupView& grp, float* groupDt, Dataset& d,
-                           const cstone::Box<typename Dataset::RealType>&)
+                           const cstone::Box<typename Dataset::RealType>&, bool ignore_pdv)
 {
     momentumAndEnergyIjLoop<avClean>(
-        d.neighborhood, d.K, d.Kcour, d.Atmin, d.Atmax, d.ramp, rawPtr(d.vx), rawPtr(d.vy), rawPtr(d.vz), rawPtr(d.m),
+        d.neighborhood, d.K, d.Kcour, d.Atmin, d.Atmax, d.ramp, ignore_pdv, rawPtr(d.vx), rawPtr(d.vy), rawPtr(d.vz), rawPtr(d.m),
         rawPtr(d.c), rawPtr(d.kx), rawPtr(d.alpha), rawPtr(d.xm), rawPtr(d.prho), rawPtr(d.c11), rawPtr(d.c12),
         rawPtr(d.c13), rawPtr(d.c22), rawPtr(d.c23), rawPtr(d.c33), rawPtr(d.nc), rawPtr(d.dV11), rawPtr(d.dV12),
         rawPtr(d.dV13), rawPtr(d.dV22), rawPtr(d.dV23), rawPtr(d.dV33), rawPtr(d.tdpdTrho), rawPtr(d.wh), rawPtr(d.du),
@@ -98,7 +98,7 @@ void computeMomentumEnergy(const GroupView& grp, float* groupDt, Dataset& d,
 
 #define MOM_ENERGY(avc)                                                                                                \
     template void computeMomentumEnergy<avc>(const GroupView& grp, float*, sphexa::ParticlesData<cstone::GpuTag>& d,   \
-                                             const cstone::Box<SphTypes::CoordinateType>&)
+                                             const cstone::Box<SphTypes::CoordinateType>&, bool ignore_pdv)
 
 MOM_ENERGY(true);
 MOM_ENERGY(false);

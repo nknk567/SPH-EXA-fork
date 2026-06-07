@@ -69,6 +69,16 @@ PropLib<DomainType, ParticleDataType>::makeDiskVeProp(std::ostream& output, size
 
 template<class DomainType, class ParticleDataType>
 std::unique_ptr<Propagator<DomainType, ParticleDataType>>
+PropLib<DomainType, ParticleDataType>::makeDiskVeEntropyProp(std::ostream& output, size_t rank, const InitSettings& settings,
+                                                      bool avClean)
+{
+    if (avClean) { return std::make_unique<DiskVeProp<true, DomainType, ParticleDataType, "entropy">>(output, rank, settings); }
+    else { return std::make_unique<DiskVeProp<false, DomainType, ParticleDataType, "entropy">>(output, rank, settings); }
+}
+
+
+template<class DomainType, class ParticleDataType>
+std::unique_ptr<Propagator<DomainType, ParticleDataType>>
 PropLib<DomainType, ParticleDataType>::makeRelaxProp(std::ostream& output, size_t rank, const InitSettings& settings)
 {
     return std::make_unique<HydroPropRelax<DomainType, ParticleDataType>>(output, rank, settings);

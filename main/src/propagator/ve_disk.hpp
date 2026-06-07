@@ -26,11 +26,11 @@ namespace sphexa
 
 using namespace sph;
 
-template<bool avClean, class DomainType, class DataType>
-class DiskVeProp : public HydroVeProp<avClean, DomainType, DataType, true>
+template<bool avClean, class DomainType, class DataType, util::StructuralString temp_field = "u">
+class DiskVeProp : public HydroVeProp<avClean, DomainType, DataType, temp_field>
 {
 protected:
-    using Base = HydroVeProp<avClean, DomainType, DataType, true>;
+    using Base = HydroVeProp<avClean, DomainType, DataType, temp_field>;
     using Base::timer;
 
     using T = typename DataType::RealType;

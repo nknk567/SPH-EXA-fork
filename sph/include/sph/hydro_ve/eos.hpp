@@ -65,7 +65,7 @@ void computeIdealGasEOS_Impl(size_t startIndex, size_t endIndex, Dataset& d)
     bool storeRho = (d.rho.size() == d.m.size());
     bool storeP   = (d.p.size() == d.m.size());
 
-    if (d.u.empty())
+    if (!d.temp.empty())
     {
 #pragma omp parallel for schedule(static)
         for (size_t i = startIndex; i < endIndex; ++i)
@@ -78,13 +78,26 @@ void computeIdealGasEOS_Impl(size_t startIndex, size_t endIndex, Dataset& d)
             if (storeP) { d.p[i] = pi; }
         }
     }
-    else
+    else if (!d.u.empty())
     {
 #pragma omp parallel for schedule(static)
         for (size_t i = startIndex; i < endIndex; ++i)
         {
             auto rho      = kx[i] * m[i] / xm[i];
             auto [pi, ci] = idealGasEOS_u(u[i], rho, d.gamma);
+            prho[i]       = pi / (kx[i] * m[i] * m[i] * gradh[i]);
+            c[i]          = ci;
+            if (storeRho) { d.rho[i] = rho; }
+            if (storeP) { d.p[i] = pi; }
+        }
+    }
+    else
+    {
+#pragma omp parallel for schedule(static)
+        for (size_t i = startIndex; i < endIndex; ++i)
+        {
+            auto rho      = kx[i] * m[i] / xm[i];
+            auto [pi, ci] = idealGasEOS_entropy(d.entropy[i], rho, d.gamma);
             prho[i]       = pi / (kx[i] * m[i] * m[i] * gradh[i]);
             c[i]          = ci;
             if (storeRho) { d.rho[i] = rho; }
@@ -156,9 +169,8 @@ void computeIdealGasEOS(size_t startIndex, size_t endIndex, Dataset& d)
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
         gpu::computeIdealGasEOS(startIndex, endIndex, d.muiConst, d.gamma, rawPtr(d.temp), rawPtr(d.u),
-                                rawPtr(d.m), rawPtr(d.kx), rawPtr(d.xm),
-                                rawPtr(d.gradh), rawPtr(d.prho), rawPtr(d.c),
-                                rawPtr(d.rho), rawPtr(d.p));
+                                rawPtr(d.entropy), rawPtr(d.m), rawPtr(d.kx), rawPtr(d.xm), rawPtr(d.gradh),
+                                rawPtr(d.prho), rawPtr(d.c), rawPtr(d.rho), rawPtr(d.p));
     }
     else { computeIdealGasEOS_Impl(startIndex, endIndex, d); }
 }
@@ -168,9 +180,9 @@ void computeIsothermalEOS(size_t startIndex, size_t endIndex, Dataset& d)
 {
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
-        gpu::computeIsothermalEOS(startIndex, endIndex, d.soundSpeedConst, rawPtr(d.c), rawPtr(d.rho),
-                                  rawPtr(d.p), rawPtr(d.m), rawPtr(d.kx), rawPtr(d.xm),
-                                  rawPtr(d.gradh), rawPtr(d.prho), rawPtr(d.temp));
+        gpu::computeIsothermalEOS(startIndex, endIndex, d.soundSpeedConst, rawPtr(d.c), rawPtr(d.rho), rawPtr(d.p),
+                                  rawPtr(d.m), rawPtr(d.kx), rawPtr(d.xm), rawPtr(d.gradh), rawPtr(d.prho),
+                                  rawPtr(d.temp));
     }
     else { computeIsothermalEOS_Impl(startIndex, endIndex, d); }
 }
@@ -181,9 +193,8 @@ void computePolytropicEOS(size_t startIndex, size_t endIndex, Dataset& d)
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
         gpu::computePolytropicEOS(startIndex, endIndex, d.polytropic_const, d.polytropic_index, rawPtr(d.rho),
-                                  rawPtr(d.p), rawPtr(d.m), rawPtr(d.kx), rawPtr(d.xm),
-                                  rawPtr(d.gradh), rawPtr(d.prho), rawPtr(d.temp),
-                                  rawPtr(d.c));
+                                  rawPtr(d.p), rawPtr(d.m), rawPtr(d.kx), rawPtr(d.xm), rawPtr(d.gradh), rawPtr(d.prho),
+                                  rawPtr(d.temp), rawPtr(d.c));
     }
     else { computePolytropicEOS_Impl(startIndex, endIndex, d); }
 }

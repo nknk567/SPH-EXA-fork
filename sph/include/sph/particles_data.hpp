@@ -226,6 +226,7 @@ public:
     FieldVector<HydroType> rho;                                // Density
     FieldVector<RealType>  temp;                               // Temperature
     FieldVector<RealType>  u;                                  // Internal Energy
+    FieldVector<RealType>  entropy;                            // Entropy
     FieldVector<HydroType> p;                                  // Pressure
     FieldVector<HydroType> prho;                               // p / (kx * m^2 * gradh)
     FieldVector<HydroType> tdpdTrho;                           // temp * dp/dT * prho
@@ -268,7 +269,7 @@ public:
      */
     inline static constexpr std::array fieldNames{
         "x",   "y",    "z",     "x_m1",     "y_m1", "z_m1", "vx",    "vy",    "vz",    "rho",
-        "u",   "p",    "prho",  "tdpdTrho", "h",    "m",    "c",     "ugrav", "ax",    "ay",
+        "u",   "entropy", "p",    "prho",  "tdpdTrho", "h",    "m",    "c",     "ugrav", "ax",    "ay",
         "az",  "du",   "du_m1", "c11",      "c12",  "c13",  "c22",   "c23",   "c33",   "mue",
         "mui", "temp", "cv",    "xm",       "kx",   "divv", "curlv", "alpha", "gradh", "keys",
         "nc",  "dV11", "dV12",  "dV13",     "dV22", "dV23", "dV33",  "rung",  "id",    "dtCourant",
@@ -283,7 +284,7 @@ public:
      */
     auto dataTuple()
     {
-        auto ret = std::tie(x, y, z, x_m1, y_m1, z_m1, vx, vy, vz, rho, u, p, prho, tdpdTrho, h, m, c, ugrav, ax, ay,
+        auto ret = std::tie(x, y, z, x_m1, y_m1, z_m1, vx, vy, vz, rho, u, entropy, p, prho, tdpdTrho, h, m, c, ugrav, ax, ay,
                             az, du, du_m1, c11, c12, c13, c22, c23, c33, mue, mui, temp, cv, xm, kx, divv, curlv, alpha,
                             gradh, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant,
                             iadRegularized);

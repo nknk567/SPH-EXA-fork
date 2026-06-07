@@ -165,7 +165,7 @@ struct MomentumAndEnergyInteraction
     }
 };
 
-template<bool UseTdpdTrho, class T, class Tc>
+template<bool UseTdpdTrho, bool ignore_pdv, class T, class Tc>
 struct MomentumAndEnergyPostamble
 {
     Tc K;
@@ -178,7 +178,10 @@ struct MomentumAndEnergyPostamble
         auto [a_visc_energy, energy, momentum_x, momentum_y, momentum_z, maxvsignal] = result;
         a_visc_energy                                                                = stl::max(T(0), a_visc_energy);
         T eCoeff                                                                     = UseTdpdTrho ? tdpdTrhoi : prhoi;
-        T dui = K * (eCoeff * energy + T(0.5) * a_visc_energy); // factor of 2 already removed from 2P/rho
+        //        T dui = K * (eCoeff * energy + T(0.5) * a_visc_energy); // factor of 2 already removed from 2P/rho
+        T dui = T(0.5) * a_visc_energy;
+        if constexpr (!ignore_pdv) { dui += eCoeff * energy; }
+
         if (nci <= 1)
         {
             dui        = 0;
@@ -186,17 +189,17 @@ struct MomentumAndEnergyPostamble
         }
 
         // grad_P_xyz is stored as the acceleration,s accel = -grad_P / rho
-        return std::make_tuple(Tc(dui), T(-K * momentum_x), T(-K * momentum_y), T(-K * momentum_z), maxvsignal);
+        return std::make_tuple(Tc(K * dui), T(-K * momentum_x), T(-K * momentum_y), T(-K * momentum_z), maxvsignal);
     };
 };
 
-template<bool UseTdpdTrho, class T, class Tc>
-struct MomentumAndEnergyPostambleWithDt : MomentumAndEnergyPostamble<UseTdpdTrho, T, Tc>
+template<bool UseTdpdTrho, bool ignore_pdv, class T, class Tc>
+struct MomentumAndEnergyPostambleWithDt : MomentumAndEnergyPostamble<UseTdpdTrho, ignore_pdv, T, Tc>
 {
     Tc Kcour;
 
     MomentumAndEnergyPostambleWithDt(Tc K, Tc Kcour)
-        : MomentumAndEnergyPostamble<UseTdpdTrho, T, Tc>{K}
+        : MomentumAndEnergyPostamble<UseTdpdTrho, ignore_pdv, T, Tc>{K}
         , Kcour(Kcour)
     {
     }
@@ -205,7 +208,7 @@ struct MomentumAndEnergyPostambleWithDt : MomentumAndEnergyPostamble<UseTdpdTrho
     constexpr auto operator()(const ParticleData& iData, const Result& result) const
     {
         const auto [du, grad_P_x, grad_P_y, grad_P_z, maxvsignal] =
-            MomentumAndEnergyPostamble<UseTdpdTrho, T, Tc>::operator()(iData, result);
+            MomentumAndEnergyPostamble<UseTdpdTrho, ignore_pdv, T, Tc>::operator()(iData, result);
         const auto [i, iPos, hi, vxi, vyi, vzi, mi, ci, kxi, alpha_i, xmassi, prhoi, c11i, c12i, c13i, c22i, c23i, c33i,
                     nci, dV11i, dV12i, dV13i, dV22i, dV23i, dV33i, tdpdTrhoi] = iData;
 
@@ -215,27 +218,32 @@ struct MomentumAndEnergyPostambleWithDt : MomentumAndEnergyPostamble<UseTdpdTrho
 };
 
 template<bool AvClean, class Neighborhood, class Tc, class T, class Tm, class Tm1>
-void momentumAndEnergyIjLoop(Neighborhood const& neighborhood, Tc K, Tc Kcour, T Atmin, T Atmax, T ramp, const T* vx,
-                             const T* vy, const T* vz, const Tm* m, const T* c, const T* kx, const T* alpha,
-                             const T* xm, const T* prho, const T* c11, const T* c12, const T* c13, const T* c22,
-                             const T* c23, const T* c33, const unsigned* nc, const T* dV11, const T* dV12,
-                             const T* dV13, const T* dV22, const T* dV23, const T* dV33, const T* tdpdTrho, const T* wh,
-                             Tm1* du, T* grad_P_x, T* grad_P_y, T* grad_P_z, T* dt)
+void momentumAndEnergyIjLoop(Neighborhood const& neighborhood, Tc K, Tc Kcour, T Atmin, T Atmax, T ramp,
+                             bool ignore_pdv, const T* vx, const T* vy, const T* vz, const Tm* m, const T* c,
+                             const T* kx, const T* alpha, const T* xm, const T* prho, const T* c11, const T* c12,
+                             const T* c13, const T* c22, const T* c23, const T* c33, const unsigned* nc, const T* dV11,
+                             const T* dV12, const T* dV13, const T* dV22, const T* dV23, const T* dV33,
+                             const T* tdpdTrho, const T* wh, Tm1* du, T* grad_P_x, T* grad_P_y, T* grad_P_z, T* dt)
 {
     if constexpr (!AvClean) dV11 = dV12 = dV13 = dV22 = dV23 = dV33 = vx;
     const auto input =
         std::make_tuple(vx, vy, vz, m, c, kx, alpha, xm, prho, c11, c12, c13, c22, c23, c33, nc, dV11, dV12, dV13, dV22,
                         dV23, dV33, tdpdTrho ? tdpdTrho : vx /* pass random derefable array if tdpdTrho is null */);
     const auto output = std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt);
-    if (tdpdTrho)
+    if (ignore_pdv)
     {
         neighborhood.ijLoop(input, output, MomentumAndEnergyInteraction<AvClean, T>{wh, Atmin, Atmax, ramp},
-                            MomentumAndEnergyPostambleWithDt<true, T, Tc>{K, Kcour});
+                            MomentumAndEnergyPostambleWithDt<false, true, T, Tc>{K, Kcour});
+    }
+    else if (tdpdTrho)
+    {
+        neighborhood.ijLoop(input, output, MomentumAndEnergyInteraction<AvClean, T>{wh, Atmin, Atmax, ramp},
+                            MomentumAndEnergyPostambleWithDt<true, false, T, Tc>{K, Kcour});
     }
     else
     {
         neighborhood.ijLoop(input, output, MomentumAndEnergyInteraction<AvClean, T>{wh, Atmin, Atmax, ramp},
-                            MomentumAndEnergyPostambleWithDt<false, T, Tc>{K, Kcour});
+                            MomentumAndEnergyPostambleWithDt<false, false, T, Tc>{K, Kcour});
     }
 }
 

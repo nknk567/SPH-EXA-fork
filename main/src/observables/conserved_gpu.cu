@@ -75,10 +75,48 @@ struct EMom
     }
 };
 
+template<typename Tg>
+struct EnergyFromEntropyStd
+{
+    Tg gamma_minus_one;
+
+    template<typename Tentropy, typename Trho, typename Tm>
+    HOST_DEVICE_FUN Tentropy operator()(const thrust::tuple<Tentropy, Trho, Tm>& t) const
+    {
+        const auto entropy = thrust::get<0>(t);
+        const auto rho     = thrust::get<1>(t);
+        const auto m       = thrust::get<2>(t);
+
+        const Tentropy u = entropy * std::pow(rho, gamma_minus_one) / gamma_minus_one;
+
+        return m * u;
+    }
+};
+
+template<typename Tg>
+struct EnergyFromEntropyVe
+{
+    Tg gamma_minus_one;
+    template<typename Tentropy, typename Txm, typename Tkx, typename Tm>
+    HOST_DEVICE_FUN Tentropy operator()(const thrust::tuple<Tentropy, Txm, Tkx, Tm>& t) const
+    {
+        const auto entropy = thrust::get<0>(t);
+        const auto xm      = thrust::get<1>(t);
+        const auto kx      = thrust::get<2>(t);
+        const auto m       = thrust::get<3>(t);
+
+        Tentropy rho_i = kx[i] * m[i] / xm[i];
+        Tentropy u     = entropy * std::pow(rho_i, gamma_minus_one) / gamma_minus_one;
+
+        return m * u;
+    }
+};
+
 template<class Tc, class Tv, class Tt, class Tm>
 std::tuple<double, double, Vec3<double>, Vec3<double>>
 conservedQuantitiesGpu(double cv, const Tc* x, const Tc* y, const Tc* z, const Tv* vx, const Tv* vy, const Tv* vz,
-                       const Tt* temp, const Tt* u, const Tm* m, size_t first, size_t last)
+                       const Tt* temp, const Tt* u, const Tt* entropy, const Tm* m, const Tv* xm, const Tv* kx,
+                       const Tv* rho, size_t first, size_t last)
 {
     auto it1 = thrust::make_zip_iterator(
         thrust::make_tuple(x + first, y + first, z + first, m + first, vx + first, vy + first, vz + first));
@@ -95,14 +133,32 @@ conservedQuantitiesGpu(double cv, const Tc* x, const Tc* y, const Tc* z, const T
         eInt = cv * thrust::inner_product(thrust::device, m + first, m + last, temp + first, Tt(0.0));
     }
     else if (u != nullptr) { eInt = thrust::inner_product(thrust::device, m + first, m + last, u + first, Tt(0.0)); }
-
+    else if (entropy != nullptr)
+    {
+        if (rho != nullptr)
+        {
+            auto it_begin =
+                thrust::make_zip_iterator(thrust::make_tuple(entropy + first, density + first, mass + first));
+            auto it_end = it_begin + (last - first);
+            eInt = thrust::transform_reduce(thrust::device, it_begin, it_end, EnergyFromEntropyStd{gamma - 1.}, 0.0,
+                                            thrust::plus<double>());
+        }
+        else
+        {
+            auto it_begin =
+                thrust::make_zip_iterator(thrust::make_tuple(entropy + first, xm + first, kx + firstmass + first));
+            auto it_end = it_begin + (last - first);
+            eInt = thrust::transform_reduce(thrust::device, it_begin, it_end, EnergyFromEntropyVe{gamma - 1.}, 0.0,
+                                            thrust::plus<double>());
+        }
+    };
     return {0.5 * eKin, eInt, linMom, angMom};
 }
 
 #define CONSERVED_Q_GPU(Tc, Tv, Tt, Tm)                                                                                \
     template std::tuple<double, double, Vec3<double>, Vec3<double>> conservedQuantitiesGpu(                            \
         double cv, const Tc* x, const Tc* y, const Tc* z, const Tv* vx, const Tv* vy, const Tv* vz, const Tt* temp,    \
-        const Tt* u, const Tm* m, size_t, size_t)
+        const Tt* u, const Tt* entropy, const Tm* m, const Tv* xm, const Tv* kx, const Tv* rho, size_t, size_t)
 
 CONSERVED_Q_GPU(double, double, double, double);
 CONSERVED_Q_GPU(double, double, double, float);

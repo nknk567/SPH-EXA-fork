@@ -58,6 +58,9 @@ auto localConservedQuantities(size_t startIndex, size_t endIndex, Dataset& d)
     const auto* m    = d.m.data();
     const auto* temp = d.temp.data();
     const auto* u    = d.u.data();
+    const auto* rho  = d.rho.data();
+    const auto* kx   = d.kx.data();
+    const auto* xm   = d.xm.data();
 
     util::array<double, 3> linmom{0.0, 0.0, 0.0};
     util::array<double, 3> angmom{0.0, 0.0, 0.0};
@@ -65,7 +68,7 @@ auto localConservedQuantities(size_t startIndex, size_t endIndex, Dataset& d)
     double sharedCv = sph::idealGasCv(d.muiConst, d.gamma);
     bool   haveMui  = !d.mui.empty();
 
-#pragma omp declare reduction(+ : util::array <double, 3> : omp_out += omp_in) initializer(omp_priv(omp_orig))
+#pragma omp declare reduction(+ : util::array<double, 3> : omp_out += omp_in) initializer(omp_priv(omp_orig))
 
     double eKin = 0.0;
 #pragma omp parallel for reduction(+ : eKin, linmom, angmom)
@@ -100,6 +103,16 @@ auto localConservedQuantities(size_t startIndex, size_t endIndex, Dataset& d)
             auto cv = haveMui ? sph::idealGasCv(d.mui[i], d.gamma) : sharedCv;
             auto mi = m[i];
             eInt += cv * temp[i] * mi;
+        }
+    }
+    else if (!d.entropy.empty())
+    {
+#pragma omp parallel for reduction(+ : eInt)
+        for (size_t i = startIndex; i < endIndex; i++)
+        {
+            const auto rhoi = (rho == nullptr) ? kx[i] * m[i] / xm[i] : rho[i];
+            const auto ui   = d.entropy[i] * std::pow(rhoi, d.gamma - 1.) / (d.gamma - 1.);
+            eInt += ui * m[i];
         }
     }
 

@@ -45,7 +45,7 @@ namespace sphexa
 using namespace sph;
 using util::FieldList;
 
-template<bool avClean, class DomainType, class DataType, bool use_u_field = false>
+template<bool avClean, class DomainType, class DataType, util::StructuralString temp_field = "temp">
 class HydroVeProp : public Propagator<DomainType, DataType>
 {
 protected:
@@ -70,10 +70,11 @@ protected:
      *
      * x, y, z, h and m are automatically considered conserved and must not be specified in this list
      */
-    using TempOrEnergy = std::conditional_t<use_u_field, FieldList<"u">, FieldList<"temp">>;
+//    using TempOrEnergy = std::conditional_t<use_u_field, FieldList<"u">, FieldList<"temp">>;
 
+    using TempField = FieldList<temp_field>;
     using ConservedFields_ = FieldList<"vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id">;
-    using ConservedFields  = decltype(TempOrEnergy{} + ConservedFields_{});
+    using ConservedFields  = decltype(TempField{} + ConservedFields_{});
 
     //! @brief list of dependent fields, these may be used as scratch space during domain sync
     using DependentFields_ = FieldList<"ax", "ay", "az", "prho", "c", "du", "c11", "c12", "c13", "c22", "c23", "c33",
