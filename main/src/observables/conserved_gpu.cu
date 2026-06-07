@@ -87,7 +87,7 @@ struct EnergyFromEntropyStd
         const auto rho     = thrust::get<1>(t);
         const auto m       = thrust::get<2>(t);
 
-        const Tentropy u = entropy * std::pow(rho, gamma_minus_one) / gamma_minus_one;
+        const Tentropy u = entropy * pow(rho, gamma_minus_one) / gamma_minus_one;
 
         return m * u;
     }
@@ -139,16 +139,16 @@ conservedQuantitiesGpu(double cv, double gamma, const Tc* x, const Tc* y, const 
         {
             auto it_begin = thrust::make_zip_iterator(thrust::make_tuple(entropy + first, rho + first, m + first));
             auto it_end   = it_begin + (last - first);
-            eInt = thrust::transform_reduce(thrust::device, it_begin, it_end, EnergyFromEntropyStd{gamma - 1.}, 0.0,
-                                            thrust::plus<double>());
+            eInt = thrust::transform_reduce(thrust::device, it_begin, it_end, EnergyFromEntropyStd{gamma - 1.}, Tt(0.0),
+                                            thrust::plus<Tt>());
         }
         else
         {
             auto it_begin =
                 thrust::make_zip_iterator(thrust::make_tuple(entropy + first, xm + first, kx + first, m + first));
             auto it_end = it_begin + (last - first);
-            eInt = thrust::transform_reduce(thrust::device, it_begin, it_end, EnergyFromEntropyVe{gamma - 1.}, 0.0,
-                                            thrust::plus<double>());
+            eInt = thrust::transform_reduce(thrust::device, it_begin, it_end, EnergyFromEntropyVe{gamma - 1.}, Tt(0.0),
+                                            thrust::plus<Tt>());
         }
     };
     return {0.5 * eKin, eInt, linMom, angMom};
