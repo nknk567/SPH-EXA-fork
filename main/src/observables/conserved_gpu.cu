@@ -139,7 +139,7 @@ conservedQuantitiesGpu(double cv, double gamma, const Tc* x, const Tc* y, const 
         if (rho != nullptr)
         {
             auto it_begin = thrust::make_zip_iterator(thrust::make_tuple(entropy + first, rho + first, m + first));
-            auto it_end   = it_begin + (last - first);
+            auto it_end   = thrust::make_zip_iterator(thrust::make_tuple(entropy + last, rho + last, m + last));
             eInt = thrust::transform_reduce(thrust::device, it_begin, it_end, EnergyFromEntropyStd{gamma - 1.}, Tt(0.0),
                                             thrust::plus<Tt>());
         }
@@ -147,7 +147,7 @@ conservedQuantitiesGpu(double cv, double gamma, const Tc* x, const Tc* y, const 
         {
             auto it_begin =
                 thrust::make_zip_iterator(thrust::make_tuple(entropy + first, xm + first, kx + first, m + first));
-            auto it_end = it_begin + (last - first);
+            auto it_end = thrust::make_zip_iterator(thrust::make_tuple(entropy + last, xm + last, kx + last, m + last));
             eInt = thrust::transform_reduce(thrust::device, it_begin, it_end, EnergyFromEntropyVe{gamma - 1.}, Tt(0.0),
                                             thrust::plus<Tt>());
         }
