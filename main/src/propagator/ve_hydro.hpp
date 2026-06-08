@@ -70,9 +70,9 @@ protected:
      *
      * x, y, z, h and m are automatically considered conserved and must not be specified in this list
      */
-//    using TempOrEnergy = std::conditional_t<use_u_field, FieldList<"u">, FieldList<"temp">>;
+    //    using TempOrEnergy = std::conditional_t<use_u_field, FieldList<"u">, FieldList<"temp">>;
 
-    using TempField = FieldList<temp_field>;
+    using TempField        = FieldList<temp_field>;
     using ConservedFields_ = FieldList<"vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id">;
     using ConservedFields  = decltype(TempField{} + ConservedFields_{});
 
@@ -134,6 +134,9 @@ public:
         sync(domain, simData);
         timer.step("domain::sync");
         Base::logDomainStats(domain, simData);
+
+        using KeyType = typename DataType::KeyType;
+        cstone::fill<cstone::HaveGpu<Acc>{}>(simData.hydro.keys.begin(), simData.hydro.keys.end(), KeyType(0));
 
         auto& d = simData.hydro;
         d.resize(domain.nParticlesWithHalos());
