@@ -157,7 +157,7 @@ updateSmoothingLengthIterativeGpuKernel(unsigned ng0, unsigned ngmax, const csto
         //            globalPool)[0];
         if (i >= bodyEnd) continue;
         unsigned ncSph =
-            findNeighbors(i, x, y, z, h, tree, box, ngmax, neighborsWarp + laneIdx, TravConfig::targetSize);
+            1 + findNeighbors(i, x, y, z, h, tree, box, ngmax, neighborsWarp + laneIdx, TravConfig::targetSize);
         constexpr int ncMaxIteration = 9;
         for (int ncIt = 0; ncIt <= ncMaxIteration; ++ncIt)
         {
