@@ -82,7 +82,7 @@ auto rhoTimestep(size_t first, size_t last, const Dataset& d)
         if (d.divv.empty())
         { // throw std::runtime_error("Divv needs to be available in rhoTimestep\n"); }
             printf("divv empty\n");
-            return INFINITY;
+            maxDivv = 0.;
         }
         else
         {
