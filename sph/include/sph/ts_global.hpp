@@ -55,8 +55,7 @@ auto accelerationTimestep(size_t first, size_t last, const Dataset& d)
     T minH2_A2 = std::numeric_limits<T>::infinity();
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
-        minH2_A2 = accelerationTimestepGPU(first, last, rawPtr(d.ax), rawPtr(d.ay),
-                                           rawPtr(d.az), rawPtr(d.h));
+        minH2_A2 = accelerationTimestepGPU(first, last, rawPtr(d.ax), rawPtr(d.ay), rawPtr(d.az), rawPtr(d.h));
     }
     else
     {
@@ -80,9 +79,16 @@ auto rhoTimestep(size_t first, size_t last, const Dataset& d)
     T maxDivv = -INFINITY;
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
-        if (d.divv.empty()) { throw std::runtime_error("Divv needs to be available in rhoTimestep\n"); }
-        auto minmax = cstone::MinMaxGpu<T>{}(rawPtr(d.divv) + first, rawPtr(d.divv) + last);
-        maxDivv     = std::get<1>(minmax);
+        if (d.divv.empty())
+        { // throw std::runtime_error("Divv needs to be available in rhoTimestep\n"); }
+            printf("divv empty\n");
+            return INFINITY;
+        }
+        else
+        {
+            auto minmax = cstone::MinMaxGpu<T>{}(rawPtr(d.divv) + first, rawPtr(d.divv) + last);
+            maxDivv     = std::get<1>(minmax);
+        }
     }
     else
     {
