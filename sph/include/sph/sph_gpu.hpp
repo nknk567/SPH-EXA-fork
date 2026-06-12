@@ -38,6 +38,9 @@ template<class Dataset>
 extern void computeIadDivvCurlvGradh(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
 template<class Dataset>
+extern bool computeGradHNewtonRaphsonIteration(const GroupView&, Dataset& d, typename Dataset::RealType eta,
+                                               typename Dataset::RealType tolerance);
+template<class Dataset>
 extern void computeAVswitches(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
 template<bool avClean, class Dataset>

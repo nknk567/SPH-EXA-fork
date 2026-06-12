@@ -45,7 +45,7 @@ namespace sphexa
 using namespace sph;
 using util::FieldList;
 
-template<bool avClean, class DomainType, class DataType, util::StructuralString temp_field = "temp">
+template<bool avClean, class DomainType, class DataType, util::StructuralString temp_field = "u">
 class HydroVeProp : public Propagator<DomainType, DataType>
 {
 protected:
@@ -73,7 +73,7 @@ protected:
     //    using TempOrEnergy = std::conditional_t<use_u_field, FieldList<"u">, FieldList<"temp">>;
 
     using TempField        = FieldList<temp_field>;
-    using ConservedFields_ = FieldList<"vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id">;
+    using ConservedFields_ = FieldList<"vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id", "fP">;
     using ConservedFields  = decltype(TempField{} + ConservedFields_{});
 
     //! @brief list of dependent fields, these may be used as scratch space during domain sync
@@ -156,9 +156,31 @@ public:
         domain.exchangeHalos(std::tie(get<"xm">(d)), get<"ax">(d), get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
 
+        // Newton-Raphson
+        bool converged = false;
+        release(d, "ay", "az");
+        acquire(d, "divv", "gradh");
+
+        size_t n_it = 0;
+        while (!converged)
+        {
+            computeVe(groups_.view(), d, domain.box());
+//            timer.step("Generalized Volume Elements");
+            domain.exchangeHalos(get<"vx", "kx">(d), get<"ax">(d), get<"keys">(d));
+            computeIadDivvCurlvGradh(groups_.view(), d, domain.box());
+            converged = computeGradHNewtonRaphsonIteration(groups_.view(), d, domain.box());
+//            timer.step("mpi::synchronizeHalos");
+            n_it++;
+        }
+        printf("n iterations: %zu\n", n_it);
+        release(d, "divv", "gradh");
+        acquire(d, "ay", "az");
+        findNeighborsSfc(groups_.view(), d, domain.box());
+        timer.step("FindNeighbors");
+
         computeVe(groups_.view(), d, domain.box());
         timer.step("Generalized Volume Elements");
-        domain.exchangeHalos(get<"vx", "vy", "vz", "kx">(d), get<"ax">(d), get<"keys">(d));
+        domain.exchangeHalos(get<"vx", "vy", "vz", "kx", "h">(d), get<"ax">(d), get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
 
         release(d, "ay", "az");

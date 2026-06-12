@@ -245,13 +245,14 @@ public:
     FieldVector<HydroType> xm;                                 // Volume element definition
     FieldVector<HydroType> kx;                                 // Volume element normalization
     FieldVector<HydroType> gradh;                              // grad(h) term
+    FieldVector<HydroType> fP;                                 // fP term
     FieldVector<KeyType>   keys;                               // Particle space-filling-curve keys
     FieldVector<unsigned>  nc;                                 // number of neighbors of each particle
     FieldVector<HydroType> dV11, dV12, dV13, dV22, dV23, dV33; // Velocity gradient components
     FieldVector<uint8_t>   rung;                               // rung per particle of previous timestep
     FieldVector<uint64_t>  id;                                 // unique particle id
     FieldVector<HydroType> dtCourant;                          // per-particle timestep restriction
-    FieldVector<uint8_t>   iadRegularized;                      // whether IAD ridge regularization was applied
+    FieldVector<uint8_t>   iadRegularized;                     // whether IAD ridge regularization was applied
 
     std::conditional_t<cstone::HaveGpu<AccType>{}, sph::DeviceNeighborhoodData<true>, sph::NeighborhoodData>
                                             neighborhood;
@@ -267,13 +268,59 @@ public:
     /*! @brief
      * Name of each field as string for use e.g in HDF5 output. Order has to correspond to what's returned by data().
      */
-    inline static constexpr std::array fieldNames{
-        "x",   "y",    "z",     "x_m1",     "y_m1", "z_m1", "vx",    "vy",    "vz",    "rho",
-        "u",   "entropy", "p",    "prho",  "tdpdTrho", "h",    "m",    "c",     "ugrav", "ax",    "ay",
-        "az",  "du",   "du_m1", "c11",      "c12",  "c13",  "c22",   "c23",   "c33",   "mue",
-        "mui", "temp", "cv",    "xm",       "kx",   "divv", "curlv", "alpha", "gradh", "keys",
-        "nc",  "dV11", "dV12",  "dV13",     "dV22", "dV23", "dV33",  "rung",  "id",    "dtCourant",
-        "iadRegularized"};
+    inline static constexpr std::array fieldNames{"x",
+                                                  "y",
+                                                  "z",
+                                                  "x_m1",
+                                                  "y_m1",
+                                                  "z_m1",
+                                                  "vx",
+                                                  "vy",
+                                                  "vz",
+                                                  "rho",
+                                                  "u",
+                                                  "entropy",
+                                                  "p",
+                                                  "prho",
+                                                  "tdpdTrho",
+                                                  "h",
+                                                  "m",
+                                                  "c",
+                                                  "ugrav",
+                                                  "ax",
+                                                  "ay",
+                                                  "az",
+                                                  "du",
+                                                  "du_m1",
+                                                  "c11",
+                                                  "c12",
+                                                  "c13",
+                                                  "c22",
+                                                  "c23",
+                                                  "c33",
+                                                  "mue",
+                                                  "mui",
+                                                  "temp",
+                                                  "cv",
+                                                  "xm",
+                                                  "kx",
+                                                  "divv",
+                                                  "curlv",
+                                                  "alpha",
+                                                  "gradh",
+                                                  "fP",
+                                                  "keys",
+                                                  "nc",
+                                                  "dV11",
+                                                  "dV12",
+                                                  "dV13",
+                                                  "dV22",
+                                                  "dV23",
+                                                  "dV33",
+                                                  "rung",
+                                                  "id",
+                                                  "dtCourant",
+                                                  "iadRegularized"};
 
     //! @brief dataset prefix to be prepended to fieldNames for structured output
     static const inline std::string prefix{};
@@ -284,10 +331,10 @@ public:
      */
     auto dataTuple()
     {
-        auto ret = std::tie(x, y, z, x_m1, y_m1, z_m1, vx, vy, vz, rho, u, entropy, p, prho, tdpdTrho, h, m, c, ugrav, ax, ay,
-                            az, du, du_m1, c11, c12, c13, c22, c23, c33, mue, mui, temp, cv, xm, kx, divv, curlv, alpha,
-                            gradh, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant,
-                            iadRegularized);
+        auto ret =
+            std::tie(x, y, z, x_m1, y_m1, z_m1, vx, vy, vz, rho, u, entropy, p, prho, tdpdTrho, h, m, c, ugrav, ax, ay,
+                     az, du, du_m1, c11, c12, c13, c22, c23, c33, mue, mui, temp, cv, xm, kx, divv, curlv, alpha, gradh,
+                     fP, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant, iadRegularized);
 
 #if defined(__clang__) || __GNUC__ > 11
         static_assert(std::tuple_size_v<decltype(ret)> == fieldNames.size());

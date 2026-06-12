@@ -36,7 +36,15 @@
 
 namespace sph
 {
-
+template<class Tc, class Dataset>
+bool computeGradHNewtonRaphsonIteration(const GroupView& grp, Dataset& d, const cstone::Box<Tc>&)
+{
+    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
+    {
+        return gpu::computeGradHNewtonRaphsonIteration(grp, d, d.sphEta, 1e-4);
+    }
+    else { return gradHNewtonRaphsonIteration(grp, d, 1.44004, 1e-4); }
+}
 template<class Tc, class Dataset>
 void computeIadDivvCurlvGradh(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box)
 {
@@ -45,9 +53,9 @@ void computeIadDivvCurlvGradh(const GroupView& grp, Dataset& d, const cstone::Bo
     {
         iadDivvCurlvGradhIjLoop(d.neighborhood, d.K, d.vx.data(), d.vy.data(), d.vz.data(), d.m.data(), d.xm.data(),
                                 d.kx.data(), d.nc.data(), d.c11.data(), d.c12.data(), d.c13.data(), d.c22.data(),
-                                d.c23.data(), d.c33.data(), d.wh.data(), d.whd.data(), d.gradh.data(), d.divv.data(),
-                                d.curlv.size() == d.x.size() ? d.curlv.data() : nullptr, d.dV11.data(), d.dV12.data(),
-                                d.dV13.data(), d.dV22.data(), d.dV23.data(), d.dV33.data(),
+                                d.c23.data(), d.c33.data(), d.wh.data(), d.whd.data(), d.gradh.data(), d.fP.data(),
+                                d.divv.data(), d.curlv.size() == d.x.size() ? d.curlv.data() : nullptr, d.dV11.data(),
+                                d.dV12.data(), d.dV13.data(), d.dV22.data(), d.dV23.data(), d.dV33.data(),
                                 d.dV11.size() == d.x.size(), d.condition_quality_target, d.iadRegularized.data());
     }
 }
