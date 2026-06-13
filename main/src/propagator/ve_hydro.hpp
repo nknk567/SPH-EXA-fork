@@ -44,7 +44,7 @@ namespace sphexa
 
 using namespace sph;
 using util::FieldList;
-
+static bool firstCall = true;
 template<bool avClean, class DomainType, class DataType, util::StructuralString temp_field = "u">
 class HydroVeProp : public Propagator<DomainType, DataType>
 {
@@ -73,12 +73,13 @@ protected:
     //    using TempOrEnergy = std::conditional_t<use_u_field, FieldList<"u">, FieldList<"temp">>;
 
     using TempField        = FieldList<temp_field>;
-    using ConservedFields_ = FieldList<"vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id", "fP">;
+    using ConservedFields_ = FieldList<"vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id", "rho", "ballmass">;
     using ConservedFields  = decltype(TempField{} + ConservedFields_{});
 
     //! @brief list of dependent fields, these may be used as scratch space during domain sync
-    using DependentFields_ = FieldList<"ax", "ay", "az", "prho", "c", "du", "c11", "c12", "c13", "c22", "c23", "c33",
-                                       "xm", "kx", "nc", "dtCourant", "iadRegularized">;
+    using DependentFields_ =
+        FieldList<"ax", "ay", "az", "prho", "c", "du", "c11", "c12", "c13", "c22", "c23", "c33", "xm", "kx", "nc",
+                  "dtCourant", "iadRegularized", "fP", "divv", "gradh">;
 
     //! @brief velocity gradient fields will only be allocated when avClean is true
     using GradVFields = FieldList<"dV11", "dV12", "dV13", "dV22", "dV23", "dV33">;
@@ -113,6 +114,7 @@ public:
 
     void sync(DomainType& domain, DataType& simData) override
     {
+        printf("sync\n");
         auto& d = simData.hydro;
         if (d.g != 0.0)
         {
@@ -127,11 +129,34 @@ public:
         d.treeView = domain.octreeProperties();
     }
 
+
+    template<class Dataset>
+    void initBallmass(const GroupView& grp, Dataset& d)
+    {
+#pragma omp parallel for
+        for (LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
+        {
+            using T = decltype(d.ballmass)::value_type;
+            if (firstCall || d.ballmass[i] == std::numeric_limits<T>::infinity())
+            {
+                auto rhoPrev  = d.rho[i];                 // Endstand letzter Schritt
+                auto h3       = d.h[i] * d.h[i] * d.h[i]; // h: nach Grob-Update dieses Schritts
+                d.ballmass[i] = rhoPrev * h3;
+            }
+        }
+        firstCall = false;
+    }
     void computeForces(DomainType& domain, DataType& simData) override
     {
         timer.start();
         pmReader.start();
+        std::transform(simData.hydro.h.begin(), simData.hydro.h.end(), simData.hydro.h.begin(),
+                       [](float x) { return 1.5 * x; });
+
         sync(domain, simData);
+        std::transform(simData.hydro.h.begin(), simData.hydro.h.end(), simData.hydro.h.begin(),
+                       [](float x) { return x / 1.5; });
+
         timer.step("domain::sync");
         Base::logDomainStats(domain, simData);
 
@@ -140,16 +165,21 @@ public:
 
         auto& d = simData.hydro;
         d.resize(domain.nParticlesWithHalos());
+
         size_t first = domain.startIndex();
         size_t last  = domain.endIndex();
 
         fillMassHalos(get<"m">(d), first, last);
 
         computeGroups(first, last, d, domain.box(), groups_);
-        updateSmoothingLengthIterative(groups_.view(), d, domain.box());
+
         findNeighborsSfc(groups_.view(), d, domain.box());
         timer.step("FindNeighbors");
         pmReader.step();
+        //        updateSmoothingLengthIterative(groups_.view(), d, domain.box());
+        updateSmoothingLengthIterative(groups_.view(), d, domain.box());
+
+        initBallmass(groups_.view(), d);
 
         computeXMass(groups_.view(), d, domain.box());
         timer.step("XMass");
@@ -158,33 +188,39 @@ public:
 
         // Newton-Raphson
         bool converged = false;
-        release(d, "ay", "az");
-        acquire(d, "divv", "gradh");
-
+        //        release(d, "ay", "az");
+        //        acquire(d, "divv", "gradh");
         size_t n_it = 0;
         while (!converged)
         {
+            findNeighborsSfc(groups_.view(), d, domain.box());
+            //            updateSmoothingLengthIterative(groups_.view(), d, domain.box());
             computeVe(groups_.view(), d, domain.box());
-//            timer.step("Generalized Volume Elements");
             domain.exchangeHalos(get<"vx", "kx">(d), get<"ax">(d), get<"keys">(d));
             computeIadDivvCurlvGradh(groups_.view(), d, domain.box());
+            if (n_it > 3) break;
             converged = computeGradHNewtonRaphsonIteration(groups_.view(), d, domain.box());
-//            timer.step("mpi::synchronizeHalos");
             n_it++;
         }
+        //        updateSmoothingLengthIterative(groups_.view(), d, domain.box());
+        //        findNeighborsSfc(groups_.view(), d, domain.box());
         printf("n iterations: %zu\n", n_it);
-        release(d, "divv", "gradh");
-        acquire(d, "ay", "az");
-        findNeighborsSfc(groups_.view(), d, domain.box());
-        timer.step("FindNeighbors");
+        //        release(d, "divv", "gradh");
+        //        acquire(d, "ay", "az");
+        //        findNeighborsSfc(groups_.view(), d, domain.box());
+        //        timer.step("FindNeighbors");
+        printf("divv size: %zu\n", d.divv.size());
 
         computeVe(groups_.view(), d, domain.box());
         timer.step("Generalized Volume Elements");
         domain.exchangeHalos(get<"vx", "vy", "vz", "kx", "h">(d), get<"ax">(d), get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
 
-        release(d, "ay", "az");
-        acquire(d, "divv", "gradh");
+        printf("divv size: %zu\n", d.divv.size());
+        //        release(d, "ay", "az");
+        //        acquire(d, "divv", "gradh");
+        printf("divv size: %zu\n", d.divv.size());
+
         computeIadDivvCurlvGradh(groups_.view(), d, domain.box());
         Base::printIadRegularizationStats(d, groups_.view().firstBody, groups_.view().lastBody, "ve");
         d.minDtRho = rhoTimestep(first, last, d);
@@ -208,8 +244,8 @@ public:
         else { domain.exchangeHalos(get<"prho", "alpha">(d), get<"ax">(d), get<"keys">(d)); }
         timer.step("mpi::synchronizeHalos");
 
-        release(d, "divv", "gradh");
-        acquire(d, "ay", "az");
+        //        release(d, "divv", "gradh");
+        //        acquire(d, "ay", "az");
         computeMomentumEnergy<avClean>(groups_.view(), nullptr, d, domain.box());
         timer.step("MomentumAndEnergy");
         pmReader.step();
@@ -239,11 +275,11 @@ public:
         computeTimestep(first, last, d);
         timer.step("Timestep");
         computePositions(groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)});
-        bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d);
-        if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
-        {
-            throw std::runtime_error("Neighbor search did not converge\n");
-        }
+//        bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d);
+//        if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
+//        {
+            //            throw std::runtime_error("Neighbor search did not converge\n");
+//        }
         timer.step("UpdateQuantities");
     }
 

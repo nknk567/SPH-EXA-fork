@@ -81,12 +81,16 @@ void computeGravityGroup(const util::array<Vec4<T1>, N>& target, const TreeNodeI
      * to the particles in the target box and traversal is stopped.
      */
     auto descendOrM2P =
-        [internalToLeaf, layout, centers, multipoles, &target, &targetCenter, &targetSize, acc](TreeNodeIndex idx)
+        [internalToLeaf, layout, centers, multipoles, &target, &targetCenter, &targetSize, acc, h](TreeNodeIndex idx)
     {
         const auto& com = centers[idx];
         const auto& mp  = multipoles[idx];
 
         bool violatesMac = cstone::evaluateMac(makeVec3(com), com[3], targetCenter, targetSize);
+
+//        auto targetSize2 = norm2(targetSize);
+
+//        if (targetSize2 < 0.05*0.05) {violatesMac = true; }
 
         auto leafIdx = internalToLeaf[idx];
         // A leaf cell with non-zero multipole mass, but no particles must be remote.

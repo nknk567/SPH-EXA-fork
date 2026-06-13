@@ -95,6 +95,7 @@ HOST_DEVICE_FUN bool evaluateMac(Vec3<T> sourceCenter, T macSq, Vec3<T> targetCe
     dX += abs(dX);
     dX *= T(0.5);
     T R2 = norm2(dX);
+    if (R2 < 0.08 * 0.08) return true;
     return R2 < std::abs(macSq);
 }
 

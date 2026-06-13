@@ -136,6 +136,7 @@ private:
     {
         int fieldIdx =
             std::find(DataType::fieldNames.begin(), DataType::fieldNames.end(), field) - DataType::fieldNames.begin();
+        printf("fieldIdx: %d\n", fieldIdx);
         acquireOne(data_, fieldIdx);
     }
 
@@ -159,6 +160,8 @@ private:
         {
             using Type1 = std::decay_t<decltype(*varPtr1)>;
             using Type2 = std::decay_t<decltype(*varPtr2)>;
+            printf("size: %zu, %zu\n", (*varPtr1).size(), (*varPtr2).size());
+
             if constexpr (std::is_same_v<Type1, Type2>) { swap(*varPtr1, *varPtr2); }
         };
 
@@ -170,6 +173,7 @@ private:
                 if (typesMatch)
                 {
                     std::visit(swapFields, data_[i], data_[fieldIdx]);
+                    printf("change %zu with %d\n", i, fieldIdx);
                     fieldStates_[i]        = State::unused;
                     fieldStates_[fieldIdx] = State::dependent;
                     return;

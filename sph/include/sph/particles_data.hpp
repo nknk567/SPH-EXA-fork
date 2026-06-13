@@ -253,6 +253,7 @@ public:
     FieldVector<uint64_t>  id;                                 // unique particle id
     FieldVector<HydroType> dtCourant;                          // per-particle timestep restriction
     FieldVector<uint8_t>   iadRegularized;                     // whether IAD ridge regularization was applied
+    FieldVector<HydroType> ballmass;
 
     std::conditional_t<cstone::HaveGpu<AccType>{}, sph::DeviceNeighborhoodData<true>, sph::NeighborhoodData>
                                             neighborhood;
@@ -320,7 +321,8 @@ public:
                                                   "rung",
                                                   "id",
                                                   "dtCourant",
-                                                  "iadRegularized"};
+                                                  "iadRegularized",
+                                                  "ballmass"};
 
     //! @brief dataset prefix to be prepended to fieldNames for structured output
     static const inline std::string prefix{};
@@ -334,7 +336,7 @@ public:
         auto ret =
             std::tie(x, y, z, x_m1, y_m1, z_m1, vx, vy, vz, rho, u, entropy, p, prho, tdpdTrho, h, m, c, ugrav, ax, ay,
                      az, du, du_m1, c11, c12, c13, c22, c23, c33, mue, mui, temp, cv, xm, kx, divv, curlv, alpha, gradh,
-                     fP, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant, iadRegularized);
+                     fP, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant, iadRegularized, ballmass);
 
 #if defined(__clang__) || __GNUC__ > 11
         static_assert(std::tuple_size_v<decltype(ret)> == fieldNames.size());

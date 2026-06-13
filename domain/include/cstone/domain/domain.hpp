@@ -318,7 +318,8 @@ public:
         }
 
         std::apply([exDesc, ord, &sendBuffer, &receiveBuffer, this](auto&... a)
-                   { global_.redoExchange(exDesc, ord, sendBuffer, receiveBuffer, rawPtr(a)...); }, arrays);
+                   { global_.redoExchange(exDesc, ord, sendBuffer, receiveBuffer, rawPtr(a)...); },
+                   arrays);
 
         lowMemReallocate(bufDesc_.size, allocGrowthRate_, arrays, std::tie(sendBuffer, receiveBuffer));
         gatherArrays({ord + global_.numSendDown(), global_.numAssigned()}, bufDesc_.start, arrays,
@@ -452,7 +453,13 @@ private:
     {
         initBounds(x.size());
         auto distributedArrays = std::tuple_cat(std::tie(keys, x, y, z), particleProperties);
-        std::apply([size = x.size()](auto&... arrays) { checkSizesEqual(size, arrays...); }, distributedArrays);
+        std::apply(
+            [size = x.size()](auto&... arrays)
+            {
+                ((printf("array size: %zu\n", arrays.size())), ...);
+                checkSizesEqual(size, arrays...);
+            },
+            distributedArrays);
 
         // Global tree build and assignment
         auto exchangeSize = global_.assign(bufDesc_, sorter, std::get<0>(scratchBuffers), std::get<1>(scratchBuffers),

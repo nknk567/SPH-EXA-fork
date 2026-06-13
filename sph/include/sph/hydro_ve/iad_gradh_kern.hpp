@@ -51,36 +51,28 @@ bool gradHNewtonRaphsonIteration(const GroupView& grp, Dataset& d, double eta, d
     {
         auto rho = d.kx[i] * d.m[i] / d.xm[i];
 
-        auto h2 = d.h[i] * d.h[i];
-        auto h3 = h2 * d.h[i];
+        auto h3 = d.h[i] * d.h[i] * d.h[i];
+//        auto h3 = h2 * d.h[i];
 
-        auto f = h3 * rho - eta * eta * eta * d.m[i];
-
-        //        auto fp = 3.0 * h2 * rho * d.gradh[i];
-        //        auto fp = d.gradh[i];
+//        auto f = h3 * rho - eta * eta * eta * d.m[i];
+        auto f = h3 * rho - d.ballmass[i];
         auto fpi = d.fP[i];
-        //        auto fp = 3.0 * h2 * rho + h3 * rho * d.gradh[i];
-        //        auto f = eta * eta * eta * d.m[i] / h3 - rho;
-        //        auto fp = -3 * rho / d.h[i] * d.gradh[i];
-        //        auto fp = -(3. * eta * eta * eta * d.m[i] / (d.h[i] * h3) + d.gradh[i]);
-        //        if (std::abs(fp) > 1e-20)
-        //        {
+
 
         auto residual = h3 * rho / (eta * eta * eta * d.m[i]) - 1.0;
-        //        if (std::abs(residual) > tolerance) { printf("i: %d\n", i); }
         if (i == 65266) { printf("f: %g\t fp: %lf\n", f, fpi); }
 
+        if (std::abs(fpi) < 1e-20f) { continue; }
         if (std::abs(residual) < tolerance) { continue; }
         else
         {
             converged = false;
             auto dh   = -f / fpi;
-            dh        = std::clamp(dh, -0.5 * d.h[i], 0.5 * d.h[i]);
-
+//            dh        = std::clamp(dh, -0.0844 * d.h[i], 0.0844 * d.h[i]);
+            if (std::abs(dh) >= 0.2 * d.h[i]) { dh = 0; }
             d.h[i] += dh;
         }
-        //        converged = converged && (std::abs(residual) < tolerance && std::abs(dh) < tolerance * d.h[i]);
-        //        }
+
     }
 
     return converged;
@@ -188,8 +180,8 @@ struct IADGradhPostamble
 
         // S = whomegai unmittelbar nach "whomegai *= dnorm;" — NICHT die kombinierte Grösse
 //        T kxTilde = kxi - K * xmi * h3Inv;
-        T gradhi  = (kxTilde + hi * whomegai / T(3)) / kxi;
-        gradhi = std::max(gradhi, T(0.3));
+//        T gradhi  = (kxTilde + hi * whomegai / T(3)) / kxi;
+//        gradhi = std::max(gradhi, T(0.3));
 
         wrho0i *= dnorm;
         sum_error *= dnorm;
@@ -199,10 +191,10 @@ struct IADGradhPostamble
         // The following line uses kxi instead of rhoi/rho0i so that it doesn't need to save an extra variable.
         // It is correct. However, assumes that the VE definition is xmass=mass/rho.
         // If the VE definition changes, this line needs to be updated accordingly.
-        whomegai = whomegai * mi / xmi;// - rhoi * sum_error + (kxi - K * xmi * h3Inv) * (wrho0i - rhoi / kxi * sum_error);
+        whomegai = whomegai * mi / xmi - rhoi * sum_error + (kxi - K * xmi * h3Inv) * (wrho0i - rhoi / kxi * sum_error);
         T dhdrho = -hi / (rhoi * T(3)); // This /3 is the dimension hard-coded.
 
-//        T gradhi = T(1) - dhdrho * whomegai;
+        T gradhi = T(1) - dhdrho * whomegai;
 
 //        gradhi = fpNR / (3. * hi * rhoi * rhoi * rhoi);
         return std::make_tuple(c11i, c12i, c13i, c22i, c23i, c33i, gradhi, fpNR);
