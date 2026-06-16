@@ -81,7 +81,7 @@ struct MomentumAndEnergyInteractionStd
         Tm1 energy;
         {
             T a = Wi * (T(2) * mj_pro_i + viscosity_ij * mi_roi);
-            if (ignore_pdv) { a = viscosity_ij * mi_roi; }
+            if constexpr (ignore_pdv) { a = Wi * viscosity_ij * mi_roi; }
             T b = viscosity_ij * mj_roj_Wj;
 
             energy = vx_ij * (a * termA1_i + b * termA1_j) + vy_ij * (a * termA2_i + b * termA2_j) +
