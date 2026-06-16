@@ -44,13 +44,15 @@ namespace gpu
 
 template<class Tt, class Tm, class Thydro>
 __global__ void cudaComputeIdealGasEOS_HydroStd(size_t firstParticle, size_t lastParticle, Tm mui, Tt gamma,
-                                                const Tt* temp, const Tt* u, Thydro* rho, Thydro* p, Thydro* c)
+                                                const Tt* temp, const Tt* u, const Tt* entropy, Thydro* rho, Thydro* p,
+                                                Thydro* c)
 {
     unsigned i = firstParticle + blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= lastParticle) return;
 
-    if (u == nullptr) { util::tie(p[i], c[i]) = idealGasEOS(temp[i], rho[i], mui, gamma); }
-    else { util::tie(p[i], c[i]) = idealGasEOS_u(u[i], rho[i], gamma); }
+    if (temp != nullptr) { util::tie(p[i], c[i]) = idealGasEOS(temp[i], rho[i], mui, gamma); }
+    else if (u != nullptr) { util::tie(p[i], c[i]) = idealGasEOS_u(u[i], rho[i], gamma); }
+    else { util::tie(p[i], c[i]) = idealGasEOS_entropy(entropy[i], rho[i], gamma); }
 }
 
 template<class Dataset>
@@ -61,8 +63,8 @@ void computeIdealGasEOS_HydroStd(size_t firstParticle, size_t lastParticle, Data
     unsigned numBlocks  = cstone::iceil(lastParticle - firstParticle, numThreads);
 
     cudaComputeIdealGasEOS_HydroStd<<<numBlocks, numThreads>>>(firstParticle, lastParticle, d.muiConst, d.gamma,
-                                                               rawPtr(d.temp), rawPtr(d.u), rawPtr(d.rho), rawPtr(d.p),
-                                                               rawPtr(d.c));
+                                                               rawPtr(d.temp), rawPtr(d.u), rawPtr(d.entropy),
+                                                               rawPtr(d.rho), rawPtr(d.p), rawPtr(d.c));
 
     checkGpuErrors(cudaDeviceSynchronize());
 }

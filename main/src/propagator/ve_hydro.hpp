@@ -45,7 +45,7 @@ namespace sphexa
 using namespace sph;
 using util::FieldList;
 
-template<bool avClean, class DomainType, class DataType, util::StructuralString temp_field = "temp">
+template<bool avClean, class DomainType, class DataType, util::StructuralString temp_field = "u">
 class HydroVeProp : public Propagator<DomainType, DataType>
 {
 protected:
