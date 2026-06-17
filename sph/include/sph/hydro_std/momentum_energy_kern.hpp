@@ -154,14 +154,14 @@ void momentumAndEnergyIjLoop(Neighborhood const& neighborhood, Tc K, Tc Kcour, c
     {
         neighborhood.ijLoop(std::make_tuple(m, rho, nc, vx, vy, vz, p, c, c11, c12, c13, c22, c23, c33),
                             std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt),
-                            MomentumAndEnergyInteractionStd<false, T, Tm1>{wh},
+                            MomentumAndEnergyInteractionStd<true, T, Tm1>{wh},
                             MomentumAndEnergyPostambleStdWithDt<Tc, Tm1>{K, Kcour});
     }
     else
     {
         neighborhood.ijLoop(std::make_tuple(m, rho, nc, vx, vy, vz, p, c, c11, c12, c13, c22, c23, c33),
                             std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt),
-                            MomentumAndEnergyInteractionStd<true, T, Tm1>{wh},
+                            MomentumAndEnergyInteractionStd<false, T, Tm1>{wh},
                             MomentumAndEnergyPostambleStdWithDt<Tc, Tm1>{K, Kcour});
     }
 }
