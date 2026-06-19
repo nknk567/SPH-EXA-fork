@@ -28,7 +28,7 @@ void moveToLocalMinimumGPU(size_t first, size_t last, T* x, T* y, T* z, const Th
     checkGpuErrors(cudaDeviceSynchronize());
 }
 
-#define MOVE_TO_LOCAL_MINIMUM_GPU(T, Th)                                                                           \
+#define MOVE_TO_LOCAL_MINIMUM_GPU(T, Th)                                                                               \
     template void moveToLocalMinimumGPU(size_t, size_t, T*, T*, T*, const Th*, const Th*, const Th*, const Th*,        \
                                         const cstone::Box<T>&);
 
