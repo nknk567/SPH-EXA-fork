@@ -4,7 +4,7 @@ if (CMAKE_HIP_COMPILER)
 endif ()
 
 if (CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
-    add_library(disk_gpu OBJECT central_force_gpu.cu accretion_gpu.cu beta_cooling_gpu.cu)
+    add_library(disk_gpu OBJECT central_force_gpu.cu accretion_gpu.cu beta_cooling_gpu.cu relaxation.cu)
     target_include_directories(disk_gpu PRIVATE ${CSTONE_DIR} ${SPH_DIR})
     if (CMAKE_CUDA_COMPILER)
         target_link_libraries(disk_gpu PRIVATE CUDA::cudart)
