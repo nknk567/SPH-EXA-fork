@@ -19,6 +19,7 @@
 #include "beta_cooling.hpp"
 #include "central_force.hpp"
 #include "exchange_star_position.hpp"
+#include "relaxation.hpp"
 #include "star_data.hpp"
 
 namespace sphexa
@@ -29,14 +30,17 @@ using namespace sph;
 template<class DomainType, class DataType>
 class HydroPropRelax : public HydroProp<DomainType, DataType>
 {
+    using Base = HydroProp<DomainType, DataType>;
     struct Params
     {
         double relaxationTimescale{0};
+        int    asynchronous_relaxation{1};
 
         template<class Archive>
         void loadOrStoreAttributes(Archive* ar)
         {
             ar->stepAttribute("relaxationTimescale", &relaxationTimescale, 1);
+            ar->stepAttribute("asynchronous_relaxation", &asynchronous_relaxation, 1);
         }
     };
     Params params_;
@@ -52,7 +56,32 @@ public:
     void computeForces(DomainType& domain, DataType& simData) override
     {
         HydroProp<DomainType, DataType>::computeForces(domain, simData);
-        relaxSystem(domain.startIndex(), domain.endIndex(), simData.hydro, params_.relaxationTimescale);
+        if (!params_.asynchronous_relaxation)
+        {
+            relaxSystem(domain.startIndex(), domain.endIndex(), simData.hydro, params_.relaxationTimescale);
+        }
+    }
+
+    void integrate(DomainType& domain, DataType& simData) override
+    {
+        if (!params_.asynchronous_relaxation) { Base::integrate(domain, simData); }
+        else { asynchronous_relaxation(domain, simData); }
+    }
+
+    void asynchronous_relaxation(DomainType& domain, DataType& simData)
+    {
+        const size_t first = domain.startIndex();
+        const size_t last  = domain.endIndex();
+        auto&        d     = simData.hydro;
+
+        disk::moveToLocalMinimum(first, last, d, domain.box());
+
+        bool haveUnconvergedParticles = updateSmoothingLength(Base::groups_.view(), d);
+        if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
+        {
+            throw std::runtime_error("Neighbor search did not converge\n");
+        }
+        Base::timer.step("UpdateQuantities");
     }
 
     void load(const std::string& initCond, IFileReader* reader) override
