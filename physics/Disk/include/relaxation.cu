@@ -11,9 +11,9 @@ __global__ void moveToLocalMinimumKernel(size_t first, size_t last, T* x, T* y, 
 {
     cstone::LocalIndex i = first + blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= last) { return; }
-    x[i] = x[i] + 0.5 * dt * dt * ax[i];
-    y[i] = y[i] + 0.5 * dt * dt * ay[i];
-    z[i] = z[i] + 0.5 * dt * dt * az[i];
+    x[i] = x[i] + 0.5 * dt[i] * dt[i] * ax[i];
+    y[i] = y[i] + 0.5 * dt[i] * dt[i] * ay[i];
+    z[i] = z[i] + 0.5 * dt[i] * dt[i] * az[i];
 }
 
 template<typename T, typename Th>
