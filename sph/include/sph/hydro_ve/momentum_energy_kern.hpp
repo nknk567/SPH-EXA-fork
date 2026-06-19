@@ -179,7 +179,7 @@ struct MomentumAndEnergyPostamble
         a_visc_energy                                                                = stl::max(T(0), a_visc_energy);
         T eCoeff                                                                     = UseTdpdTrho ? tdpdTrhoi : prhoi;
         //        T dui = K * (eCoeff * energy + T(0.5) * a_visc_energy); // factor of 2 already removed from 2P/rho
-        T dui = T(0.5) * a_visc_energy;
+        T dui = K * T(0.5) * a_visc_energy;
         if constexpr (!ignore_pdv) { dui += eCoeff * energy; }
 
         if (nci <= 1)
@@ -189,8 +189,8 @@ struct MomentumAndEnergyPostamble
         }
 
         // grad_P_xyz is stored as the acceleration,s accel = -grad_P / rho
-        return std::make_tuple(Tc(K * dui), T(-K * momentum_x), T(-K * momentum_y), T(-K * momentum_z), maxvsignal);
-    };
+        return std::make_tuple(Tc(dui), T(-K * momentum_x), T(-K * momentum_y), T(-K * momentum_z), maxvsignal);
+    }
 };
 
 template<bool UseTdpdTrho, bool ignore_pdv, class T, class Tc>
@@ -214,7 +214,7 @@ struct MomentumAndEnergyPostambleWithDt : MomentumAndEnergyPostamble<UseTdpdTrho
 
         auto dt = tsKCourant(maxvsignal, hi, ci, Kcour);
         return std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt);
-    };
+    }
 };
 
 template<bool AvClean, class Neighborhood, class Tc, class T, class Tm, class Tm1>

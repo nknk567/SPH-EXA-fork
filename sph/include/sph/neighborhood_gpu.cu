@@ -3,15 +3,12 @@
 namespace sph
 {
 
-template <bool depth_first>
-DeviceNeighborhoodData<depth_first>::DeviceNeighborhoodData()
+void DeviceNeighborhoodData::setType(NeighborhoodType type) { impl->neighborhoodType = type; }
+
+DeviceNeighborhoodData::DeviceNeighborhoodData()
     : impl(std::make_unique<Impl>())
 {
 }
-template <bool depth_first>
-DeviceNeighborhoodData<depth_first>::~DeviceNeighborhoodData() {}
-
-template class DeviceNeighborhoodData<true>;
-template class DeviceNeighborhoodData<false>;
+DeviceNeighborhoodData::~DeviceNeighborhoodData() {}
 
 } // namespace sph
