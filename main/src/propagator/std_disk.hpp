@@ -74,6 +74,9 @@ public:
         const size_t last  = domain.endIndex();
         auto&        d     = simData.hydro;
 
+        computeTimestep(first, last, d);
+        Base::timer.step("Timestep");
+
         disk::moveToLocalMinimum(first, last, d, domain.box());
 
         bool haveUnconvergedParticles = updateSmoothingLength(Base::groups_.view(), d);
