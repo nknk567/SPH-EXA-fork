@@ -79,6 +79,8 @@ public:
             const double t_relax             = std::sqrt(r_total * r_total * r_total / (gravConstant * m_total)) / 3.;
             settings_["relaxationTimescale"] = t_relax;
         }
+        if (not settings_.contains("asynchronous_relaxation")) { settings_["asynchronous_relaxation"] = 1; }
+
         const double n_polytropic = 1. / (settings_.at("polytropic_index") - 1.);
 
         double polytropic_const;
