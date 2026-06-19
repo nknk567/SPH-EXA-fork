@@ -1,12 +1,13 @@
 
+#include "cstone/cuda/cuda_utils.cuh"
 #include "relaxation_gpu.hpp"
 
 namespace disk
 {
 
 template<typename T, typename Th>
-__device__ void moveToLocalMinimumKernel(size_t first, size_t last, T* x, T* y, T* z, Th* ax, Th* ay, Th* az, Th* dt,
-                                         const cstone::Box<T> box)
+__global__ void moveToLocalMinimumKernel(size_t first, size_t last, T* x, T* y, T* z, const Th* ax, const Th* ay,
+                                         const Th* az, const Th* dt, const cstone::Box<T> box)
 {
     cstone::LocalIndex i = first + blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= last) { return; }
