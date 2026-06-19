@@ -37,7 +37,8 @@ void moveToLocalMinimum(size_t first, size_t last, Dataset& d, const cstone::Box
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
         moveToLocalMinimumGPU(first, last, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.ax), rawPtr(d.ay),
-                              rawPtr(d.az), rawPtr(d.vx), rawPtr(d.vy), rawPtr(d.vz), rawPtr(d.dtCourant), box);
+                              rawPtr(d.az), rawPtr(d.vx), rawPtr(d.vy), rawPtr(d.vz), rawPtr(d.dtCourant), d.minDt,
+                              box);
     }
     else { moveToLocalMinimumImpl(first, last, d, box); }
 }
