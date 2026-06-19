@@ -66,11 +66,6 @@ propagatorFactory(const std::string& choice, bool avClean, std::ostream& output,
     }
 #ifdef SPH_EXA_HAVE_DISKS
     if (choice == "std-disk") { return PropLib<DomainType, ParticleDataType>::makeDiskProp(output, rank, s); }
-    if (choice == "ve-disk") { return PropLib<DomainType, ParticleDataType>::makeDiskVeProp(output, rank, s, avClean); }
-    if (choice == "ve-disk-entropy")
-    {
-        return PropLib<DomainType, ParticleDataType>::makeDiskVeEntropyProp(output, rank, s, avClean);
-    }
     if (choice == "std-relax") { return PropLib<DomainType, ParticleDataType>::makeRelaxProp(output, rank, s); }
 #endif
 

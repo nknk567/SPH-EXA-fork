@@ -89,68 +89,7 @@ __launch_bounds__(TravConfig::numThreads) void runIjLoop(const OctreeNsView<Tc, 
     }
 }
 
-template<bool UsePbc, class Tc, class ThP, class KeyType, class In, class Out, class Interaction, class Postamble>
-__global__ __launch_bounds__(TravConfig::numThreads) void runIjLoopDepthFirst(
-    const OctreeNsView<Tc, KeyType> __grid_constant__ tree,
-    const Box<Tc> __grid_constant__ box,
-    const GroupView __grid_constant__ groups,
-    const Tc* __restrict__ x,
-    const Tc* __restrict__ y,
-    const Tc* __restrict__ z,
-    const ThP h,
-    const In __grid_constant__ input,
-    const Out __grid_constant__ output,
-    const Interaction interaction,
-    const Postamble postamble,
-    const unsigned ngmax,
-    LocalIndex* __restrict__ neighbors,
-    int* __restrict__ globalPool)
-{
-    const unsigned laneIdx     = threadIdx.x & (GpuConfig::warpSize - 1);
-    const unsigned warpIdxGrid = (blockDim.x * blockIdx.x + threadIdx.x) >> GpuConfig::warpSizeLog2;
-    unsigned targetIdx         = 0;
-
-    unsigned* warpNidx = neighbors + warpIdxGrid * TravConfig::targetSize * ngmax;
-
-    while (true)
-    {
-        if (laneIdx == 0) targetIdx = atomicAdd(&targetCounterGlob, 1);
-        targetIdx = shflSync(targetIdx, 0);
-
-        if (targetIdx >= groups.numGroups) break;
-
-        const cstone::LocalIndex bodyBegin = groups.groupStart[targetIdx];
-        const cstone::LocalIndex bodyEnd   = groups.groupEnd[targetIdx];
-
-#pragma unroll
-        for (unsigned warpTarget = 0; warpTarget < TravConfig::nwt; ++warpTarget)
-        {
-            const cstone::LocalIndex i = bodyBegin + warpTarget * GpuConfig::warpSize + laneIdx;
-            LocalIndex* nidx     = warpNidx + warpTarget * GpuConfig::warpSize + laneIdx;
-
-            if (i < bodyEnd)
-            {
-                auto nc_i        = findNeighbors(i, x, y, z, h, tree, box, ngmax, nidx, TravConfig::targetSize);
-                const auto iData = loadParticleData(x, y, z, h, input, i);
-
-                const unsigned nbs = imin(nc_i, ngmax);
-                auto result        = interaction(iData, iData, Vec3<Tc>{0, 0, 0}, Tc(0));
-                for (unsigned nb = 0; nb < nbs; ++nb)
-                {
-                    const LocalIndex j             = nidx[nb * TravConfig::targetSize];
-                    const auto jData               = loadParticleData(x, y, z, h, input, j);
-                    const auto [ijPosDiff, distSq] = posDiffAndDistSq(UsePbc, box, iData, jData);
-
-                    updateResult(result, interaction(iData, jData, ijPosDiff, distSq));
-                }
-
-                storeParticleData(output, i, postamble(iData, unwrapModifiers(result)));
-            }
-        }
-    }
-}
-
-template<bool depth_first, class Tc, class KeyType, class ThP>
+template<class Tc, class KeyType, class ThP>
 struct GpuAlwaysTraverseNeighborhood
 {
     OctreeNsView<Tc, KeyType> tree;
@@ -221,18 +160,9 @@ protected:
         }
         else
         {
-            if constexpr (depth_first)
-            {
-                runIjLoopDepthFirst<false><<<TravConfig::numBlocks(), TravConfig::numThreads>>>(
-                    tree, box, groups, x, y, z, h, makeConst(input), output, std::forward<Interaction>(interaction),
-                    std::forward<Postamble>(postamble), ngmax, neighbors.get(), globalPool.get());
-            }
-            else
-            {
-                runIjLoop<false><<<TravConfig::numBlocks(), TravConfig::numThreads>>>(
-                    tree, box, groups, x, y, z, h, makeConst(input), output, std::forward<Interaction>(interaction),
-                    std::forward<Postamble>(postamble), ngmax, neighbors.get(), globalPool.get());
-            }
+            runIjLoop<false><<<TravConfig::numBlocks(), TravConfig::numThreads>>>(
+                tree, box, groups, x, y, z, h, makeConst(input), output, std::forward<Interaction>(interaction),
+                std::forward<Postamble>(postamble), ngmax, neighbors.get(), globalPool.get());
         }
         checkGpuErrors(cudaGetLastError());
     }
@@ -244,7 +174,7 @@ struct GpuAlwaysTraverseNeighborhoodBuilder
     unsigned ngmax;
 
     template<class Tc, class KeyType, class ThP>
-    gpu_always_traverse_neighborhood_detail::GpuAlwaysTraverseNeighborhood<false, Tc, KeyType, ThP>
+    gpu_always_traverse_neighborhood_detail::GpuAlwaysTraverseNeighborhood<Tc, KeyType, ThP>
     build(const OctreeNsView<Tc, KeyType>& tree,
           const Box<Tc>& box,
           const LocalIndex /* totalBodies */,
@@ -263,36 +193,7 @@ struct GpuAlwaysTraverseNeighborhoodBuilder
                 z,
                 h,
                 ngmax,
-                util::deviceAlloc<LocalIndex[]>(GpuAlwaysTraverseNeighborhood<false, Tc, KeyType, ThP>::neighborsSize(ngmax)),
-                util::deviceAlloc<int[]>(TravConfig::poolSize())};
-    }
-};
-
-struct GpuAlwaysTraverseNeighborhoodDepthFirstBuilder
-{
-    unsigned ngmax;
-
-    template<class Tc, class KeyType, class ThP>
-    gpu_always_traverse_neighborhood_detail::GpuAlwaysTraverseNeighborhood<true, Tc, KeyType, ThP>
-    build(const OctreeNsView<Tc, KeyType>& tree,
-          const Box<Tc>& box,
-          const LocalIndex /* totalBodies */,
-          const GroupView& groups,
-          const Tc* x,
-          const Tc* y,
-          const Tc* z,
-          ThP h) const
-    {
-        using namespace gpu_always_traverse_neighborhood_detail;
-        return {tree,
-                box,
-                groups,
-                x,
-                y,
-                z,
-                h,
-                ngmax,
-                util::deviceAlloc<LocalIndex[]>(GpuAlwaysTraverseNeighborhood<true, Tc, KeyType, ThP>::neighborsSize(ngmax)),
+                util::deviceAlloc<LocalIndex[]>(GpuAlwaysTraverseNeighborhood<Tc, KeyType, ThP>::neighborsSize(ngmax)),
                 util::deviceAlloc<int[]>(TravConfig::poolSize())};
     }
 };

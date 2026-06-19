@@ -49,19 +49,6 @@ HOST_DEVICE_FUN auto idealGasEOS(T1 temp, T2 rho, T3 mui, T1 gamma)
     return idealGasEOS_u(idealGasCv(mui, gamma) * temp, rho, gamma);
 }
 
-template<class T1, class T2, class T3>
-HOST_DEVICE_FUN auto idealGasEOS_entropy(T1 entropy, T2 rho, T3 gamma)
-{
-    using Tc = std::common_type_t<T1, T2, T3>;
-
-    Tc tmp = entropy * std::pow(rho, gamma - 1);
-    Tc p = rho * tmp;
-    Tc c = std::sqrt(gamma * tmp);
-
-    return util::tuple<Tc, Tc>{p, c};
-
-}
-
 /*! @brief Isothermal equation of state
  *
  * @param c     speed of sound

@@ -178,31 +178,6 @@ void updateIntEnergyHost(size_t startIndex, size_t endIndex, Dataset& d, const c
     }
 }
 
-template<class Dataset, class T>
-void updateEntropyHost(size_t startIndex, size_t endIndex, Dataset& d, const cstone::Box<T>& box)
-{
-    bool anyFBC = box.boundaryX() == cstone::BoundaryType::fixed || box.boundaryY() == cstone::BoundaryType::fixed ||
-                  box.boundaryZ() == cstone::BoundaryType::fixed;
-
-    auto adjustForFBC = T(1);
-
-#pragma omp parallel for schedule(static)
-    for (std::size_t i = startIndex; i < endIndex; i++)
-    {
-        if (anyFBC) { adjustForFBC = min(fbcAdjustFactors({d.x[i], d.y[i], d.z[i]}, box, d.h[i])); }
-        // notice the common factor of dt in energyUpdate: to apply the Fixed Boundary Correction we can do it on dt.
-        // we multiply dt_m1 by that factor so it applies only once to each of the updating terms
-
-        using RhoType = std::remove_reference_t<decltype(d.rho[0])>;
-        RhoType rho_i;
-        if (d.rho.empty()) { rho_i = d.kx[i] * d.m[i] / d.xm[i]; }
-        else { rho_i = d.rho[i]; }
-        const auto ds = d.du[i] * (d.gamma - 1.) * std::pow(rho_i, 1. - d.gamma);
-        d.entropy[i]  = energyUpdate(d.entropy[i], d.minDt * adjustForFBC, d.minDt_m1 * adjustForFBC, ds, d.du_m1[i]);
-        d.du_m1[i]    = ds;
-    }
-}
-
 /*! @brief drift particles to a certain time within a time-step hierarchy
  *
  * @param grp            groups of particles to modify
@@ -221,10 +196,11 @@ void driftPositions(const GroupView& grp, Dataset& d, float dt_forward, float dt
         auto  constCv = d.mui.empty() ? idealGasCv(d.muiConst, d.gamma) : -1.0;
         auto* d_mui   = d.mui.empty() ? nullptr : rawPtr(d.mui);
 
-        driftPositionsGpu(grp, dt_forward, dt_backward, dt_prevRung, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z),
-                          rawPtr(d.vx), rawPtr(d.vy), rawPtr(d.vz), rawPtr(d.x_m1), rawPtr(d.y_m1), rawPtr(d.z_m1),
-                          rawPtr(d.ax), rawPtr(d.ay), rawPtr(d.az), rung, rawPtr(d.temp), rawPtr(d.u), rawPtr(d.du),
-                          rawPtr(d.du_m1), d_mui, d.gamma, constCv);
+        driftPositionsGpu(grp, dt_forward, dt_backward, dt_prevRung, rawPtr(d.x), rawPtr(d.y),
+                          rawPtr(d.z), rawPtr(d.vx), rawPtr(d.vy), rawPtr(d.vz),
+                          rawPtr(d.x_m1), rawPtr(d.y_m1), rawPtr(d.z_m1), rawPtr(d.ax),
+                          rawPtr(d.ay), rawPtr(d.az), rung, rawPtr(d.temp), rawPtr(d.u),
+                          rawPtr(d.du), rawPtr(d.du_m1), d_mui, d.gamma, constCv);
     }
 }
 
@@ -237,11 +213,12 @@ void computePositions(const GroupView& grp, Dataset& d, const cstone::Box<T>& bo
         T     constCv = d.mui.empty() ? idealGasCv(d.muiConst, d.gamma) : -1.0;
         auto* d_mui   = d.mui.empty() ? nullptr : rawPtr(d.mui);
 
-        computePositionsGpu(grp, dt_forward, dt_m1, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.vx), rawPtr(d.vy),
-                            rawPtr(d.vz), rawPtr(d.x_m1), rawPtr(d.y_m1), rawPtr(d.z_m1), rawPtr(d.ax), rawPtr(d.ay),
-                            rawPtr(d.az), rung, rawPtr(d.temp), rawPtr(d.u), rawPtr(d.entropy), rawPtr(d.du),
-                            rawPtr(d.du_m1), rawPtr(d.h), d_mui, rawPtr(d.rho), rawPtr(d.xm), rawPtr(d.kx), rawPtr(d.m),
-                            d.gamma, constCv, box);
+        computePositionsGpu(grp, dt_forward, dt_m1, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z),
+                            rawPtr(d.vx), rawPtr(d.vy), rawPtr(d.vz), rawPtr(d.x_m1),
+                            rawPtr(d.y_m1), rawPtr(d.z_m1), rawPtr(d.ax), rawPtr(d.ay),
+                            rawPtr(d.az), rung, rawPtr(d.temp), rawPtr(d.u),
+                            rawPtr(d.du), rawPtr(d.du_m1), rawPtr(d.h), d_mui, d.gamma, constCv,
+                            box);
     }
     else
     {
@@ -249,7 +226,6 @@ void computePositions(const GroupView& grp, Dataset& d, const cstone::Box<T>& bo
 
         if (!d.temp.empty()) { updateTempHost(grp.firstBody, grp.lastBody, d, box); }
         else if (!d.u.empty()) { updateIntEnergyHost(grp.firstBody, grp.lastBody, d, box); }
-        else if (!d.entropy.empty()) { updateEntropyHost(grp.firstBody, grp.lastBody, d, box); }
     }
 }
 

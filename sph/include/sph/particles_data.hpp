@@ -226,7 +226,6 @@ public:
     FieldVector<HydroType> rho;                                // Density
     FieldVector<RealType>  temp;                               // Temperature
     FieldVector<RealType>  u;                                  // Internal Energy
-    FieldVector<RealType>  entropy;                            // Entropy
     FieldVector<HydroType> p;                                  // Pressure
     FieldVector<HydroType> prho;                               // p / (kx * m^2 * gradh)
     FieldVector<HydroType> tdpdTrho;                           // temp * dp/dT * prho
@@ -251,11 +250,10 @@ public:
     FieldVector<uint8_t>   rung;                               // rung per particle of previous timestep
     FieldVector<uint64_t>  id;                                 // unique particle id
     FieldVector<HydroType> dtCourant;                          // per-particle timestep restriction
-    FieldVector<uint8_t>   iadRegularized;                      // whether IAD ridge regularization was applied
+    FieldVector<uint8_t> iadRegularized;
 
-    std::conditional_t<cstone::HaveGpu<AccType>{}, sph::DeviceNeighborhoodData<true>, sph::NeighborhoodData>
-                                            neighborhood;
-    cstone::OctreeNsView<RealType, KeyType> treeView;
+    std::conditional_t<cstone::HaveGpu<AccType>{}, sph::DeviceNeighborhoodData, sph::NeighborhoodData> neighborhood;
+    cstone::OctreeNsView<RealType, KeyType>                                                            treeView;
 
     //! @brief lookup tables for the SPH-kernel and its derivative
     FieldVector<HydroType> wh, whd;
@@ -269,11 +267,10 @@ public:
      */
     inline static constexpr std::array fieldNames{
         "x",   "y",    "z",     "x_m1",     "y_m1", "z_m1", "vx",    "vy",    "vz",    "rho",
-        "u",   "entropy", "p",    "prho",  "tdpdTrho", "h",    "m",    "c",     "ugrav", "ax",    "ay",
+        "u",   "p",    "prho",  "tdpdTrho", "h",    "m",    "c",     "ugrav", "ax",    "ay",
         "az",  "du",   "du_m1", "c11",      "c12",  "c13",  "c22",   "c23",   "c33",   "mue",
         "mui", "temp", "cv",    "xm",       "kx",   "divv", "curlv", "alpha", "gradh", "keys",
-        "nc",  "dV11", "dV12",  "dV13",     "dV22", "dV23", "dV33",  "rung",  "id",    "dtCourant",
-        "iadRegularized"};
+        "nc",  "dV11", "dV12",  "dV13",     "dV22", "dV23", "dV33",  "rung",  "id",    "dtCourant", "iadRegularized"};
 
     //! @brief dataset prefix to be prepended to fieldNames for structured output
     static const inline std::string prefix{};
@@ -284,10 +281,9 @@ public:
      */
     auto dataTuple()
     {
-        auto ret = std::tie(x, y, z, x_m1, y_m1, z_m1, vx, vy, vz, rho, u, entropy, p, prho, tdpdTrho, h, m, c, ugrav, ax, ay,
+        auto ret = std::tie(x, y, z, x_m1, y_m1, z_m1, vx, vy, vz, rho, u, p, prho, tdpdTrho, h, m, c, ugrav, ax, ay,
                             az, du, du_m1, c11, c12, c13, c22, c23, c33, mue, mui, temp, cv, xm, kx, divv, curlv, alpha,
-                            gradh, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant,
-                            iadRegularized);
+                            gradh, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant, iadRegularized);
 
 #if defined(__clang__) || __GNUC__ > 11
         static_assert(std::tuple_size_v<decltype(ret)> == fieldNames.size());
