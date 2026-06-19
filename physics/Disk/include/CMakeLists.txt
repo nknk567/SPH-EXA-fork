@@ -1,6 +1,6 @@
 
 if (CMAKE_HIP_COMPILER)
-    set_source_files_properties(central_force_gpu.cu accretion_gpu.cu beta_cooling_gpu.cu PROPERTIES LANGUAGE HIP)
+    set_source_files_properties(central_force_gpu.cu accretion_gpu.cu beta_cooling_gpu.cu relaxation.cu PROPERTIES LANGUAGE HIP)
 endif ()
 
 if (CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
