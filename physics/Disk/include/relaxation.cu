@@ -22,7 +22,7 @@ __global__ void moveToLocalMinimumKernel(size_t first, size_t last, T* x, T* y, 
     vz[i] = dz / minDt;
 
     const double d2 = dx * dx + dy * dy + dz * dz;
-    const double h2     = h[i] * h[i];
+    const double h2 = h[i] * h[i];
 
     if (d2 > h2)
     {
@@ -45,7 +45,8 @@ void moveToLocalMinimumGPU(size_t first, size_t last, T* x, T* y, T* z, const Th
     unsigned           numThreads   = 256;
     unsigned           numBlocks    = (numParticles + numThreads - 1) / numThreads;
 
-    moveToLocalMinimumKernel<<<numBlocks, numThreads>>>(first, last, x, y, z, ax, ay, az, vx, vy, vz, dt, minDt, box);
+    moveToLocalMinimumKernel<<<numBlocks, numThreads>>>(first, last, x, y, z, h, ax, ay, az, vx, vy, vz, dt, minDt,
+                                                        box);
 
     checkGpuErrors(cudaDeviceSynchronize());
 }
