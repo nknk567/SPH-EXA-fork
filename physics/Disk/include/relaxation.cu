@@ -6,29 +6,40 @@ namespace disk
 {
 
 template<typename T, typename Th>
-__global__ void moveToLocalMinimumKernel(size_t first, size_t last, T* x, T* y, T* z, const Th* ax, const Th* ay,
-                                         const Th* az, Th* vx, Th* vy, Th* vz, const Th* dt, float minDt,
+__global__ void moveToLocalMinimumKernel(size_t first, size_t last, T* x, T* y, T* z, const Th* h, const Th* ax,
+                                         const Th* ay, const Th* az, Th* vx, Th* vy, Th* vz, const Th* dt, float minDt,
                                          const cstone::Box<T> box)
 {
     cstone::LocalIndex i = first + blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= last) { return; }
 
-    double delta_x = 0.5 * dt[i] * dt[i] * ax[i];
-    double delta_y = 0.5 * dt[i] * dt[i] * ay[i];
-    double delta_z = 0.5 * dt[i] * dt[i] * az[i];
+    double dx = 0.5 * dt[i] * dt[i] * ax[i];
+    double dy = 0.5 * dt[i] * dt[i] * ay[i];
+    double dz = 0.5 * dt[i] * dt[i] * az[i];
 
-    vx[i] = delta_x / minDt;
-    vy[i] = delta_y / minDt;
-    vz[i] = delta_z / minDt;
+    vx[i] = dx / minDt;
+    vy[i] = dy / minDt;
+    vz[i] = dz / minDt;
 
-    x[i] = x[i] + delta_x;
-    y[i] = y[i] + delta_y;
-    z[i] = z[i] + delta_z;
+    const double d2 = dx * dx + dy * dy + dz * dz;
+    const double h2     = h[i] * h[i];
+
+    if (d2 > h2)
+    {
+        double factor = std::sqrt(h2 / d2);
+        dx *= factor;
+        dy *= factor;
+        dz *= factor;
+    }
+
+    x[i] = x[i] + dx;
+    y[i] = y[i] + dy;
+    z[i] = z[i] + dz;
 }
 
 template<typename T, typename Th>
-void moveToLocalMinimumGPU(size_t first, size_t last, T* x, T* y, T* z, const Th* ax, const Th* ay, const Th* az,
-                           Th* vx, Th* vy, Th* vz, const Th* dt, float minDt, const cstone::Box<T>& box)
+void moveToLocalMinimumGPU(size_t first, size_t last, T* x, T* y, T* z, const Th* h, const Th* ax, const Th* ay,
+                           const Th* az, Th* vx, Th* vy, Th* vz, const Th* dt, float minDt, const cstone::Box<T>& box)
 {
     cstone::LocalIndex numParticles = last - first;
     unsigned           numThreads   = 256;
@@ -40,8 +51,8 @@ void moveToLocalMinimumGPU(size_t first, size_t last, T* x, T* y, T* z, const Th
 }
 
 #define MOVE_TO_LOCAL_MINIMUM_GPU(T, Th)                                                                               \
-    template void moveToLocalMinimumGPU(size_t, size_t, T*, T*, T*, const Th*, const Th*, const Th*, Th*, Th*, Th*,    \
-                                        const Th*, float, const cstone::Box<T>&);
+    template void moveToLocalMinimumGPU(size_t, size_t, T*, T*, T*, const Th*, const Th*, const Th*, const Th*, Th*,   \
+                                        Th*, Th*, const Th*, float, const cstone::Box<T>&);
 
 MOVE_TO_LOCAL_MINIMUM_GPU(double, float);
 

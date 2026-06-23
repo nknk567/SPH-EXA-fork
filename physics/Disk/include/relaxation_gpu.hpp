@@ -10,6 +10,6 @@
 namespace disk
 {
 template<typename T, typename Th>
-void moveToLocalMinimumGPU(size_t first, size_t last, T* x, T* y, T* z, const Th* ax, const Th* ay, const Th* az,
+void moveToLocalMinimumGPU(size_t first, size_t last, T* x, T* y, T* z, const Th* h, const Th* ax, const Th* ay, const Th* az,
                            Th* vx, Th* vy, Th* vz, const Th* dt, float minDt, const cstone::Box<T>& box);
 }
