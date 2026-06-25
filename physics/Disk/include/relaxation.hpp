@@ -23,10 +23,6 @@ void moveToLocalMinimumImpl(const size_t first, const size_t last, Dataset& d, c
         auto dy = delta(d.dtCourant[i], d.ay[i]);
         auto dz = delta(d.dtCourant[i], d.az[i]);
 
-        d.vx[i] = dx / d.minDt;
-        d.vy[i] = dy / d.minDt;
-        d.vz[i] = dz / d.minDt;
-
         const double d2 = dx * dx + dy * dy + dz * dz;
         const double h2 = d.h[i] * d.h[i];
 
@@ -37,6 +33,14 @@ void moveToLocalMinimumImpl(const size_t first, const size_t last, Dataset& d, c
             dy *= factor;
             dz *= factor;
         }
+
+        //        d.vx[i] = dx / d.minDt;
+        //        d.vy[i] = dy / d.minDt;
+        //        d.vz[i] = dz / d.minDt;
+
+        d.vx[i] = 0.;
+        d.vy[i] = 0.;
+        d.vz[i] = 0.;
 
         d.x[i] = d.x[i] + dx;
         d.y[i] = d.y[i] + dy;

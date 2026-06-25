@@ -129,7 +129,9 @@ public:
             << ", Avg neighbor count per particle: " << avgNcPerParticle << std::endl;
         out << "### Check ### Total time: " << d.ttot - d.minDt << ", current time-step: " << d.minDt << std::endl;
         out << "### Check ### Total energy: " << d.etot << ", (internal: " << d.eint << ", kinetic: " << d.ecin;
+        auto old_precision = out.precision(12);
         out << ", gravitational: " << d.egrav;
+        out.precision(old_precision);
         out << ")" << std::endl;
         out << "### Check ### Focus Tree Nodes: " << domain.focusTree().octreeViewAcc().numLeafNodes << ", maxDepth "
             << domain.focusTree().depth();

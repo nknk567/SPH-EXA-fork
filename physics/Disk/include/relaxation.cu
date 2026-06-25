@@ -17,10 +17,6 @@ __global__ void moveToLocalMinimumKernel(size_t first, size_t last, T* x, T* y, 
     double dy = 0.5 * dt[i] * dt[i] * ay[i];
     double dz = 0.5 * dt[i] * dt[i] * az[i];
 
-    vx[i] = dx / minDt;
-    vy[i] = dy / minDt;
-    vz[i] = dz / minDt;
-
     const double d2 = dx * dx + dy * dy + dz * dz;
     const double h2 = h[i] * h[i];
 
@@ -32,9 +28,15 @@ __global__ void moveToLocalMinimumKernel(size_t first, size_t last, T* x, T* y, 
         dz *= factor;
     }
 
-    x[i] = x[i] + dx;
-    y[i] = y[i] + dy;
-    z[i] = z[i] + dz;
+    //    vx[i] = dx / minDt;
+    //    vy[i] = dy / minDt;
+    //    vz[i] = dz / minDt;
+    vx[i] = 0.;
+    vy[i] = 0.;
+    vz[i] = 0.;
+    x[i]  = x[i] + dx;
+    y[i]  = y[i] + dy;
+    z[i]  = z[i] + dz;
 }
 
 template<typename T, typename Th>
