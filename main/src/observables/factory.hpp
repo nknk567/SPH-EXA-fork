@@ -38,7 +38,12 @@
 
 namespace sphexa
 {
-
+void print_map(const std::map<std::string, double>& values)
+{
+    for (const auto& [key, value] : values) {
+        std::cout << key << ": " << value << '\n';
+    }
+}
 template<class Dataset>
 std::unique_ptr<IObservables<Dataset>> observablesFactory(const InitSettings& settings, std::ostream& constantsFile)
 {
@@ -66,8 +71,7 @@ std::unique_ptr<IObservables<Dataset>> observablesFactory(const InitSettings& se
         return Observables<Dataset>::makeTurbMachObs(constantsFile);
     }
     if (settings.count("kelvin-helmholtz")) { return Observables<Dataset>::makeTimeEnergyGrowthObs(constantsFile); }
-    if (settings.count("bh-merger")) { return Observables<Dataset>::makeMergerObs(constantsFile); }
-
+    if (settings.count("bh_merger")) { return Observables<Dataset>::makeMergerObs(constantsFile); }
     return Observables<Dataset>::makeTimeEnergyObs(constantsFile);
 }
 

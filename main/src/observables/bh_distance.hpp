@@ -21,18 +21,20 @@ double computeBhDistance(size_t startIndex, size_t endIndex, Dataset& d, MPI_Com
     }
     else
     {
-        auto it0 = std::find(d.id.begin(), d.id.end(), id_0);
+        auto it0 = std::find(d.id.begin() + startIndex, d.id.begin() + endIndex, id_0);
         if (it0 != d.id.end())
         {
-            size_t i      = it0 - d.id.begin();
+            printf("found\n");
+            size_t i      = it0 - (d.id.begin() + startIndex);
             pos_packed[0] = d.x[i];
             pos_packed[1] = d.y[i];
             pos_packed[2] = d.z[i];
         }
-        auto it1 = std::find(d.id.begin(), d.id.end(), id_1);
+        auto it1 = std::find(d.id.begin() + startIndex, d.id.begin() + endIndex, id_1);
         if (it1 != d.id.end())
         {
-            size_t i      = it1 - d.id.begin();
+            printf("found\n");
+            size_t i      = it1 - (d.id.begin() + startIndex);
             pos_packed[3] = d.x[i];
             pos_packed[4] = d.y[i];
             pos_packed[5] = d.z[i];
@@ -48,6 +50,7 @@ double computeBhDistance(size_t startIndex, size_t endIndex, Dataset& d, MPI_Com
         const double dz = pos_global[2] - pos_global[5];
 
         const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        return distance;
     }
     else { return 0.; }
 }
