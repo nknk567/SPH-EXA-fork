@@ -4,6 +4,10 @@
 
 namespace bh_merger
 {
+
+#include "cstone/cuda/cuda_utils.cuh"
+#include "cstone/primitives/math.hpp"
+
 #include <array>
 #include <stdexcept>
 
@@ -20,7 +24,7 @@ __global__ void computeBhPositionsGPUKernel(size_t begin, size_t end, const T* x
                                             uint64_t id_0, uint64_t id_1)
 
 {
-    size_t i = begin + blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned i = begin + blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i >= end) return;
 
