@@ -2,14 +2,14 @@
 // Created by Noah Kubli on 10.07.2026.
 //
 
-namespace bh_merger
-{
-
 #include "cstone/cuda/cuda_utils.cuh"
 #include "cstone/primitives/math.hpp"
 
 #include <array>
 #include <stdexcept>
+
+namespace bh_merger
+{
 
 struct SearchResult
 {
