@@ -21,14 +21,14 @@ __device__ SearchResult result1;
 
 template<typename T, typename Tid>
 __global__ void computeBhPositionsGPUKernel(size_t begin, size_t end, const T* x, const T* y, const T* z, const Tid* id,
-                                            uint64_t id_0, uint64_t id_1)
+                                            Tid id_0, Tid id_1)
 
 {
     unsigned i = begin + blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i >= end) return;
 
-    if (ids[i] == id_0)
+    if (id[i] == id_0)
     {
         result0.pos[0] = x[i];
         result0.pos[1] = y[i];
@@ -36,7 +36,7 @@ __global__ void computeBhPositionsGPUKernel(size_t begin, size_t end, const T* x
         result0.found  = 1;
     }
 
-    if (ids[i] == id_1)
+    if (id[i] == id_1)
     {
         result1.pos[0] = x[i];
         result1.pos[1] = y[i];
@@ -48,8 +48,9 @@ __global__ void computeBhPositionsGPUKernel(size_t begin, size_t end, const T* x
 template<typename T, typename Tid>
 std::array<double, 6> computeBhPositionsGPU(size_t begin, size_t end, T* x, T* y, T* z, Tid* id, Tid id_0, Tid id_1)
 {
-    if (id_0 == id_1) { std::runtime_error("ids must be different (thread race)") };
-    if (firstParticle == lastParticle) { return; }
+    std::array<double, 6> result{};
+
+    if (begin == end) { return result; }
     unsigned numThreads = 256;
     unsigned numBlocks  = cstone::iceil(lastParticle - firstParticle, numThreads);
 
@@ -60,11 +61,11 @@ std::array<double, 6> computeBhPositionsGPU(size_t begin, size_t end, T* x, T* y
     cudaMemcpyToSymbol(GPU_SYMBOL(result1), &result1_host, sizeof(SearchResult));
 
     computeBhPositionsGPUKernel<<<numBlocks, numThreads>>>(begin, end, x, y, z, id, id_0, id_1);
+    checkGpuErrors(cudaDeviceSynchronize());
 
     cudaMemcpyFromSymbol(&result0_host, GPU_SYMBOL(result0), sizeof(SearchResult));
     cudaMemcpyFromSymbol(&result1_host, GPU_SYMBOL(result1), sizeof(SearchResult));
 
-    std::array<double, 6> result{};
     if (result0_host.found)
     {
         result[0] = result0_host.pos[0];
