@@ -52,7 +52,7 @@ std::array<double, 6> computeBhPositionsGPU(size_t begin, size_t end, T* x, T* y
 
     if (begin == end) { return result; }
     unsigned numThreads = 256;
-    unsigned numBlocks  = cstone::iceil(lastParticle - firstParticle, numThreads);
+    unsigned numBlocks  = cstone::iceil(end - begin, numThreads);
 
     SearchResult result0_host{};
     SearchResult result1_host{};
