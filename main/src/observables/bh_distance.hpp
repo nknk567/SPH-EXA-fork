@@ -21,7 +21,7 @@ double computeBhDistance(size_t startIndex, size_t endIndex, Dataset& d, MPI_Com
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
         pos_packed =
-            computeBhPositionGPU(startIndex, endIndex, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.id), id_0, id_1);
+            computeBhPositionsGPU(startIndex, endIndex, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.id), id_0, id_1);
     }
     else
     {
