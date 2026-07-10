@@ -74,7 +74,6 @@ public:
     explicit MergerObserver(std::ostream& constPath)
         : constantsFile(constPath)
     {
-        printf("merger\n");
     }
 
     void computeAndWrite(Dataset& simData, size_t firstIndex, size_t lastIndex, const cstone::Box<T>&) override
