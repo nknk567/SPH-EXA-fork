@@ -6,6 +6,10 @@
 #define SPHEXA_BH_DISTANCE_HPP
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <mpi.h>
+#include "bh_distance_gpu.hpp"
 
 namespace bh_merger
 {
@@ -16,15 +20,14 @@ double computeBhDistance(size_t startIndex, size_t endIndex, Dataset& d, MPI_Com
     std::array<double, 6> pos_packed;
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
-        pos_packed = computeBhPositionGPU(startIndex, endIndex, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.id),
-                                          id_0, id_1);
+        pos_packed =
+            computeBhPositionGPU(startIndex, endIndex, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.id), id_0, id_1);
     }
     else
     {
         auto it0 = std::find(d.id.begin() + startIndex, d.id.begin() + endIndex, id_0);
         if (it0 != d.id.end())
         {
-            printf("found\n");
             size_t i      = it0 - (d.id.begin() + startIndex);
             pos_packed[0] = d.x[i];
             pos_packed[1] = d.y[i];
@@ -33,7 +36,6 @@ double computeBhDistance(size_t startIndex, size_t endIndex, Dataset& d, MPI_Com
         auto it1 = std::find(d.id.begin() + startIndex, d.id.begin() + endIndex, id_1);
         if (it1 != d.id.end())
         {
-            printf("found\n");
             size_t i      = it1 - (d.id.begin() + startIndex);
             pos_packed[3] = d.x[i];
             pos_packed[4] = d.y[i];
