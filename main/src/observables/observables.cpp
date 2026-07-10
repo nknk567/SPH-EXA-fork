@@ -46,6 +46,13 @@ std::unique_ptr<IObservables<Dataset>> Observables<Dataset>::makeWindBubbleObs(s
     return std::make_unique<WindBubble<Dataset>>(out, rhoI, uExt, r);
 }
 
+template<class Dataset>
+std::unique_ptr<IObservables<Dataset>> Observables<Dataset>::makeMergerObs(std::ostream& out)
+{
+    return std::make_unique<MergerObserver<Dataset>>(out);
+}
+
+
 #ifdef USE_CUDA
 template struct Observables<SimulationData<cstone::GpuTag>>;
 #else

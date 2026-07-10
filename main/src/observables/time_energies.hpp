@@ -28,6 +28,7 @@
  * @author Lukas Schmidt
  */
 
+#include "bh_distance.hpp"
 #include "conserved_quantities.hpp"
 #include "iobservables.hpp"
 #include "io/file_utils.hpp"
@@ -63,4 +64,33 @@ public:
     }
 };
 
+template<class Dataset>
+class MergerObserver : public IObservables<Dataset>
+{
+    std::ostream& constantsFile;
+    using T = typename Dataset::RealType;
+
+public:
+    explicit MergerObserver(std::ostream& constPath)
+        : constantsFile(constPath)
+    {
+    }
+
+    void computeAndWrite(Dataset& simData, size_t firstIndex, size_t lastIndex, const cstone::Box<T>&) override
+    {
+        int rank;
+        MPI_Comm_rank(simData.comm, &rank);
+        auto& d = simData.hydro;
+
+        computeConservedQuantities(firstIndex, lastIndex, d, simData.comm);
+
+        const auto bh_distance =
+            bh_merger::computeBhDistance(firstIndex, lastIndex, d, simData.comm, rank, 0, 1);
+        if (rank == 0)
+        {
+            fileutils::writeColumns(constantsFile, ' ', d.iteration, d.ttot, d.minDt, d.etot, d.ecin, d.eint, d.egrav,
+                                    d.linmom, d.angmom, bh_distance);
+        }
+    }
+};
 } // namespace sphexa

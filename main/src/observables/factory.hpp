@@ -66,6 +66,7 @@ std::unique_ptr<IObservables<Dataset>> observablesFactory(const InitSettings& se
         return Observables<Dataset>::makeTurbMachObs(constantsFile);
     }
     if (settings.count("kelvin-helmholtz")) { return Observables<Dataset>::makeTimeEnergyGrowthObs(constantsFile); }
+    if (settings.count("bh-merger")) { return Observables<Dataset>::makeMergerObs(constantsFile); }
 
     return Observables<Dataset>::makeTimeEnergyObs(constantsFile);
 }
