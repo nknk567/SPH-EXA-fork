@@ -70,7 +70,7 @@ public:
         disk::betaCooling(first, last, d, star);
         timer.step("betaCooling");
 
-        disk::computeCentralForce(first, last, d, star);
+        disk::computeCentralForce(Base::groups_.view(), d, star);
         timer.step("computeCentralForce");
     }
 

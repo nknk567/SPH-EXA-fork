@@ -59,6 +59,8 @@ struct PropLib
 #ifdef SPH_EXA_HAVE_DISKS
     static PropPtr makeDiskProp(std::ostream& output, size_t rank, const InitSettings& settings);
     static PropPtr makeDiskVeProp(std::ostream& output, size_t rank, const InitSettings& settings, bool avClean);
+    static PropPtr makeDiskBdtProp(std::ostream& output, size_t rank, const InitSettings& settings);
+
     static PropPtr makeRelaxProp(std::ostream& output, size_t rank, const InitSettings& settings);
 #endif
 };

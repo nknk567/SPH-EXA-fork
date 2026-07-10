@@ -115,4 +115,5 @@ struct StarData
     //! @brief du-timestep (local to rank)
     double t_du{};
 };
+
 } // namespace disk

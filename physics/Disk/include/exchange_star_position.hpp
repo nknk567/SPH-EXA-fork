@@ -12,7 +12,7 @@ namespace disk
 
 //! @brief Compute the new star position by exchanging the force between the nodes and integrating the acceleration
 template<typename StarData>
-void computeAndExchangeStarPosition(StarData& star, double dt, double dt_m1)
+void computeAndExchangeStarPosition(StarData& star, double dt, double dt_m1, size_t highestRung = 1)
 {
     if (star.fixed_star == 1) { return; }
 
@@ -42,4 +42,5 @@ void computeAndExchangeStarPosition(StarData& star, double dt, double dt_m1)
     star.position_m1[1] = dy;
     star.position_m1[2] = dz;
 }
+
 } // namespace disk

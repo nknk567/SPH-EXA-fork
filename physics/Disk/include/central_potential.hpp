@@ -33,7 +33,8 @@ struct CentralPotentialData
 };
 
 template<typename Data>
-HOST_DEVICE_FUN void newtonianGravity(const Data& d, size_t i, cstone::Vec4<double>& star_force_local, float& t_star)
+HOST_DEVICE_FUN void newtonianGravity(const Data& d, size_t i, cstone::Vec4<double>& star_force_local, float& t_star,
+                                      bool ignore_particle_force = false)
 {
     const double dx    = d.x[i] - d.star_position[0];
     const double dy    = d.y[i] - d.star_position[1];
@@ -46,21 +47,24 @@ HOST_DEVICE_FUN void newtonianGravity(const Data& d, size_t i, cstone::Vec4<doub
     const double ax_i       = -dx * a_strength;
     const double ay_i       = -dy * a_strength;
     const double az_i       = -dz * a_strength;
-    d.ax[i] += ax_i;
-    d.ay[i] += ay_i;
-    d.az[i] += az_i;
 
     star_force_local[0] -= d.g * d.m[i] / dist;
     star_force_local[1] -= ax_i * d.m[i];
     star_force_local[2] -= ay_i * d.m[i];
     star_force_local[3] -= az_i * d.m[i];
 
+    if (ignore_particle_force) { return; }
+    d.ax[i] += ax_i;
+    d.ay[i] += ay_i;
+    d.az[i] += az_i;
+
     const double a_abs = std::sqrt(ax_i * ax_i + ay_i * ay_i + az_i * az_i);
     t_star             = stl::min(t_star, float(std::sqrt(dist / a_abs)));
 }
 
 template<typename Data>
-HOST_DEVICE_FUN void einsteinPrecession(const Data& d, size_t i, cstone::Vec4<double>& star_force_local, float& t_star)
+HOST_DEVICE_FUN void einsteinPrecession(const Data& d, size_t i, cstone::Vec4<double>& star_force_local, float& t_star,
+                                        bool ignore_particle_force = false)
 {
     const double dx    = d.x[i] - d.star_position[0];
     const double dy    = d.y[i] - d.star_position[1];
@@ -76,14 +80,16 @@ HOST_DEVICE_FUN void einsteinPrecession(const Data& d, size_t i, cstone::Vec4<do
     const double ax_i       = -dx * a_strength;
     const double ay_i       = -dy * a_strength;
     const double az_i       = -dz * a_strength;
-    d.ax[i] += ax_i;
-    d.ay[i] += ay_i;
-    d.az[i] += az_i;
 
     star_force_local[0] -= d.g * d.m[i] / dist;
     star_force_local[1] -= ax_i * d.m[i];
     star_force_local[2] -= ay_i * d.m[i];
     star_force_local[3] -= az_i * d.m[i];
+
+    if (ignore_particle_force) { return; }
+    d.ax[i] += ax_i;
+    d.ay[i] += ay_i;
+    d.az[i] += az_i;
 
     const double a_abs = std::sqrt(ax_i * ax_i + ay_i * ay_i + az_i * az_i);
     t_star             = stl::min(t_star, float(std::sqrt(dist / a_abs)));

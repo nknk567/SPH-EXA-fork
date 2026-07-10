@@ -11,6 +11,7 @@
 #include "central_force_gpu.hpp"
 #include "get_ptr.hpp"
 #include "central_potential.hpp"
+#include "cstone/traversal/groups.hpp"
 
 namespace disk
 {
@@ -41,14 +42,26 @@ void computeCentralForceImpl(size_t first, size_t last, Dataset& d, StarData& st
 }
 
 template<typename Dataset, typename StarData>
-void computeCentralForce(size_t startIndex, size_t endIndex, Dataset& d, StarData& star)
+void computeCentralForce(const cstone::GroupView& grp, Dataset& d, StarData& star)
 {
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
     {
-        computeCentralForceGPU(startIndex, endIndex, getPtr<"x">(d), getPtr<"y">(d), getPtr<"z">(d), getPtr<"ax">(d),
-                               getPtr<"ay">(d), getPtr<"az">(d), getPtr<"m">(d), d.g, star);
+        computeCentralForceGPU(grp, grp, getPtr<"x">(d), getPtr<"y">(d), getPtr<"z">(d), getPtr<"ax">(d),
+                               getPtr<"ay">(d), getPtr<"az">(d), getPtr<"m">(d), d.g, star, nullptr);
     }
-    else { computeCentralForceImpl(startIndex, endIndex, d, star); }
+    else { computeCentralForceImpl(grp.firstBody, grp.lastBody, d, star); }
+}
+
+template<typename Dataset, typename StarData>
+void computeCentralForceBdt(const cstone::GroupView& grp, const cstone::GroupView& active_grp, const auto& groupDt,
+                            Dataset& d, StarData& star)
+{
+    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
+    {
+        computeCentralForceGPU(grp, active_grp, getPtr<"x">(d), getPtr<"y">(d), getPtr<"z">(d), getPtr<"ax">(d),
+                               getPtr<"ay">(d), getPtr<"az">(d), getPtr<"m">(d), d.g, star, rawPtr(groupDt));
+    }
+    else { throw std::runtime_error("computeCentralForceBdt is only implemented on GPUs"); }
 }
 
 } // namespace disk

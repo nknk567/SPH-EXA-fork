@@ -41,6 +41,21 @@ requires(std::tuple_size_v<std::decay_t<buffer_type>> ==
             i_buffer++;
         }
     };
+//    auto   access_buffer = [&i_buffer, &f, &buffer](auto&& arg)
+//    {
+//        if constexpr (array_type<std::decay_t<decltype(arg)>>)
+//        {
+//            for (size_t i_array = 0; i_array < arg.size(); i_array++)
+//            {
+//                access_buffer(std::forward<decltype(arg[i_array])>(arg[i_array]));
+//            }
+//        }
+//        else
+//        {
+//            f(buffer[i_buffer], arg);
+//            i_buffer++;
+//        }
+//    };
     util::for_each_tuple([&](auto&& res) { access_buffer(std::forward<decltype(res)>(res)); }, args_tuple);
 }
 
