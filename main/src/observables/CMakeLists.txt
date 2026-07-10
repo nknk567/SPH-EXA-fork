@@ -1,19 +1,19 @@
-if(CMAKE_HIP_COMPILER)
-    set_source_files_properties(conserved_gpu.cu gpu_reductions.cu PROPERTIES LANGUAGE HIP)
-endif()
+if (CMAKE_HIP_COMPILER)
+    set_source_files_properties(conserved_gpu.cu gpu_reductions.cu bh_distance_gpu.cu PROPERTIES LANGUAGE HIP)
+endif ()
 
-if(CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
-    add_library(obs_gpu OBJECT conserved_gpu.cu gpu_reductions.cu)
+if (CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
+    add_library(obs_gpu OBJECT conserved_gpu.cu gpu_reductions.cu bh_distance_gpu.cu)
     target_include_directories(obs_gpu PRIVATE ${CSTONE_DIR} ${SPH_DIR})
-endif()
+endif ()
 
-if(CMAKE_CUDA_COMPILER)
+if (CMAKE_CUDA_COMPILER)
     target_link_libraries(obs_gpu PUBLIC CUDA::cudart)
-endif()
+endif ()
 
-if(CMAKE_HIP_COMPILER)
+if (CMAKE_HIP_COMPILER)
     target_link_libraries(obs_gpu PRIVATE roc::rocthrust hip::hipcub)
-endif()
+endif ()
 
 add_library(observables observables.cpp)
 target_include_directories(observables PRIVATE ${PROJECT_SOURCE_DIR}/main/src ${COOLING_DIR} ${CSTONE_DIR} ${SPH_DIR}
@@ -26,11 +26,11 @@ if (CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
     target_include_directories(observables_gpu PRIVATE ${PROJECT_SOURCE_DIR}/main/src ${COOLING_DIR} ${CSTONE_DIR}
             ${SPH_DIR} ${MPI_CXX_INCLUDE_PATH})
     target_link_libraries(observables_gpu PRIVATE ${MPI_CXX_LIBRARIES} OpenMP::OpenMP_CXX)
-endif()
+endif ()
 
-if(CMAKE_CUDA_COMPILER)
+if (CMAKE_CUDA_COMPILER)
     target_link_libraries(observables_gpu PUBLIC CUDA::cudart)
-endif()
+endif ()
 
 if (CMAKE_HIP_COMPILER)
     target_link_libraries(observables_gpu PUBLIC hip::host)
