@@ -143,7 +143,7 @@ void computeCentralForceGPU(const cstone::GroupView& grp, const cstone::GroupVie
         }
         else
         {
-            computeCentralForceGPUKernel<numThreads>
+            computeCentralForceGPUBdtKernel<numThreads>
                 <<<numBlocks, numThreads>>>(grp, active_grp, groupDt, data, star.potentialType);
         }
 
