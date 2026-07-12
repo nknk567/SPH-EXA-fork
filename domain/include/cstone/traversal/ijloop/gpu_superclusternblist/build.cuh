@@ -475,7 +475,7 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
                                                        const Tc* const __restrict__ y,
                                                        const Tc* const __restrict__ z,
                                                        Th* const __restrict__ h,
-                                                       const auto* box,
+                                                       const auto& box,
                                                        const std::uint32_t* const __restrict__ jClusters,
                                                        const unsigned numJClusters,
                                                        const unsigned nTarget,
@@ -486,8 +486,8 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
                   "own radius; it is unsound for the symmetric builder, see docstring");
 
     constexpr unsigned warpsPerSupercluster = Config::superclusterSize / GpuConfig::warpSize;
-//    using Th                                = std::remove_cvref_t<std::remove_pointer_t<ThP>>;
-    const unsigned laneIdx                  = laneIndex();
+    //    using Th                                = std::remove_cvref_t<std::remove_pointer_t<ThP>>;
+    const unsigned laneIdx = laneIndex();
 
     bool unConverged = false;
     for (unsigned w = 0; w < warpsPerSupercluster; ++w)
