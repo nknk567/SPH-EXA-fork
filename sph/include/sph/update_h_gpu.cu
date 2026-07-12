@@ -255,7 +255,7 @@ void updateSmoothingLengthIterativeGpu(const cstone::GroupView& grp, Dataset& d,
     if (maxP2P == 0xFFFFFFFF) { throw std::runtime_error("GPU traversal stack exhausted in neighbor search\n"); }
     bool neighbour_failed_host;
     checkGpuErrors(
-        cudaMemcpyFromSymbol(neighbour_failed_host, GPU_SYMBOL(neighbour_failed), 1 * sizeof(neighbour_failed_host)));
+        cudaMemcpyFromSymbol(&neighbour_failed_host, GPU_SYMBOL(neighbour_failed), 1 * sizeof(neighbour_failed_host)));
     if (maxP2P == 0xFFFFFFFF) { throw std::runtime_error("GPU traversal stack exhausted in neighbor search\n"); }
     if (neighbour_failed_host) { throw std::runtime_error("Neighbour update failed in cluster list\n"); }
 
