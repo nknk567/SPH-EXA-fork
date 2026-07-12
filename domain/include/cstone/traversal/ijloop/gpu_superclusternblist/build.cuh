@@ -623,7 +623,7 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
                     tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax,
                     firstISupercluster, lastISupercluster, jClusters.get(), masks.get(), info, realNeighborCount.get());
 
-                unconvergedLane = adjustSmoothingLengths<Config, UsePbc>(firstBody, lastBody, h,
+                unconvergedLane = adjustSmoothingLengths<Config>(firstBody, lastBody, h,
                                                                          realNeighborCount.get(), 100, hIter + 1 == 10);
                 // h was just updated in place for this supercluster's own particles; the next call to
                 // collectNeighborJClusters reloads h from global memory itself (via loadSuperclusterParticleData),
