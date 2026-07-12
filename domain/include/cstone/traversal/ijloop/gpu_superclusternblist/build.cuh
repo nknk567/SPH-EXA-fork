@@ -468,13 +468,14 @@ HOST_DEVICE_FUN T updateH(unsigned ng0, unsigned nc, T h)
     return h * T(0.5) * std::pow(T(1) + c0 * ng0 / T(nc), exp);
 }
 
-template<class Config, bool UsePbc, class Tc, class Th>
+template<class Config, bool UsePbc, class Tc, class Th, class Tnc>
 __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBody,
                                                        const LocalIndex lastBody,
                                                        const Tc* const __restrict__ x,
                                                        const Tc* const __restrict__ y,
                                                        const Tc* const __restrict__ z,
                                                        Th* const __restrict__ h,
+                                                       Tnc* const __restrict__ nc,
                                                        const auto& box,
                                                        const std::uint32_t* const __restrict__ jClusters,
                                                        const unsigned numJClusters,
@@ -518,7 +519,9 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
 
         //        const bool inRange = std::abs(int(count) - int(nTarget)) <= int(tolerance * nTarget);
         const bool inRange = (count > 25) && count <= 150;
+        nc[i]              = count;
         if (!inRange && !lastIteration) { h[i] = updateH(nTarget, count, h[i]); }
+        if (!inRange && lastIteration) { nc[i] == 1; }
         //        if (!inRange && !lastIteration)
         //        {
         //            // damped Newton-Raphson-style estimate assuming locally ~uniform density; clamp to avoid
@@ -553,7 +556,7 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
  * @param[inout] globalBuildData        global build data used to 'allocate' global memory regions per supercluster in a
  * pre-allocated array
  */
-template<class Config, unsigned NumSuperclustersPerBlock, bool UsePbc, class Tc, class ThP, class KeyType>
+template<class Config, unsigned NumSuperclustersPerBlock, bool UsePbc, class Tc, class ThP, class KeyType, class Tnc>
 __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void buildNbListKernel(
     const OctreeNsView<Tc, KeyType> __grid_constant__ tree,
     const Box<Tc> __grid_constant__ box,
@@ -565,6 +568,7 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
     const Tc* const __restrict__ y,
     const Tc* const __restrict__ z,
     const ThP h,
+    Tnc* const __restrict__ nc,
     const JClusterBbox<Config, Tc>* const __restrict__ jClusterBboxes,
     const ThP nodeRMax,
     const unsigned ncmax,
@@ -626,7 +630,7 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
                     firstISupercluster, lastISupercluster, jClusters.get(), masks.get(), info);
 
                 unconvergedLane =
-                    adjustSmoothingLengths<Config, UsePbc>(firstBody, lastBody, x, y, z, h, box, jClusters.get(),
+                    adjustSmoothingLengths<Config, UsePbc>(firstBody, lastBody, x, y, z, h, nc, box, jClusters.get(),
                                                            std::min(info.neighborsCount, ncmax), 100, hIter + 1 == 10);
                 // h was just updated in place for this supercluster's own particles; the next call to
                 // collectNeighborJClusters reloads h from global memory itself (via loadSuperclusterParticleData),
@@ -658,7 +662,7 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
     if (laneIdx == 0) atomicMax(&globalBuildData->maxNeighbors, maxNeighbors);
 }
 
-template<class Config, class Tc, class ThP, class KeyType>
+template<class Config, class Tc, class ThP, class KeyType, class Tnc>
 std::size_t buildNbList(const OctreeNsView<Tc, KeyType>& tree,
                         const Box<Tc>& box,
                         const LocalIndex totalBodies,
@@ -667,6 +671,7 @@ std::size_t buildNbList(const OctreeNsView<Tc, KeyType>& tree,
                         const Tc* const y,
                         const Tc* const z,
                         const ThP h,
+                        Tnc* const nc,
                         const LocalIndex firstValidBody,
                         const LocalIndex numISuperclusters,
                         const JClusterBbox<Config, Tc>* const jClusterBboxes,
@@ -690,7 +695,7 @@ std::size_t buildNbList(const OctreeNsView<Tc, KeyType>& tree,
     {
         buildNbListKernel<Config, numSuperclustersPerBlock, decltype(usePbc)::value>
             <<<numBlocks, blockSize, sharedMem>>>(tree, box, firstValidBody, totalBodies, groups.firstBody,
-                                                  groups.lastBody, x, y, z, h, jClusterBboxes, nodeRMax, ncmax,
+                                                  groups.lastBody, x, y, z, h, nc, jClusterBboxes, nodeRMax, ncmax,
                                                   neighborData, neighborDataVirtualSize, superclusterInfo,
                                                   numISuperclusters, globalBuildData.get());
         checkGpuErrors(cudaGetLastError());

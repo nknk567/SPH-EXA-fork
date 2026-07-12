@@ -268,7 +268,7 @@ struct GpuSuperclusterNbListNeighborhoodBuilder
     unsigned ncmax;
     std::size_t upperBoundBytesPerParticle = 128;
 
-    template<class Tc, class KeyType, class ThP>
+    template<class Tc, class KeyType, class ThP, class Tnc>
     gpu_supercluster_nb_list_neighborhood_detail::GpuSuperclusterNbListNeighborhood<Config, Tc, ThP>
     build(const OctreeNsView<Tc, KeyType>& tree,
           const Box<Tc>& box,
@@ -277,7 +277,8 @@ struct GpuSuperclusterNbListNeighborhoodBuilder
           const Tc* x,
           const Tc* y,
           const Tc* z,
-          ThP h) const
+          ThP h,
+          Tnc *nc) const
     {
         using namespace gpu_supercluster_nb_list_neighborhood_detail;
 
@@ -329,7 +330,7 @@ struct GpuSuperclusterNbListNeighborhoodBuilder
 
         // main build with octree traversal
         std::size_t neighborDataSize = buildNbList<Config>(
-            tree, box, totalBodies, groups, x, y, z, h, firstValidBody, numISuperclusters, jClusterBboxes.get(),
+            tree, box, totalBodies, groups, x, y, z, h, nc, firstValidBody, numISuperclusters, jClusterBboxes.get(),
             nodeRMaxData, ncmax, neighborData.get(), neighborDataVirtualSize, superclusterInfo.get());
 
         // sort supercluster array by descending neighbor count for load balancing (schedule large work packages first)
