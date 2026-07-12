@@ -497,7 +497,8 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
         if (i >= lastBody) continue; // lane has no real particle in this slice, don't touch h or vote
 
         const Th hi       = h[i];
-        const Th cutoffSq = Th(2 * hi) * Th(2 * hi); // true interaction cutoff, unpadded by searchExtFactor
+        const Th cutoffSq = 4. * hi * hi;
+        // Th(2 * hi) * Th(2 * hi); // true interaction cutoff, unpadded by searchExtFactor
         const Tc xi = x[i], yi = y[i], zi = z[i];
 
         unsigned count = 1;
@@ -507,6 +508,7 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
             for (unsigned p = 0; p < Config::jSize; ++p)
             {
                 const unsigned j = jCluster * Config::jSize + p;
+                if (j < firstBody || j >= lastBody) { continue; }
                 if (j == i) continue;
 
                 const bool inside = distanceSq<UsePbc>(x[j], y[j], z[j], x[i], y[i], z[i], box) < cutoffSq;
