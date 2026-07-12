@@ -40,12 +40,12 @@ __global__ void computeCentralForceGPUKernel(cstone::GroupView grp, const Data d
     if (warpIdx >= grp.numGroups) { return; }
 
     LocalIndex i = grp.groupStart[warpIdx] + laneIdx;
-    if (i >= grp.groupEnd[warpIdx]) { return; }
+//    if (i >= grp.groupEnd[warpIdx]) { return; }
 
     cstone::Vec4<double> force{};
     float                t_star{INFINITY};
 
-    if (i >= last) { force = {0., 0., 0., 0.}; }
+    if (i >= grp.groupEnd[warpIdx]) { force = {0., 0., 0., 0.}; }
     else
     {
         if (potentialType == StarPotentialType::newtonian) { newtonianGravity(d, i, force, t_star); }
@@ -113,7 +113,7 @@ __global__ void computeCentralForceGPUBdtKernel(cstone::GroupView grp, cstone::G
 }
 
 template<typename Treal, typename Thydro, typename Tmass>
-void computeCentralForceGPU(const GroupView& grp, const GroupView& active_grp, const Treal* x, const Treal* y,
+void computeCentralForceGPU(const cstone::GroupView& grp, const cstone::GroupView& active_grp, const Treal* x, const Treal* y,
                             const Treal* z, Thydro* ax, Thydro* ay, Thydro* az, const Tmass* m, Treal g, StarData& star,
                             float* groupDt)
 {
@@ -158,7 +158,7 @@ void computeCentralForceGPU(const GroupView& grp, const GroupView& active_grp, c
 }
 
 #define COMPUTE_CENTRAL_FORCE_GPU(Treal, Thydro, Tmass)                                                                \
-    template void computeCentralForceGPU(const GroupView&, const GroupView&, const Treal* x, const Treal* y,           \
+    template void computeCentralForceGPU(const cstone::GroupView&, const cstone::GroupView&, const Treal* x, const Treal* y,           \
                                          const Treal* z, Thydro* ax, Thydro* ay, Thydro* az, const Tmass* m, Treal g,  \
                                          StarData&, float*);
 
