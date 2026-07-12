@@ -32,9 +32,15 @@ __device__ void atomicAddVec4(cstone::Vec4<T>* x, const cstone::Vec4<T>& y)
 }
 
 template<size_t numThreads, typename Data>
-__global__ void computeCentralForceGPUKernel(GroupView grp, const Data d, StarPotentialType potentialType)
+__global__ void computeCentralForceGPUKernel(cstone::GroupView grp, const Data d, StarPotentialType potentialType)
 {
-    cstone::LocalIndex i = first + blockDim.x * blockIdx.x + threadIdx.x;
+//    cstone::LocalIndex i = first + blockDim.x * blockIdx.x + threadIdx.x;
+    LocalIndex laneIdx = threadIdx.x & (GpuConfig::warpSize - 1);
+    LocalIndex warpIdx = (blockDim.x * blockIdx.x + threadIdx.x) >> GpuConfig::warpSizeLog2;
+    if (warpIdx >= grp.numGroups) { return; }
+
+    LocalIndex i = grp.groupStart[warpIdx] + laneIdx;
+    if (i >= grp.groupEnd[warpIdx]) { return; }
 
     cstone::Vec4<double> force{};
     float                t_star{INFINITY};
@@ -66,7 +72,7 @@ __global__ void computeCentralForceGPUKernel(GroupView grp, const Data d, StarPo
     }
 }
 template<size_t numThreads, typename Data>
-__global__ void computeCentralForceGPUBdtKernel(GroupView grp, GroupView active_grp, float* groupDt, const Data d,
+__global__ void computeCentralForceGPUBdtKernel(cstone::GroupView grp, cstone::GroupView active_grp, float* groupDt, const Data d,
                                                 StarPotentialType potentialType)
 {
     LocalIndex laneIdx = threadIdx.x & (GpuConfig::warpSize - 1);
@@ -103,7 +109,7 @@ __global__ void computeCentralForceGPUBdtKernel(GroupView grp, GroupView active_
     cstone::Vec4<double> force_block = BlockReduce(temp_storage).Sum(force);
     __syncthreads();
 
-    if (threadIdx.x == 0) { cstone::atomicMinFloat(&t_star_device, t_star_block); }
+    if (threadIdx.x == 0) { atomicAddVec4(&force_device, force_block); }
 }
 
 template<typename Treal, typename Thydro, typename Tmass>
