@@ -487,6 +487,7 @@ template<class Config, class Th>
 __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBody,
                                                        const LocalIndex lastBody,
                                                        Th* const __restrict__ h,
+                                                       auto* const __restrict__ nc,
                                                        const unsigned* const __restrict__ realNeighborCount,
                                                        const unsigned nTarget,
                                                        const bool lastIteration)
@@ -506,8 +507,9 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
 
         const unsigned count = realNeighborCount[w * GpuConfig::warpSize + laneIdx];
         //        const bool inRange   = std::abs(int(count) - int(nTarget)) <= int(tolerance * nTarget);
-
+        nc[i]              = 1 + count;
         const bool inRange = (1 + count) >= 25 && (count <= 150);
+        if (!inRange) { nc[i] = 1; }
         if (!inRange && !lastIteration)
         {
             h[i] = updateH(nTarget, count, h[i]);
@@ -623,8 +625,8 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
                     tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax,
                     firstISupercluster, lastISupercluster, jClusters.get(), masks.get(), info, realNeighborCount.get());
 
-                unconvergedLane = adjustSmoothingLengths<Config>(firstBody, lastBody, h,
-                                                                         realNeighborCount.get(), 100, hIter + 1 == 10);
+                unconvergedLane = adjustSmoothingLengths<Config>(firstBody, lastBody, h, nc, realNeighborCount.get(), 100,
+                                                                 hIter + 1 == 10);
                 // h was just updated in place for this supercluster's own particles; the next call to
                 // collectNeighborJClusters reloads h from global memory itself (via loadSuperclusterParticleData),
                 // so it automatically retraverses with the corrected radius -- no extra bookkeeping needed.
