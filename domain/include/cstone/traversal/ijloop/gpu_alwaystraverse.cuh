@@ -182,7 +182,8 @@ struct GpuAlwaysTraverseNeighborhoodBuilder
           const Tc* x,
           const Tc* y,
           const Tc* z,
-          ThP h) const
+          ThP h,
+          const auto *nc) const
     {
         using namespace gpu_always_traverse_neighborhood_detail;
         return {tree,

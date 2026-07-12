@@ -122,7 +122,8 @@ struct CpuFullNbListNeighborhoodBuilder
           const Tc* const x,
           const Tc* const y,
           const Tc* const z,
-          const ThP h) const
+          const ThP h,
+          const auto *nc) const
     {
         using namespace cpu_full_nb_list_neighborhood_detail;
 

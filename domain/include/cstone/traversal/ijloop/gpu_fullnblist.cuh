@@ -263,7 +263,8 @@ struct GpuFullNbListNeighborhoodBuilder
                                                                                    const Tc* x,
                                                                                    const Tc* y,
                                                                                    const Tc* z,
-                                                                                   const ThP h) const
+                                                                                   const ThP h,
+                                                                                   const auto* nc) const
     {
         using namespace gpu_full_nb_list_neighborhood_detail;
         const std::size_t numBodies = groups.lastBody - groups.firstBody;

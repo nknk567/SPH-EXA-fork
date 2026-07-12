@@ -26,7 +26,8 @@ using NeighborhoodDataType = decltype(std::declval<NeighborhoodBuilder>().build(
     std::declval<cstone::OctreeNsView<sph::SphTypes::CoordinateType, sph::SphTypes::KeyType>>(),
     std::declval<cstone::Box<sph::SphTypes::CoordinateType>>(), 0, std::declval<cstone::GroupView>(),
     std::declval<sph::SphTypes::CoordinateType*>(), std::declval<sph::SphTypes::CoordinateType*>(),
-    std::declval<sph::SphTypes::CoordinateType*>(), std::declval<sph::SphTypes::HydroType*>()));
+    std::declval<sph::SphTypes::CoordinateType*>(), std::declval<sph::SphTypes::HydroType*>(),
+    std::declval<unsigned*>()));
 
 template<class NeighborhoodBuilder>
 using NeighborhoodSubgroupType =
@@ -66,9 +67,10 @@ struct NeighborhoodData
         }
 
         std::visit(
-            [&](auto const& nb) {
-                neighborhood =
-                    nb.build(d.treeView, box, d.size(), groups, d.x.data(), d.y.data(), d.z.data(), d.h.data());
+            [&](auto const& nb)
+            {
+                neighborhood = nb.build(d.treeView, box, d.size(), groups, d.x.data(), d.y.data(), d.z.data(),
+                                        d.h.data(), d.nc.data());
             },
             builder);
     }

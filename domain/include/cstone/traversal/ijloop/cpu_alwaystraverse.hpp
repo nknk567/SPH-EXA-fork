@@ -129,7 +129,8 @@ struct CpuAlwaysTraverseNeighborhoodBuilder
           const Tc* const x,
           const Tc* const y,
           const Tc* const z,
-          const ThP h) const
+          const ThP h,
+          const auto* nc) const
     {
         return {tree, box, groups.firstBody, groups.lastBody, x, y, z, h, ngmax};
     }

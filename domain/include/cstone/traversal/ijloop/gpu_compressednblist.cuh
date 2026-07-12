@@ -408,7 +408,8 @@ struct GpuCompressedNbListNeighborhoodBuilder
           const Tc* x,
           const Tc* y,
           const Tc* z,
-          const ThP h) const
+          const ThP h,
+          const auto* nc) const
     {
         using namespace gpu_compressed_nb_list_neighborhood_detail;
 
