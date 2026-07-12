@@ -521,7 +521,7 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
         const bool inRange = (count > 25) && count <= 150;
         nc[i]              = count;
         if (!inRange && !lastIteration) { h[i] = updateH(nTarget, count, h[i]); }
-        if (!inRange && lastIteration) { nc[i] == 1; }
+        if (!inRange && lastIteration) { nc[i] = 1; }
         //        if (!inRange && !lastIteration)
         //        {
         //            // damped Newton-Raphson-style estimate assuming locally ~uniform density; clamp to avoid
