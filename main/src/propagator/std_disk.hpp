@@ -242,7 +242,7 @@ public:
          *     disk::computeCentralForce(rung_group, groupDt_, rung, d, star);
          * }
          */
-        disk::computeCentralForce(Base::tsGroups_, Base::activeRungs_, groupDt_, d, star);
+        disk::computeCentralForceBdt(Base::groups_.view(), Base::activeRungs_, Base::groupDt_, d, star);
         //        timer.step("computeCentralForce");
     }
 
@@ -272,8 +272,8 @@ public:
         //
         // The star runs on the smallest timestep.
         //        const int highestRung = Base::activeRung(Base::timestep_.substep, Base::timestep_.numRungs);
-        const bool useRung = (timestep_.substep == 0);
-        const auto dt_m1   = useRung ? prevTimestep_.dt_m1 : timestep_.dt_m1;
+        const bool useRung = (Base::timestep_.substep == 0);
+        const auto dt_m1   = useRung ? Base::prevTimestep_.dt_m1 : Base::timestep_.dt_m1;
         disk::computeAndExchangeStarPosition(star, Base::timestep_.nextDt, d.minDt_m1);
         //        disk::computeAndExchangeStarPosition(star, d.minDt, d.minDt_m1);
         //        timer.step("computeAndExchangeStarPosition");

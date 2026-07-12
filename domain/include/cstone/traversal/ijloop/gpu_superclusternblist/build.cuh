@@ -460,7 +460,74 @@ constexpr unsigned buildNbListSharedMemPerSupercluster(const unsigned ncmax)
 
     return jClustersSize + masksDataSize;
 }
+template<class T>
+HOST_DEVICE_FUN T updateH(unsigned ng0, unsigned nc, T h)
+{
+    constexpr T c0  = 1023.0;
+    constexpr T exp = 1.0 / 10.0;
+    return h * T(0.5) * std::pow(T(1) + c0 * ng0 / T(nc), exp);
+}
 
+template<class Config, bool usePbc, class Tc, class Th>
+__device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBody,
+                                                       const LocalIndex lastBody,
+                                                       const Tc* const __restrict__ x,
+                                                       const Tc* const __restrict__ y,
+                                                       const Tc* const __restrict__ z,
+                                                       Th* const __restrict__ h,
+                                                       const auto* box,
+                                                       const std::uint32_t* const __restrict__ jClusters,
+                                                       const unsigned numJClusters,
+                                                       const unsigned nTarget,
+                                                       const bool lastIteration)
+{
+    static_assert(!Config::symmetric,
+                  "in-loop h adjustment relies on candidate membership depending only on the querying particle's "
+                  "own radius; it is unsound for the symmetric builder, see docstring");
+
+    constexpr unsigned warpsPerSupercluster = Config::superclusterSize / GpuConfig::warpSize;
+    using Th                                = std::remove_cvref_t<std::remove_pointer_t<ThP>>;
+    const unsigned laneIdx                  = laneIndex();
+
+    bool unConverged = false;
+    for (unsigned w = 0; w < warpsPerSupercluster; ++w)
+    {
+        const unsigned i = firstBody + w * GpuConfig::warpSize + laneIdx;
+        if (i >= lastBody) continue; // lane has no real particle in this slice, don't touch h or vote
+
+        const Th hi       = h[i];
+        const Th cutoffSq = Th(2 * hi) * Th(2 * hi); // true interaction cutoff, unpadded by searchExtFactor
+        const Tc xi = x[i], yi = y[i], zi = z[i];
+
+        unsigned count = 1;
+        for (unsigned n = 0; n < numJClusters; ++n)
+        {
+            const unsigned jCluster = jClusters[n];
+            for (unsigned p = 0; p < Config::jSize; ++p)
+            {
+                const unsigned j = jCluster * Config::jSize + p;
+                if (j == i) continue;
+
+                const bool inside = distanceSq<UsePbc>(x[j], y[j], z[j], x[i], y[i], z[i], box) < cutoffSq;
+
+                if (inside) count++;
+                //                const Tc dx = x[j] - xi, dy = y[j] - yi, dz = z[j] - zi;
+                //                count += (dx * dx + dy * dy + dz * dz < cutoffSq);
+            }
+        }
+
+        const bool inRange = std::abs(int(count) - int(nTarget)) <= int(tolerance * nTarget);
+        if (!inRange && !lastIteration) { h[i] = updateH(nTarget, count, h[i]); }
+//        if (!inRange && !lastIteration)
+//        {
+//            // damped Newton-Raphson-style estimate assuming locally ~uniform density; clamp to avoid oscillation
+//            const Th ratio = std::clamp(std::cbrt(Th(nTarget) / Th(std::max(count, 1u))), Th(0.8), Th(1.25));
+//            h[i]           = hi * ratio;
+//        }
+        unConverged |= !inRange;
+    }
+    return unConverged;
+}
 /*! main GPU kernel for building the supercluster neighbor list
  *
  * @param[in]    tree                   octree
@@ -532,9 +599,44 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
 
         SuperclusterInfo info = {.index = index + firstISupercluster, .neighborsCount = 0, .dataIndex = 0};
 
-        const unsigned jClusterBytes = collectNeighborJClusters<Config, UsePbc>(
-            tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax, firstISupercluster,
-            lastISupercluster, jClusters.get(), masks.get(), info);
+        //        const unsigned jClusterBytes = collectNeighborJClusters<Config, UsePbc>(
+        //            tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax,
+        //            firstISupercluster, lastISupercluster, jClusters.get(), masks.get(), info);
+
+        // begin edit
+        unsigned jClusterBytes = 0;
+        if constexpr (Config::symmetric)
+        {
+            jClusterBytes = collectNeighborJClusters<Config, UsePbc>(
+                tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax, firstISupercluster,
+                lastISupercluster, jClusters.get(), masks.get(), info);
+        }
+        else
+        {
+            const unsigned firstBody = std::max(info.index * Config::superclusterSize, firstValidBody);
+            const unsigned lastBody  = std::min((info.index + 1) * Config::superclusterSize, totalBodies);
+
+            bool unconvergedLane = false;
+            for (unsigned hIter = 0; hIter < 10; ++hIter)
+            {
+                info.neighborsCount = 0; // reset candidate count; collectNeighborJClusters accumulates into it
+                jClusterBytes       = collectNeighborJClusters<Config, UsePbc>(
+                    tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax,
+                    firstISupercluster, lastISupercluster, jClusters.get(), masks.get(), info);
+
+                unconvergedLane =
+                    adjustSmoothingLengths<Config, UsePbc>(firstBody, lastBody, x, y, z, h, jClusters.get(),
+                                                           std::min(info.neighborsCount, ncmax), 100, hIter + 1 == 10);
+
+                // h was just updated in place for this supercluster's own particles; the next call to
+                // collectNeighborJClusters reloads h from global memory itself (via loadSuperclusterParticleData),
+                // so it automatically retraverses with the corrected radius -- no extra bookkeeping needed.
+                if (!ballotSync(unconvergedLane)) break;
+            }
+            if (unconvergedLane) throw std::runtime_error("Nb iterations not converged");
+        }
+
+        // end edit
 
         maxNeighbors = std::max(info.neighborsCount, maxNeighbors);
 

@@ -13,7 +13,7 @@ namespace disk
 // void computeCentralForceGPU(const cstone::GroupView& grp, const Treal* x, const Treal* y, const Treal* z, Thydro* ax,
 //                             Thydro* ay, Thydro* az, const Tmass* m, Treal g, StarData& star);
 template<typename Treal, typename Thydro, typename Tmass>
-void computeCentralForceGPU(const GroupView& grp, const GroupView& active_grp, const Treal* x, const Treal* y,
+void computeCentralForceGPU(const cstone::GroupView& grp, const cstone::GroupView& active_grp, const Treal* x, const Treal* y,
                             const Treal* z, Thydro* ax, Thydro* ay, Thydro* az, const Tmass* m, Treal g, StarData& star,
                             float* groupDt);
 

@@ -53,7 +53,7 @@ void computeCentralForce(const cstone::GroupView& grp, Dataset& d, StarData& sta
 }
 
 template<typename Dataset, typename StarData>
-void computeCentralForceBdt(const cstone::GroupView& grp, const cstone::GroupView& active_grp, const auto& groupDt,
+void computeCentralForceBdt(const cstone::GroupView& grp, const cstone::GroupView& active_grp, auto& groupDt,
                             Dataset& d, StarData& star)
 {
     if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
