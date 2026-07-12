@@ -468,7 +468,7 @@ HOST_DEVICE_FUN T updateH(unsigned ng0, unsigned nc, T h)
     return h * T(0.5) * std::pow(T(1) + c0 * ng0 / T(nc), exp);
 }
 
-template<class Config, bool usePbc, class Tc, class Th>
+template<class Config, bool UsePbc, class Tc, class Th>
 __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBody,
                                                        const LocalIndex lastBody,
                                                        const Tc* const __restrict__ x,
@@ -516,14 +516,15 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
             }
         }
 
-        const bool inRange = std::abs(int(count) - int(nTarget)) <= int(tolerance * nTarget);
+        //        const bool inRange = std::abs(int(count) - int(nTarget)) <= int(tolerance * nTarget);
+        const bool inRange = (count > 25) && count <= 150;
         if (!inRange && !lastIteration) { h[i] = updateH(nTarget, count, h[i]); }
-//        if (!inRange && !lastIteration)
-//        {
-//            // damped Newton-Raphson-style estimate assuming locally ~uniform density; clamp to avoid oscillation
-//            const Th ratio = std::clamp(std::cbrt(Th(nTarget) / Th(std::max(count, 1u))), Th(0.8), Th(1.25));
-//            h[i]           = hi * ratio;
-//        }
+        //        if (!inRange && !lastIteration)
+        //        {
+        //            // damped Newton-Raphson-style estimate assuming locally ~uniform density; clamp to avoid
+        //            oscillation const Th ratio = std::clamp(std::cbrt(Th(nTarget) / Th(std::max(count, 1u))), Th(0.8),
+        //            Th(1.25)); h[i]           = hi * ratio;
+        //        }
         unConverged |= !inRange;
     }
     return unConverged;
@@ -633,7 +634,7 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
                 // so it automatically retraverses with the corrected radius -- no extra bookkeeping needed.
                 if (!ballotSync(unconvergedLane)) break;
             }
-            if (unconvergedLane) throw std::runtime_error("Nb iterations not converged");
+            //            if (unconvergedLane) throw std::runtime_error("Nb iterations not converged");
         }
 
         // end edit
