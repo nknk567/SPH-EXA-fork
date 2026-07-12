@@ -44,6 +44,7 @@ using cstone::TravConfig;
 using cstone::TreeNodeIndex;
 
 __device__ bool nc_h_convergenceFailure = false;
+__device__ bool neighbour_failed        = false;
 
 template<class Th, class KeyType>
 __global__ void updateSmoothingLengthGpuKernel(GroupView grp, unsigned ng0, const unsigned* nc, Th* h, KeyType* keys)
@@ -128,6 +129,58 @@ template bool updateSmoothingLengthGpu(const GroupView& grp, unsigned ng0, const
 //     }
 // }
 
+// template<class Tc, class T, class KeyType>
+//__global__ void
+// updateSmoothingLengthIterativeGpuKernel(unsigned ng0, unsigned ngmax, const cstone::Box<Tc> box,
+//                                         const LocalIndex* grpStart, const LocalIndex* grpEnd, LocalIndex numGroups,
+//                                         const cstone::OctreeNsView<Tc, KeyType> tree, const Tc* x, const Tc* y,
+//                                         const Tc* z, T* h, unsigned* nc, LocalIndex* nidx, TreeNodeIndex* globalPool)
+//{
+//     unsigned laneIdx     = threadIdx.x & (GpuConfig::warpSize - 1);
+//     unsigned targetIdx   = 0;
+//     unsigned warpIdxGrid = (blockDim.x * blockIdx.x + threadIdx.x) >> GpuConfig::warpSizeLog2;
+//
+//     LocalIndex* neighborsWarp = nidx + ngmax * TravConfig::targetSize * warpIdxGrid;
+//
+//     while (true)
+//     {
+//         // first thread in warp grabs next target
+//         if (laneIdx == 0) { targetIdx = atomicAdd(&cstone::targetCounterGlob, 1); }
+//         targetIdx = cstone::shflSync(targetIdx, 0);
+//
+//         if (targetIdx >= numGroups) return;
+//
+//         LocalIndex bodyBegin = grpStart[targetIdx];
+//         LocalIndex bodyEnd   = grpEnd[targetIdx];
+//         LocalIndex i         = bodyBegin + laneIdx;
+//
+//         //        unsigned ncSph =
+//         //            1 + traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax,
+//         //            globalPool)[0];
+//         if (i >= bodyEnd) continue;
+//         unsigned ncSph =
+//             findNeighbors(i, x, y, z, h, tree, box, ngmax, neighborsWarp + laneIdx, TravConfig::targetSize);
+//         constexpr int ncMaxIteration = 9;
+//         for (int ncIt = 0; ncIt <= ncMaxIteration; ++ncIt)
+//         {
+//             bool repeat = (ncSph < ng0 / 4 || (ncSph - 1) > ngmax) && i < bodyEnd;
+//             if (!cstone::ballotSync(repeat)) { break; }
+//             if (repeat) { h[i] = updateH(ng0, ncSph, h[i]); }
+//             ncSph = 1 + findNeighbors(i, x, y, z, h, tree, box, ngmax, neighborsWarp + laneIdx,
+//             TravConfig::targetSize);
+//             //                1 + traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax,
+//             //                globalPool)[0];
+//
+//             bool ncFail = (ncSph < ng0 / 4 || (ncSph - 1) > ngmax) && i < bodyEnd;
+//             if (ncIt == ncMaxIteration && ncFail) { ncSph = 1; }
+//         }
+//
+//         //        if (i >= bodyEnd) continue;
+//
+//         nc[i] = ncSph;
+//     }
+// }
+
 template<class Tc, class T, class KeyType>
 __global__ void
 updateSmoothingLengthIterativeGpuKernel(unsigned ng0, unsigned ngmax, const cstone::Box<Tc> box,
@@ -159,23 +212,24 @@ updateSmoothingLengthIterativeGpuKernel(unsigned ng0, unsigned ngmax, const csto
         if (i >= bodyEnd) continue;
         unsigned ncSph =
             findNeighbors(i, x, y, z, h, tree, box, ngmax, neighborsWarp + laneIdx, TravConfig::targetSize);
-        constexpr int ncMaxIteration = 9;
-        for (int ncIt = 0; ncIt <= ncMaxIteration; ++ncIt)
-        {
-            bool repeat = (ncSph < ng0 / 4 || (ncSph - 1) > ngmax) && i < bodyEnd;
-            if (!cstone::ballotSync(repeat)) { break; }
-            if (repeat) { h[i] = updateH(ng0, ncSph, h[i]); }
-            ncSph = 1 + findNeighbors(i, x, y, z, h, tree, box, ngmax, neighborsWarp + laneIdx, TravConfig::targetSize);
-            //                1 + traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax,
-            //                globalPool)[0];
+        //        constexpr int ncMaxIteration = 9;
+        //        for (int ncIt = 0; ncIt <= ncMaxIteration; ++ncIt)
+        //        {
+        bool repeat = (ncSph < ng0 / 4 || (ncSph - 1) > ngmax) && i < bodyEnd;
+        if (!cstone::ballotSync(repeat)) { break; }
+        if (repeat) { h[i] = updateH(ng0, ncSph, h[i]); }
+        ncSph = 1 + findNeighbors(i, x, y, z, h, tree, box, ngmax, neighborsWarp + laneIdx, TravConfig::targetSize);
+        //                1 + traverseNeighbors(bodyBegin, bodyEnd, x, y, z, h, tree, box, neighborsWarp, ngmax,
+        //                globalPool)[0];
 
-            bool ncFail = (ncSph < ng0 / 4 || (ncSph - 1) > ngmax) && i < bodyEnd;
-            if (ncIt == ncMaxIteration && ncFail) { ncSph = 1; }
-        }
+        bool ncFail = (ncSph < ng0 / 4 || (ncSph - 1) > ngmax) && i < bodyEnd;
+        if (ncFail) { neighbour_failed = true; }
+        //        if (ncIt == ncMaxIteration && ncFail) { ncSph = 1; }
+        //        }
 
         //        if (i >= bodyEnd) continue;
 
-        nc[i] = ncSph;
+        //        nc[i] = ncSph;
     }
 }
 
@@ -199,6 +253,12 @@ void updateSmoothingLengthIterativeGpu(const cstone::GroupView& grp, Dataset& d,
     d.stackUsedNc = maxStack;
 
     if (maxP2P == 0xFFFFFFFF) { throw std::runtime_error("GPU traversal stack exhausted in neighbor search\n"); }
+    bool neighbour_failed_host;
+    checkGpuErrors(
+        cudaMemcpyFromSymbol(neighbour_failed_host, GPU_SYMBOL(neighbour_failed), 1 * sizeof(neighbour_failed_host)));
+    if (maxP2P == 0xFFFFFFFF) { throw std::runtime_error("GPU traversal stack exhausted in neighbor search\n"); }
+    if (neighbour_failed_host) { throw std::runtime_error("Neighbour update failed in cluster list\n"); }
+
 }
 
 template void updateSmoothingLengthIterativeGpu(const cstone::GroupView&, sphexa::ParticlesData<cstone::GpuTag>&,
