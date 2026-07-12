@@ -300,6 +300,7 @@ struct GpuSuperclusterNbListNeighborhoodBuilder
         y -= firstValidBody;
         z -= firstValidBody;
         if constexpr (std::is_pointer_v<ThP>) h -= firstValidBody;
+        if (nc) { nc -= firstValidBody; }
 
         const LocalIndex firstISupercluster = superclusterIndex<Config>(groups.firstBody);
         const LocalIndex lastISupercluster  = superclusterIndex<Config>(groups.lastBody - 1) + 1;
