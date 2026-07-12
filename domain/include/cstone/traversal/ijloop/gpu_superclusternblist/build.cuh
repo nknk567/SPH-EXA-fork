@@ -518,7 +518,7 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
         }
 
         //        const bool inRange = std::abs(int(count) - int(nTarget)) <= int(tolerance * nTarget);
-        const bool inRange = (count >= 25) && (count - 1) <= 150;
+        const bool inRange = (count >= 25) && ((count - 1) <= 150);
         nc[i]              = count;
         if (!inRange && !lastIteration) { h[i] = updateH(nTarget, count, h[i]); }
         if (!inRange && lastIteration) { nc[i] = 1; }
