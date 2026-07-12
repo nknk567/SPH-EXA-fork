@@ -317,7 +317,8 @@ collectNeighborJClusters(const OctreeNsView<Tc, KeyType>& tree,
                          const unsigned lastISupercluster,
                          std::uint32_t* const jClusters,
                          std::uint32_t* const masks,
-                         SuperclusterInfo& info)
+                         SuperclusterInfo& info,
+                         unsigned* const __restrict__ realNeighborCount = nullptr)
 {
     constexpr unsigned warpsPerSupercluster = Config::superclusterSize / GpuConfig::warpSize;
 
@@ -397,6 +398,7 @@ collectNeighborJClusters(const OctreeNsView<Tc, KeyType>& tree,
                 unsigned warpMask = 0;
                 for (LocalIndex jClusterParticle = 0; jClusterParticle < Config::jSize; ++jClusterParticle)
                 {
+                    const LocalIndex jRaw = jCluster * Config::jSize + jClusterParticle;
                     const LocalIndex j =
                         std::clamp(jCluster * Config::jSize + jClusterParticle, firstValidBody, totalBodies - 1);
                     const Vec3<Tc> jPos = {x[j], y[j], z[j]};
@@ -407,10 +409,23 @@ collectNeighborJClusters(const OctreeNsView<Tc, KeyType>& tree,
                     {
                         const unsigned c   = laneIdx / Config::iSize + w * (GpuConfig::warpSize / Config::iSize);
                         const Th maxRadius = std::max(jRadius, iRadius[w]);
-                        const bool jClusterOverlaps =
-                            distanceSq<UsePbc>(jPos[0], jPos[1], jPos[2], iPos[w][0], iPos[w][1], iPos[w][2], box) <
-                            maxRadius * maxRadius;
+                        //                        const bool jClusterOverlaps =
+                        //                            distanceSq<UsePbc>(jPos[0], jPos[1], jPos[2], iPos[w][0],
+                        //                            iPos[w][1], iPos[w][2], box) < maxRadius * maxRadius;
+                        const Tc d2 =
+                            distanceSq<UsePbc>(jPos[0], jPos[1], jPos[2], iPos[w][0], iPos[w][1], iPos[w][2], box);
+                        const bool jClusterOverlaps = d2 < maxRadius * maxRadius;
                         warpMask |= unsigned(jClusterOverlaps) << (warpIndex * Config::iClustersPerSupercluster + c);
+                        if (realNeighborCount != nullptr)
+                        {
+                            const unsigned i = firstBody + w * GpuConfig::warpSize + laneIdx;
+                            if (jRaw == j && jRaw != i && i < lastBody)
+                            {
+                                const Th realCutoff = iRadius[w] / tree.searchExtFactor;
+                                if (d2 < realCutoff * realCutoff)
+                                    realNeighborCount[w * GpuConfig::warpSize + laneIdx] += 1;
+                            }
+                        }
                     }
                 }
                 warpMask = warpBitwiseOr(warpMask);
@@ -468,17 +483,11 @@ HOST_DEVICE_FUN T updateH(unsigned ng0, unsigned nc, T h)
     return h * T(0.5) * std::pow(T(1) + c0 * ng0 / T(nc), exp);
 }
 
-template<class Config, bool UsePbc, class Tc, class Th, class Tnc>
+template<class Config, class Th>
 __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBody,
                                                        const LocalIndex lastBody,
-                                                       const Tc* const __restrict__ x,
-                                                       const Tc* const __restrict__ y,
-                                                       const Tc* const __restrict__ z,
                                                        Th* const __restrict__ h,
-                                                       Tnc* const __restrict__ nc,
-                                                       const auto& box,
-                                                       const std::uint32_t* const __restrict__ jClusters,
-                                                       const unsigned numJClusters,
+                                                       const unsigned* const __restrict__ realNeighborCount,
                                                        const unsigned nTarget,
                                                        const bool lastIteration)
 {
@@ -487,8 +496,7 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
                   "own radius; it is unsound for the symmetric builder, see docstring");
 
     constexpr unsigned warpsPerSupercluster = Config::superclusterSize / GpuConfig::warpSize;
-    //    using Th                                = std::remove_cvref_t<std::remove_pointer_t<ThP>>;
-    const unsigned laneIdx = laneIndex();
+    const unsigned laneIdx                  = laneIndex();
 
     bool unConverged = false;
     for (unsigned w = 0; w < warpsPerSupercluster; ++w)
@@ -496,40 +504,17 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
         const unsigned i = firstBody + w * GpuConfig::warpSize + laneIdx;
         if (i >= lastBody) continue; // lane has no real particle in this slice, don't touch h or vote
 
-        const Th hi       = h[i];
-        const Th cutoffSq = 4. * hi * hi;
-        // Th(2 * hi) * Th(2 * hi); // true interaction cutoff, unpadded by searchExtFactor
-        const Tc xi = x[i], yi = y[i], zi = z[i];
+        const unsigned count = realNeighborCount[w * GpuConfig::warpSize + laneIdx];
+        //        const bool inRange   = std::abs(int(count) - int(nTarget)) <= int(tolerance * nTarget);
 
-        unsigned count = 1;
-        for (unsigned n = 0; n < numJClusters; ++n)
+        const bool inRange = (1 + count) >= 25 && (count <= 150);
+        if (!inRange && !lastIteration)
         {
-            const unsigned jCluster = jClusters[n];
-            for (unsigned p = 0; p < Config::jSize; ++p)
-            {
-                const unsigned j = jCluster * Config::jSize + p;
-                if (j < firstBody || j >= lastBody) { continue; }
-                if (j == i) continue;
-
-                const bool inside = distanceSq<UsePbc>(x[j], y[j], z[j], x[i], y[i], z[i], box) < cutoffSq;
-
-                if (inside) count++;
-                //                const Tc dx = x[j] - xi, dy = y[j] - yi, dz = z[j] - zi;
-                //                count += (dx * dx + dy * dy + dz * dz < cutoffSq);
-            }
+            h[i] = updateH(nTarget, count, h[i]);
+            //            // damped Newton-Raphson-style estimate assuming locally ~uniform density; clamp to avoid
+            //            oscillation const Th ratio = std::clamp(std::cbrt(Th(nTarget) / Th(std::max(count, 1u))),
+            //            Th(0.8), Th(1.25)); h[i] *= ratio;
         }
-
-        //        const bool inRange = std::abs(int(count) - int(nTarget)) <= int(tolerance * nTarget);
-        const bool inRange = (count >= 25) && ((count - 1) <= 150);
-        nc[i]              = count;
-        if (!inRange && !lastIteration) { h[i] = updateH(nTarget, count, h[i]); }
-        if (!inRange && lastIteration) { nc[i] = 1; }
-        //        if (!inRange && !lastIteration)
-        //        {
-        //            // damped Newton-Raphson-style estimate assuming locally ~uniform density; clamp to avoid
-        //            oscillation const Th ratio = std::clamp(std::cbrt(Th(nTarget) / Th(std::max(count, 1u))), Th(0.8),
-        //            Th(1.25)); h[i]           = hi * ratio;
-        //        }
         unConverged |= !inRange;
     }
     return unConverged;
@@ -589,13 +574,16 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
 
     util::SharedMemAllocator sharedAllocator(buildNbListSharedMemPerSupercluster<Config, Tc, ThP>(ncmax), threadIdx.z);
 
-    auto jClusters = sharedAllocator.alloc<std::uint32_t[]>(ncmax);
-    auto masks     = sharedAllocator.alloc<std::uint32_t[]>(masksSize<Config>(ncmax));
+    auto jClusters         = sharedAllocator.alloc<std::uint32_t[]>(ncmax);
+    auto masks             = sharedAllocator.alloc<std::uint32_t[]>(masksSize<Config>(ncmax));
+    auto realNeighborCount = sharedAllocator.alloc<unsigned[]>(Config::superclusterSize);
 
     const unsigned firstISupercluster = superclusterIndex<Config>(firstBody);
     const unsigned lastISupercluster  = superclusterIndex<Config>(lastBody - 1) + 1;
 
     unsigned maxNeighbors = 0;
+
+    constexpr unsigned warpsPerSupercluster = Config::superclusterSize / GpuConfig::warpSize;
 
     while (true)
     {
@@ -627,13 +615,16 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
             for (unsigned hIter = 0; hIter < 10; ++hIter)
             {
                 info.neighborsCount = 0; // reset candidate count; collectNeighborJClusters accumulates into it
-                jClusterBytes       = collectNeighborJClusters<Config, UsePbc>(
+                for (unsigned n = laneIdx; n < Config::superclusterSize; n += GpuConfig::warpSize)
+                {
+                    realNeighborCount[n] = 0;
+                }
+                jClusterBytes = collectNeighborJClusters<Config, UsePbc>(
                     tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax,
-                    firstISupercluster, lastISupercluster, jClusters.get(), masks.get(), info);
+                    firstISupercluster, lastISupercluster, jClusters.get(), masks.get(), info, realNeighborCount.get());
 
-                unconvergedLane =
-                    adjustSmoothingLengths<Config, UsePbc>(firstBody, lastBody, x, y, z, h, nc, box, jClusters.get(),
-                                                           std::min(info.neighborsCount, ncmax), 100, hIter + 1 == 10);
+                unconvergedLane = adjustSmoothingLengths<Config, UsePbc>(
+                    firstBody, lastBody, h, realNeighborCount.get(), 100, hIter + 1 == maxHIterations);
                 // h was just updated in place for this supercluster's own particles; the next call to
                 // collectNeighborJClusters reloads h from global memory itself (via loadSuperclusterParticleData),
                 // so it automatically retraverses with the corrected radius -- no extra bookkeeping needed.
