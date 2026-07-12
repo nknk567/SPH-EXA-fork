@@ -486,7 +486,7 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
                   "own radius; it is unsound for the symmetric builder, see docstring");
 
     constexpr unsigned warpsPerSupercluster = Config::superclusterSize / GpuConfig::warpSize;
-    using Th                                = std::remove_cvref_t<std::remove_pointer_t<ThP>>;
+//    using Th                                = std::remove_cvref_t<std::remove_pointer_t<ThP>>;
     const unsigned laneIdx                  = laneIndex();
 
     bool unConverged = false;
@@ -626,9 +626,8 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
                     firstISupercluster, lastISupercluster, jClusters.get(), masks.get(), info);
 
                 unconvergedLane =
-                    adjustSmoothingLengths<Config, UsePbc>(firstBody, lastBody, x, y, z, h, jClusters.get(),
+                    adjustSmoothingLengths<Config, UsePbc>(firstBody, lastBody, x, y, z, h, box, jClusters.get(),
                                                            std::min(info.neighborsCount, ncmax), 100, hIter + 1 == 10);
-
                 // h was just updated in place for this supercluster's own particles; the next call to
                 // collectNeighborJClusters reloads h from global memory itself (via loadSuperclusterParticleData),
                 // so it automatically retraverses with the corrected radius -- no extra bookkeeping needed.
