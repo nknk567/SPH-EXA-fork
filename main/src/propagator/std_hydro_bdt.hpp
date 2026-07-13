@@ -211,27 +211,34 @@ public:
 
         domain.exchangeHalos(std::tie(get<"m">(d)), get<"ax">(d), get<"ay">(d));
         //        computeGroups(first, last, d, domain.box(), groups_);
-        updateSmoothingLengthIterative(activeRungs_, d, domain.box());
-        findNeighborsSfc(activeRungs_, d, domain.box(), true);
+        if (activeRungs_.groupStart != activeRungs_.groupEnd)
+        {
+            updateSmoothingLengthIterative(activeRungs_, d, domain.box());
+            findNeighborsSfc(activeRungs_, d, domain.box(), true);
+        }
         timer.step("FindNeighbors");
         pmReader.step();
+        if (activeRungs_.groupStart != activeRungs_.groupEnd)
+        {
 
-        computeDensity(activeRungs_, d, domain.box());
-        timer.step("Density");
+            computeDensity(activeRungs_, d, domain.box());
+            timer.step("Density");
+        }
         computeEOS_HydroStd(first, last, d);
         timer.step("EquationOfState");
 
         domain.exchangeHalos(get<"vx", "vy", "vz", "rho", "p", "c">(d), get<"ax">(d), get<"ay">(d));
         timer.step("mpi::synchronizeHalos");
-
-        computeIAD(activeRungs_, d, domain.box());
+        if (activeRungs_.groupStart != activeRungs_.groupEnd) { computeIAD(activeRungs_, d, domain.box()); }
         Base::printIadRegularizationStats(d, activeRungs_.firstBody, activeRungs_.lastBody, "std-bdt");
         timer.step("IAD");
 
         domain.exchangeHalos(get<"c11", "c12", "c13", "c22", "c23", "c33">(d), get<"ax">(d), get<"ay">(d));
         timer.step("mpi::synchronizeHalos");
-
-        computeMomentumEnergySTD(activeRungs_, d, domain.box());
+        if (activeRungs_.groupStart != activeRungs_.groupEnd)
+        {
+            computeMomentumEnergySTD(activeRungs_, d, domain.box());
+        }
         timer.step("MomentumEnergyIAD");
 
         if (d.g != 0.0)
