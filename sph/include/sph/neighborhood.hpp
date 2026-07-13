@@ -30,6 +30,7 @@ struct NeighborhoodData
     NeighborhoodData() {}
 
     void disableNeighborLists() { useNeighborLists = false; }
+    bool neighbourListsEnabled() { return useNeighborLists; }
 
     template<class Dataset, class T>
     void build(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box, bool /* subgroups */)
