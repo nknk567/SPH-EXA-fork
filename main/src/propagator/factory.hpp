@@ -49,6 +49,8 @@ propagatorFactory(const std::string& choice, bool avClean, std::ostream& output,
         return PropLib<DomainType, ParticleDataType>::makeHydroVeBdtProp(output, rank, s, avClean);
     }
     if (choice == "std") { return PropLib<DomainType, ParticleDataType>::makeHydroProp(output, rank); }
+    if (choice == "std-bdt") { return PropLib<DomainType, ParticleDataType>::makeHydroBdtProp(output, rank, s); }
+
 #ifdef SPH_EXA_HAVE_GRACKLE
     if (choice == "std-cooling")
     {
