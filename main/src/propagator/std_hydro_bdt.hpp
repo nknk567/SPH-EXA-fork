@@ -178,8 +178,8 @@ public:
 
     void sync(DomainType& domain, DataType& simData) override
     {
-//        domain.setTreeConv(true);
-//        domain.setHaloFactor(1.0 + float(timestep_.numRungs) / 40);
+        //        domain.setTreeConv(true);
+        //        domain.setHaloFactor(1.0 + float(timestep_.numRungs) / 40);
 
         if (activeRung(timestep_.substep, timestep_.numRungs) == 0) { fullSync(domain, simData); }
         else { partialSync(domain, simData); }
@@ -244,7 +244,7 @@ public:
 
         domain.exchangeHalos(get<"c11", "c12", "c13", "c22", "c23", "c33">(d), get<"ax">(d), get<"ay">(d));
         timer.step("mpi::synchronizeHalos");
-        if (activeRungs_.numGroups > 0) { computeMomentumEnergySTD(activeRungs_, d, domain.box()); }
+        if (activeRungs_.numGroups > 0) { computeMomentumEnergySTD(activeRungs_, rawPtr(groupDt_), d, domain.box()); }
         timer.step("MomentumEnergyIAD");
 
         if (d.g != 0.0)
