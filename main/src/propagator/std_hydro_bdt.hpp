@@ -317,7 +317,7 @@ public:
     void integrate(DomainType& domain, DataType& simData) override
     {
         computeRungs(simData);
-        computeTimestep(domain.startIndex(), domain.endIndex(), d);
+        computeTimestep(domain.startIndex(), domain.endIndex(), simData.hydro);
         printTimestepStats(timestep_);
         timer.step("Timestep");
 
