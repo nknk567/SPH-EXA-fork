@@ -57,7 +57,7 @@ protected:
     //! brief timestep information rungs
     Timestep timestep_, prevTimestep_;
     //! number of initial steps to disable block time-steps
-    int safetySteps{0};
+    int safetySteps{5};
 
     //! @brief no dependent fields can be temporarily reused as scratch space for halo exchanges
     AccVector<LocalIndex> haloRecvScratch;
