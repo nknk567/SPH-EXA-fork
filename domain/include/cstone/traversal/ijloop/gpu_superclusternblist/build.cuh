@@ -472,8 +472,13 @@ constexpr unsigned buildNbListSharedMemPerSupercluster(const unsigned ncmax)
     const unsigned jClustersSize = ncmax * sizeof(unsigned);
     // storage requirements for cluster-cluster interaction bitmasks
     const unsigned masksDataSize = masksSize<Config>(ncmax) * sizeof(std::uint32_t);
+      // exact per-particle neighbor counts for the in-kernel h iteration. MUST be included here: the kernel
+    // allocates this buffer from the same per-supercluster budget, and without this term the last allocation
+    // of slot 0 aliases the start of slot 1's jClusters (corrupting its compressed neighbor data and its
+    // numBytes header), while slot 1's counts land past the reserved dynamic shared memory entirely.
+    const unsigned realNeighborCountSize = Config::superclusterSize * sizeof(unsigned);
 
-    return jClustersSize + masksDataSize;
+    return jClustersSize + masksDataSize + realNeighborCountSize;
 }
 template<class T>
 HOST_DEVICE_FUN T updateH(unsigned ng0, unsigned nc, T h)
@@ -484,7 +489,8 @@ HOST_DEVICE_FUN T updateH(unsigned ng0, unsigned nc, T h)
 }
 
 template<class Config, class Th>
-__device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBody,
+__device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBody_sc,
+                                                       const LocalIndex firstBody,
                                                        const LocalIndex lastBody,
                                                        Th* const __restrict__ h,
                                                        auto* const __restrict__ nc,
@@ -502,8 +508,10 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
     bool unConverged = false;
     for (unsigned w = 0; w < warpsPerSupercluster; ++w)
     {
-        const unsigned i = firstBody + w * GpuConfig::warpSize + laneIdx;
-        if (i >= lastBody) continue; // lane has no real particle in this slice, don't touch h or vote
+        //const unsigned i = firstBody + w * GpuConfig::warpSize + laneIdx;
+        const unsigned i = firstBody_sc + w * GpuConfig::warpSize + laneIdx;
+        if (i < firstBody || i >= lastBody) continue;
+        //if (i >= lastBody) continue; // lane has no real particle in this slice, don't touch h or vote
 
         const unsigned count = realNeighborCount[w * GpuConfig::warpSize + laneIdx];
         //        const bool inRange   = std::abs(int(count) - int(nTarget)) <= int(tolerance * nTarget);
@@ -610,8 +618,11 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
         }
         else
         {
-            const unsigned firstBody = std::max(info.index * Config::superclusterSize, firstValidBody);
-            const unsigned lastBody  = std::min((info.index + 1) * Config::superclusterSize, totalBodies);
+            const unsigned scFirstBody = std::max(info.index * Config::superclusterSize, firstValidBody);
+            const unsigned scLastBody  = std::min((info.index + 1) * Config::superclusterSize, totalBodies);
+            const unsigned updFirstBody = std::max(scFirstBody, firstBody);
+            const unsigned updLastBody  = std::min(scLastBody, lastBody);
+
 
             bool unconvergedLane = false;
             for (unsigned hIter = 0; hIter < 10; ++hIter)
@@ -624,9 +635,11 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
                 jClusterBytes = collectNeighborJClusters<Config, UsePbc>(
                     tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax,
                     firstISupercluster, lastISupercluster, jClusters.get(), masks.get(), info, realNeighborCount.get());
+               //EDITING
 
-                unconvergedLane = adjustSmoothingLengths<Config>(firstBody, lastBody, h, nc, realNeighborCount.get(), 100,
-                                                                 hIter + 1 == 10);
+                unconvergedLane = adjustSmoothingLengths<Config>(scFirstBody, updFirstBody, updLastBody, h, nc, realNeighborCount.get(), 100,
+                                                                hIter + 1 == 10);
+             //    unconvergedLane = false;
                 // h was just updated in place for this supercluster's own particles; the next call to
                 // collectNeighborJClusters reloads h from global memory itself (via loadSuperclusterParticleData),
                 // so it automatically retraverses with the corrected radius -- no extra bookkeeping needed.

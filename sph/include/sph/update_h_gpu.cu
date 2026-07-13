@@ -225,6 +225,7 @@ updateSmoothingLengthIterativeGpuKernel(unsigned ng0, unsigned ngmax, const csto
 
         bool ncFail = (ncSph < ng0 / 4 || (ncSph - 1) > ngmax) && i < bodyEnd;
         if (ncFail && nc[i] != 1) { neighbour_failed = true; }
+        if (!ncFail && nc[i] == 1) { neighbour_failed = true; }
         //        if (ncIt == ncMaxIteration && ncFail) { ncSph = 1; }
         //        }
 
