@@ -203,7 +203,7 @@ public:
         sync(domain, simData);
         timer.step("domain::sync");
         Base::logDomainStats(domain, simData);
-
+        printTimestepStats(timestep_);
         auto& d = simData.hydro;
         d.resize(domain.nParticlesWithHalos());
         size_t first = domain.startIndex();
