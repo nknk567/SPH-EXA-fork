@@ -38,7 +38,8 @@ protected:
                                          MultipoleHolderCpu<MultipoleType, DomainType, typename DataType::HydroData>>;
 
     template<class VType>
-    using AccVector = std::conditional_t<cstone::execution::HaveGpu<Acc>{}, cstone::DeviceVector<VType>, std::vector<VType>>;
+    using AccVector =
+        std::conditional_t<cstone::execution::HaveGpu<Acc>{}, cstone::DeviceVector<VType>, std::vector<VType>>;
 
     MHolder_t mHolder_;
     //    GroupData<Acc> groups_;
@@ -82,7 +83,10 @@ public:
     HydroBdtProp(std::ostream& output, size_t rank, const InitSettings& settings)
         : Base(output, rank)
     {
-        if (not cstone::execution::HaveGpu<Acc>{}) { throw std::runtime_error("This propagator is not supported on CPUs\n"); }
+        if (not cstone::execution::HaveGpu<Acc>{})
+        {
+            throw std::runtime_error("This propagator is not supported on CPUs\n");
+        }
         try
         {
             timestep_.dt_m1[0] = settings.at("minDt");
@@ -211,14 +215,14 @@ public:
 
         domain.exchangeHalos(std::tie(get<"m">(d)), get<"ax">(d), get<"ay">(d));
         //        computeGroups(first, last, d, domain.box(), groups_);
-        if (activeRungs_.groupStart != activeRungs_.groupEnd)
+        if (activeRungs_.numGroups > 0)
         {
             updateSmoothingLengthIterative(activeRungs_, d, domain.box());
             findNeighborsSfc(activeRungs_, d, domain.box(), true);
         }
         timer.step("FindNeighbors");
         pmReader.step();
-        if (activeRungs_.groupStart != activeRungs_.groupEnd)
+        if (activeRungs_.numGroups > 0)
         {
 
             computeDensity(activeRungs_, d, domain.box());
@@ -229,16 +233,13 @@ public:
 
         domain.exchangeHalos(get<"vx", "vy", "vz", "rho", "p", "c">(d), get<"ax">(d), get<"ay">(d));
         timer.step("mpi::synchronizeHalos");
-        if (activeRungs_.groupStart != activeRungs_.groupEnd) { computeIAD(activeRungs_, d, domain.box()); }
+        if (activeRungs_.numGroups > 0) { computeIAD(activeRungs_, d, domain.box()); }
         Base::printIadRegularizationStats(d, activeRungs_.firstBody, activeRungs_.lastBody, "std-bdt");
         timer.step("IAD");
 
         domain.exchangeHalos(get<"c11", "c12", "c13", "c22", "c23", "c33">(d), get<"ax">(d), get<"ay">(d));
         timer.step("mpi::synchronizeHalos");
-        if (activeRungs_.groupStart != activeRungs_.groupEnd)
-        {
-            computeMomentumEnergySTD(activeRungs_, d, domain.box());
-        }
+        if (activeRungs_.numGroups > 0) { computeMomentumEnergySTD(activeRungs_, d, domain.box()); }
         timer.step("MomentumEnergyIAD");
 
         if (d.g != 0.0)
@@ -270,7 +271,8 @@ public:
         {
             prevTimestep_ = timestep_;
             float maxDt   = timestep_.dt_m1[0] * d.maxDtIncrease;
-            timestep_ = rungTimestep(cstone::rawPtr(groupDt_), cstone::rawPtr(groupIndices_), groups_.numGroups, maxDt, get<"keys">(d));
+            timestep_ = rungTimestep(cstone::rawPtr(groupDt_), cstone::rawPtr(groupIndices_), groups_.numGroups, maxDt,
+                                     get<"keys">(d));
 
             if (safetySteps > 0)
             {
@@ -292,7 +294,8 @@ public:
             if (highRung > 1) { swap(groups_, tsGroups_); }
             if constexpr (cstone::execution::HaveGpu<Acc>{})
             {
-                extractGroupGpu(groups_.view(), cstone::rawPtr(groupIndices_), 0, timestep_.rungRanges.back(), tsGroups_);
+                extractGroupGpu(groups_.view(), cstone::rawPtr(groupIndices_), 0, timestep_.rungRanges.back(),
+                                tsGroups_);
             }
         }
 
@@ -329,7 +332,10 @@ public:
                 computePositions(rungs_[i], d, substepBox, timestep_.dt_drift[i] + dt, dt_m1, rung);
                 timestep_.dt_m1[i]    = timestep_.dt_drift[i] + dt;
                 timestep_.dt_drift[i] = 0;
-                if constexpr (cstone::execution::HaveGpu<Acc>{}) { storeRungGpu(rungs_[i], i, cstone::rawPtr(get<"rung">(d))); }
+                if constexpr (cstone::execution::HaveGpu<Acc>{})
+                {
+                    storeRungGpu(rungs_[i], i, cstone::rawPtr(get<"rung">(d)));
+                }
             }
             else
             {
