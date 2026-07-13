@@ -135,7 +135,7 @@ public:
         Base::logDomainStats(domain, simData);
 
         using KeyType = typename DataType::KeyType;
-        cstone::fill<cstone::HaveGpu<Acc>{}>(simData.hydro.keys.begin(), simData.hydro.keys.end(), KeyType(0));
+        cstone::fill(domain.exec(), simData.hydro.keys.begin(), simData.hydro.keys.end(), KeyType(0));
 
         auto& d = simData.hydro;
         d.resize(domain.nParticlesWithHalos());

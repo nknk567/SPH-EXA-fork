@@ -32,13 +32,13 @@ protected:
     using Tmass         = typename DataType::HydroData::Tmass;
     using MultipoleType = ryoanji::CartesianQuadrupole<Tmass>;
 
-    using Acc       = typename DataType::AcceleratorType;
-    using MHolder_t = std::conditional_t<cstone::HaveGpu<Acc>{},
+    using Acc       = typename DataType::Exec;
+    using MHolder_t = std::conditional_t<cstone::execution::HaveGpu<Acc>{},
                                          MultipoleHolderGpu<MultipoleType, DomainType, typename DataType::HydroData>,
                                          MultipoleHolderCpu<MultipoleType, DomainType, typename DataType::HydroData>>;
 
     template<class VType>
-    using AccVector = std::conditional_t<cstone::HaveGpu<Acc>{}, cstone::DeviceVector<VType>, std::vector<VType>>;
+    using AccVector = std::conditional_t<cstone::execution::HaveGpu<Acc>{}, cstone::DeviceVector<VType>, std::vector<VType>>;
 
     MHolder_t mHolder_;
     //    GroupData<Acc> groups_;
@@ -82,7 +82,7 @@ public:
     HydroBdtProp(std::ostream& output, size_t rank, const InitSettings& settings)
         : Base(output, rank)
     {
-        if (not cstone::HaveGpu<Acc>{}) { throw std::runtime_error("This propagator is not supported on CPUs\n"); }
+        if (not cstone::execution::HaveGpu<Acc>{}) { throw std::runtime_error("This propagator is not supported on CPUs\n"); }
         try
         {
             timestep_.dt_m1[0] = settings.at("minDt");
@@ -151,7 +151,7 @@ public:
         activeRungs_ = groups_.view();
 
         reallocate(groups_.numGroups, d.getAllocGrowthRate(), groupDt_, groupIndices_);
-        cstone::fill<cstone::HaveGpu<Acc>{}>(groupDt_.begin(), groupDt_.end(), std::numeric_limits<float>::max());
+        cstone::fill(domain.exec(), groupDt_.begin(), groupDt_.end(), std::numeric_limits<float>::max());
     }
 
     void partialSync(DomainType& domain, DataType& simData)
@@ -251,7 +251,7 @@ public:
             timer.logStatistics("sumP2P", stats[0] / timer.getLastStepTime());
             timer.logStatistics("sumM2P", stats[2] / timer.getLastStepTime());
         }
-        groupAccTimestep(activeRungs_, rawPtr(groupDt_), d);
+        groupAccTimestep(activeRungs_, cstone::rawPtr(groupDt_), d);
     }
 
     void computeRungs(DataType& simData)
@@ -263,7 +263,7 @@ public:
         {
             prevTimestep_ = timestep_;
             float maxDt   = timestep_.dt_m1[0] * d.maxDtIncrease;
-            timestep_ = rungTimestep(rawPtr(groupDt_), rawPtr(groupIndices_), groups_.numGroups, maxDt, get<"keys">(d));
+            timestep_ = rungTimestep(cstone::rawPtr(groupDt_), cstone::rawPtr(groupIndices_), groups_.numGroups, maxDt, get<"keys">(d));
 
             if (safetySteps > 0)
             {
@@ -274,7 +274,7 @@ public:
         }
         else
         {
-            auto [dt, rungRanges] = minimumGroupDt(timestep_, rawPtr(groupDt_), rawPtr(groupIndices_),
+            auto [dt, rungRanges] = minimumGroupDt(timestep_, cstone::rawPtr(groupDt_), cstone::rawPtr(groupIndices_),
                                                    timestep_.rungRanges[highRung], get<"keys">(d));
             timestep_.nextDt      = dt;
             std::copy(rungRanges.begin(), rungRanges.begin() + highRung, timestep_.rungRanges.begin());
@@ -283,9 +283,9 @@ public:
         if (highRung == 0 || highRung > 1)
         {
             if (highRung > 1) { swap(groups_, tsGroups_); }
-            if constexpr (cstone::HaveGpu<Acc>{})
+            if constexpr (cstone::execution::HaveGpu<Acc>{})
             {
-                extractGroupGpu(groups_.view(), rawPtr(groupIndices_), 0, timestep_.rungRanges.back(), tsGroups_);
+                extractGroupGpu(groups_.view(), cstone::rawPtr(groupIndices_), 0, timestep_.rungRanges.back(), tsGroups_);
             }
         }
 
@@ -314,7 +314,7 @@ public:
 
             float          dt    = timestep_.nextDt;
             auto           dt_m1 = useRung ? prevTimestep_.dt_m1 : timestep_.dt_m1;
-            const uint8_t* rung  = rawPtr(get<"rung">(d));
+            const uint8_t* rung  = cstone::rawPtr(get<"rung">(d));
 
             if (advance)
             {
@@ -322,7 +322,7 @@ public:
                 computePositions(rungs_[i], d, substepBox, timestep_.dt_drift[i] + dt, dt_m1, rung);
                 timestep_.dt_m1[i]    = timestep_.dt_drift[i] + dt;
                 timestep_.dt_drift[i] = 0;
-                if constexpr (cstone::HaveGpu<Acc>{}) { storeRungGpu(rungs_[i], i, rawPtr(get<"rung">(d))); }
+                if constexpr (cstone::execution::HaveGpu<Acc>{}) { storeRungGpu(rungs_[i], i, cstone::rawPtr(get<"rung">(d))); }
             }
             else
             {

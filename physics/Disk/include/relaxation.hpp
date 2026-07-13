@@ -51,7 +51,7 @@ void moveToLocalMinimumImpl(const size_t first, const size_t last, Dataset& d, c
 template<typename Tc, typename Dataset>
 void moveToLocalMinimum(size_t first, size_t last, Dataset& d, const cstone::Box<Tc>& box)
 {
-    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
+    if constexpr (d.useGpu)
     {
         moveToLocalMinimumGPU(first, last, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), rawPtr(d.ax),
                               rawPtr(d.ay), rawPtr(d.az), rawPtr(d.vx), rawPtr(d.vy), rawPtr(d.vz), rawPtr(d.dtCourant),

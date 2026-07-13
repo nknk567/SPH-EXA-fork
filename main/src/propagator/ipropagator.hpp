@@ -146,7 +146,7 @@ protected:
     template<class HydroData>
     void printIadRegularizationStats(const HydroData& d, size_t first, size_t last, const char* label)
     {
-        auto&& flags = toHost(d.iadRegularized);
+        auto&& flags = cstone::toHost(d.iadRegularized);
         last         = std::min(last, flags.size());
 
         uint64_t localCount = 0;
