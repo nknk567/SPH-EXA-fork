@@ -156,6 +156,7 @@ public:
 
         reallocate(groups_.numGroups, d.getAllocGrowthRate(), groupDt_, groupIndices_);
         cstone::fill(domain.exec(), groupDt_.begin(), groupDt_.end(), std::numeric_limits<float>::max());
+        if (Base::rank_ == 0) printf("fullSync\n");
     }
 
     void partialSync(DomainType& domain, DataType& simData)
@@ -172,11 +173,12 @@ public:
 
         int highestRung = cstone::butterfly(timestep_.substep);
         activeRungs_    = makeSlicedView(tsGroups_.view(), timestep_.rungRanges[0], timestep_.rungRanges[highestRung]);
+        if (Base::rank_ == 0) printf("partialSync\n");
     }
 
     void sync(DomainType& domain, DataType& simData) override
     {
-        domain.setTreeConv(true);
+//        domain.setTreeConv(true);
         domain.setHaloFactor(1.0 + float(timestep_.numRungs) / 40);
 
         if (activeRung(timestep_.substep, timestep_.numRungs) == 0) { fullSync(domain, simData); }
