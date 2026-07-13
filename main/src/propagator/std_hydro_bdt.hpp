@@ -233,8 +233,11 @@ public:
 
         domain.exchangeHalos(get<"vx", "vy", "vz", "rho", "p", "c">(d), get<"ax">(d), get<"ay">(d));
         timer.step("mpi::synchronizeHalos");
-        if (activeRungs_.numGroups > 0) { computeIAD(activeRungs_, d, domain.box()); }
-        Base::printIadRegularizationStats(d, activeRungs_.firstBody, activeRungs_.lastBody, "std-bdt");
+        if (activeRungs_.numGroups > 0)
+        {
+            computeIAD(activeRungs_, d, domain.box());
+            Base::printIadRegularizationStats(d, activeRungs_.firstBody, activeRungs_.lastBody, "std-bdt");
+        }
         timer.step("IAD");
 
         domain.exchangeHalos(get<"c11", "c12", "c13", "c22", "c23", "c33">(d), get<"ax">(d), get<"ay">(d));
