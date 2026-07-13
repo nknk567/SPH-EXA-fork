@@ -39,9 +39,9 @@ namespace sph
 {
 
 template<class T, class Dataset>
-void computeMomentumEnergySTD(const GroupView& groups, Dataset& d, const cstone::Box<T>& box)
+void computeMomentumEnergySTD(const GroupView& groups, float* groupDt, Dataset& d, const cstone::Box<T>& box)
 {
-    if constexpr (d.useGpu) { computeMomentumEnergyStdGpu(groups, d, box); }
+    if constexpr (d.useGpu) { computeMomentumEnergyStdGpu(groups, groupDt, d, box); }
     else
     {
         momentumAndEnergyIjLoop(d.neighborhood, d.K, d.Kcour, d.m.data(), d.rho.data(), d.nc.data(), d.vx.data(),

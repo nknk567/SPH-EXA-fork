@@ -31,6 +31,8 @@
 
 #include <limits>
 
+#include "cstone/primitives/warpscan.cuh"
+
 #include <thrust/execution_policy.h>
 #include <thrust/functional.h>
 #include <thrust/reduce.h>
@@ -43,7 +45,36 @@
 namespace sph
 {
 
+using cstone::GpuConfig;
 using cstone::LocalIndex;
+
+static __device__ float minDt_ve_device;
+
+template<class T>
+__global__ void reduceDt(const LocalIndex* __restrict__ grpStart, const LocalIndex* __restrict__ grpEnd,
+                         const LocalIndex numGroups, const T* dtCourant, float* __restrict__ groupDt)
+{
+    unsigned laneIdx = threadIdx.x & (GpuConfig::warpSize - 1);
+    unsigned grpIdx  = (blockDim.x * blockIdx.x + threadIdx.x) >> GpuConfig::warpSizeLog2;
+
+    if (grpIdx >= numGroups) return;
+
+    LocalIndex bodyBegin = grpStart[grpIdx];
+    LocalIndex bodyEnd   = grpEnd[grpIdx];
+    LocalIndex i         = bodyBegin + laneIdx;
+
+    __shared__ float minBlockDt;
+    if (threadIdx.x == 0) minBlockDt = std::numeric_limits<float>::infinity();
+    __syncthreads();
+
+    float dt         = i < bodyEnd ? dtCourant[i] : std::numeric_limits<T>::infinity();
+    float minGroupDt = cstone::warpMin(dt);
+    if (groupDt && laneIdx == 0) groupDt[grpIdx] = std::min(groupDt[grpIdx], minGroupDt);
+
+    if (laneIdx == 0) cstone::atomicMinFloat(&minBlockDt, minGroupDt);
+    __syncthreads();
+    if (threadIdx.x == 0) cstone::atomicMinFloat(&minDt_ve_device, minBlockDt);
+}
 
 /*! @brief Mark particles with NaN acceleration for removal by setting neighbor counts to 0
  * @param[in]    grp   active particle groups
@@ -73,7 +104,8 @@ __global__ void markNaN(GroupView grp, Ta* ax, Ta* ay, Ta* az, Tu* du, unsigned*
 }
 
 template<class Dataset>
-void computeMomentumEnergyStdGpu(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>&)
+void computeMomentumEnergyStdGpu(const GroupView& grp, float* groupDt, Dataset& d,
+                                 const cstone::Box<typename Dataset::RealType>&)
 {
     momentumAndEnergyIjLoop(d.neighborhood, d.K, d.Kcour, rawPtr(d.m), rawPtr(d.rho), rawPtr(d.nc), rawPtr(d.vx),
                             rawPtr(d.vy), rawPtr(d.vz), rawPtr(d.p), rawPtr(d.c), rawPtr(d.c11), rawPtr(d.c12),
@@ -91,9 +123,20 @@ void computeMomentumEnergyStdGpu(const GroupView& grp, Dataset& d, const cstone:
         }
     }
 
-    using DtCourantType = typename std::decay_t<decltype(d.dtCourant)>::value_type;
-    auto minDt = thrust::reduce(thrust::device, rawPtr(d.dtCourant) + grp.firstBody, rawPtr(d.dtCourant) + grp.lastBody,
-                                std::numeric_limits<DtCourantType>::infinity(), thrust::minimum<DtCourantType>());
+    //    using DtCourantType = typename std::decay_t<decltype(d.dtCourant)>::value_type;
+    //    auto minDt = thrust::reduce(thrust::device, rawPtr(d.dtCourant) + grp.firstBody, rawPtr(d.dtCourant) +
+    //    grp.lastBody,
+    //                                std::numeric_limits<DtCourantType>::infinity(), thrust::minimum<DtCourantType>());
+    float minDt = std::numeric_limits<float>::infinity();
+    checkGpuErrors(
+        cudaMemcpyToSymbolAsync(GPU_SYMBOL(minDt_ve_device), &minDt, sizeof(minDt), 0, cudaMemcpyHostToDevice, 0));
+
+    constexpr LocalIndex threads = 256;
+    const LocalIndex     blocks  = cstone::iceil(grp.numGroups, threads / GpuConfig::warpSize);
+    reduceDt<<<blocks, threads>>>(grp.groupStart, grp.groupEnd, grp.numGroups, rawPtr(d.dtCourant), groupDt);
+
+    checkGpuErrors(cudaMemcpyFromSymbol(&minDt, GPU_SYMBOL(minDt_ve_device), sizeof(minDt)));
+
     d.minDtCourant = minDt;
 }
 
