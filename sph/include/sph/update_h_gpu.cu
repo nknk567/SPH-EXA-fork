@@ -262,7 +262,8 @@ void updateSmoothingLengthIterativeGpu(const cstone::GroupView& grp, Dataset& d,
     if (neighbour_failed_host) { throw std::runtime_error("Neighbour update failed in cluster list\n"); }
 }
 
-template void updateSmoothingLengthIterativeGpu(const cstone::GroupView&, sphexa::ParticlesData<cstone::GpuTag>&,
+template void updateSmoothingLengthIterativeGpu(const cstone::GroupView&,
+                                                sphexa::ParticlesData<cstone::execution::Gpu>&,
                                                 const cstone::Box<SphTypes::CoordinateType>&);
 
 } // namespace sph

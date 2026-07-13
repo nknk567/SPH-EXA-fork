@@ -44,7 +44,7 @@ void computeCentralForceImpl(size_t first, size_t last, Dataset& d, StarData& st
 template<typename Dataset, typename StarData>
 void computeCentralForce(const cstone::GroupView& grp, Dataset& d, StarData& star)
 {
-    if constexpr (cstone::HaveGpu<typename Dataset::AcceleratorType>{})
+    if constexpr (d.useGpu)
     {
         computeCentralForceGPU(grp, grp, getPtr<"x">(d), getPtr<"y">(d), getPtr<"z">(d), getPtr<"ax">(d),
                                getPtr<"ay">(d), getPtr<"az">(d), getPtr<"m">(d), d.g, star, nullptr);

@@ -27,6 +27,7 @@
 #include <type_traits>
 
 #include "cstone/cuda/memory.cuh"
+#include "cstone/execution.hpp"
 #include "cstone/reducearray.cuh"
 #include "cstone/traversal/find_neighbors.cuh"
 #include "cstone/traversal/groups.hpp"
@@ -146,7 +147,8 @@ __global__ void computeJClusterBboxesKernel(const LocalIndex firstValidBody,
 }
 
 template<class Config, class Tc, class ThP>
-util::UniqueDevicePtr<JClusterBbox<Config, Tc>[]> computeJClusterBboxes(const LocalIndex firstValidBody,
+util::UniqueDevicePtr<JClusterBbox<Config, Tc>[]> computeJClusterBboxes(const execution::Gpu exec,
+                                                                        const LocalIndex firstValidBody,
                                                                         const LocalIndex totalBodies,
                                                                         const Tc* const __restrict__ x,
                                                                         const Tc* const __restrict__ y,
@@ -154,11 +156,11 @@ util::UniqueDevicePtr<JClusterBbox<Config, Tc>[]> computeJClusterBboxes(const Lo
                                                                         const ThP h)
 {
     const LocalIndex numJClusters = jClusterIndex<Config>(totalBodies - 1) + 1;
-    auto jClusterBboxes           = util::deviceAlloc<JClusterBbox<Config, Tc>[]>(numJClusters);
+    auto jClusterBboxes           = util::deviceAlloc<JClusterBbox<Config, Tc>[]>(exec, numJClusters);
     constexpr unsigned numThreads = 256;
     unsigned numBlocks            = iceil(numJClusters * Config::jSize, numThreads);
     computeJClusterBboxesKernel<Config>
-        <<<numBlocks, numThreads>>>(firstValidBody, totalBodies, x, y, z, h, jClusterBboxes.get());
+        <<<numBlocks, numThreads, 0, exec>>>(firstValidBody, totalBodies, x, y, z, h, jClusterBboxes.get());
     checkGpuErrors(cudaGetLastError());
     return jClusterBboxes;
 }
@@ -472,7 +474,7 @@ constexpr unsigned buildNbListSharedMemPerSupercluster(const unsigned ncmax)
     const unsigned jClustersSize = ncmax * sizeof(unsigned);
     // storage requirements for cluster-cluster interaction bitmasks
     const unsigned masksDataSize = masksSize<Config>(ncmax) * sizeof(std::uint32_t);
-      // exact per-particle neighbor counts for the in-kernel h iteration. MUST be included here: the kernel
+    // exact per-particle neighbor counts for the in-kernel h iteration. MUST be included here: the kernel
     // allocates this buffer from the same per-supercluster budget, and without this term the last allocation
     // of slot 0 aliases the start of slot 1's jClusters (corrupting its compressed neighbor data and its
     // numBytes header), while slot 1's counts land past the reserved dynamic shared memory entirely.
@@ -508,10 +510,10 @@ __device__ __forceinline__ bool adjustSmoothingLengths(const LocalIndex firstBod
     bool unConverged = false;
     for (unsigned w = 0; w < warpsPerSupercluster; ++w)
     {
-        //const unsigned i = firstBody + w * GpuConfig::warpSize + laneIdx;
+        // const unsigned i = firstBody + w * GpuConfig::warpSize + laneIdx;
         const unsigned i = firstBody_sc + w * GpuConfig::warpSize + laneIdx;
         if (i < firstBody || i >= lastBody) continue;
-        //if (i >= lastBody) continue; // lane has no real particle in this slice, don't touch h or vote
+        // if (i >= lastBody) continue; // lane has no real particle in this slice, don't touch h or vote
 
         const unsigned count = realNeighborCount[w * GpuConfig::warpSize + laneIdx];
         //        const bool inRange   = std::abs(int(count) - int(nTarget)) <= int(tolerance * nTarget);
@@ -618,11 +620,10 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
         }
         else
         {
-            const unsigned scFirstBody = std::max(info.index * Config::superclusterSize, firstValidBody);
-            const unsigned scLastBody  = std::min((info.index + 1) * Config::superclusterSize, totalBodies);
+            const unsigned scFirstBody  = std::max(info.index * Config::superclusterSize, firstValidBody);
+            const unsigned scLastBody   = std::min((info.index + 1) * Config::superclusterSize, totalBodies);
             const unsigned updFirstBody = std::max(scFirstBody, firstBody);
             const unsigned updLastBody  = std::min(scLastBody, lastBody);
-
 
             bool unconvergedLane = false;
             for (unsigned hIter = 0; hIter < 10; ++hIter)
@@ -635,11 +636,11 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
                 jClusterBytes = collectNeighborJClusters<Config, UsePbc>(
                     tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax,
                     firstISupercluster, lastISupercluster, jClusters.get(), masks.get(), info, realNeighborCount.get());
-               //EDITING
+                // EDITING
 
-                unconvergedLane = adjustSmoothingLengths<Config>(scFirstBody, updFirstBody, updLastBody, h, nc, realNeighborCount.get(), 100,
-                                                                hIter + 1 == 10);
-             //    unconvergedLane = false;
+                unconvergedLane = adjustSmoothingLengths<Config>(scFirstBody, updFirstBody, updLastBody, h, nc,
+                                                                 realNeighborCount.get(), 100, hIter + 1 == 10);
+                //    unconvergedLane = false;
                 // h was just updated in place for this supercluster's own particles; the next call to
                 // collectNeighborJClusters reloads h from global memory itself (via loadSuperclusterParticleData),
                 // so it automatically retraverses with the corrected radius -- no extra bookkeeping needed.
@@ -671,7 +672,8 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
 }
 
 template<class Config, class Tc, class ThP, class KeyType, class Tnc>
-std::size_t buildNbList(const OctreeNsView<Tc, KeyType>& tree,
+std::size_t buildNbList(const execution::Gpu exec,
+                        const OctreeNsView<Tc, KeyType>& tree,
                         const Box<Tc>& box,
                         const LocalIndex totalBodies,
                         const GroupView& groups,
@@ -689,7 +691,7 @@ std::size_t buildNbList(const OctreeNsView<Tc, KeyType>& tree,
                         const std::size_t neighborDataVirtualSize,
                         SuperclusterInfo* const superclusterInfo)
 {
-    auto globalBuildData = util::deviceAlloc<GlobalBuildData>();
+    auto globalBuildData = util::deviceAlloc<GlobalBuildData>(exec);
 
     constexpr unsigned numSuperclustersPerBlock = 2;
     const dim3 blockSize                        = {GpuConfig::warpSize, 1, numSuperclustersPerBlock};
@@ -697,15 +699,15 @@ std::size_t buildNbList(const OctreeNsView<Tc, KeyType>& tree,
                                         (numISuperclusters + numSuperclustersPerBlock - 1) / numSuperclustersPerBlock);
     const unsigned sharedMem = numSuperclustersPerBlock * buildNbListSharedMemPerSupercluster<Config, Tc, ThP>(ncmax);
 
-    checkGpuErrors(cudaMemsetAsync(globalBuildData.get(), 0, sizeof(GlobalBuildData)));
+    checkGpuErrors(cudaMemsetAsync(globalBuildData.get(), 0, sizeof(GlobalBuildData), exec));
 
     auto run = [&](auto usePbc)
     {
         buildNbListKernel<Config, numSuperclustersPerBlock, decltype(usePbc)::value>
-            <<<numBlocks, blockSize, sharedMem>>>(tree, box, firstValidBody, totalBodies, groups.firstBody,
-                                                  groups.lastBody, x, y, z, h, nc, jClusterBboxes, nodeRMax, ncmax,
-                                                  neighborData, neighborDataVirtualSize, superclusterInfo,
-                                                  numISuperclusters, globalBuildData.get());
+            <<<numBlocks, blockSize, sharedMem, exec>>>(tree, box, firstValidBody, totalBodies, groups.firstBody,
+                                                        groups.lastBody, x, y, z, h, nc, jClusterBboxes, nodeRMax,
+                                                        ncmax, neighborData, neighborDataVirtualSize, superclusterInfo,
+                                                        numISuperclusters, globalBuildData.get());
         checkGpuErrors(cudaGetLastError());
     };
 
@@ -716,7 +718,9 @@ std::size_t buildNbList(const OctreeNsView<Tc, KeyType>& tree,
         run(std::false_type());
 
     GlobalBuildData buildData;
-    checkGpuErrors(cudaMemcpy(&buildData, globalBuildData.get(), sizeof(GlobalBuildData), cudaMemcpyDeviceToHost));
+    checkGpuErrors(
+        cudaMemcpyAsync(&buildData, globalBuildData.get(), sizeof(GlobalBuildData), cudaMemcpyDeviceToHost, exec));
+    checkGpuErrors(cudaStreamSynchronize(exec));
     switch (buildData.status)
     {
         case BuildStatus::success: break;
