@@ -249,12 +249,13 @@ public:
         {
             bool      isNewHierarchy = activeRung(timestep_.substep, timestep_.numRungs) == 0;
             GroupView gravGroup      = isNewHierarchy ? mHolder_.computeSpatialGroups(d, domain) : activeRungs_;
+            timer.step("gravGroup");
 
             //            auto groups = mHolder_.computeSpatialGroups(d, domain);
             mHolder_.upsweep(d, domain);
             timer.step("Upsweep");
             pmReader.step();
-            if (activeRungs_.numGroups > 0)
+            if (gravGroup.numGroups > 0)
             {
                 mHolder_.traverse(gravGroup, d, domain);
                 timer.step("Gravity");
