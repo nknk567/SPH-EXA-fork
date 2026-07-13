@@ -90,6 +90,7 @@ public:
 
     void load(const std::string& initCond, IFileReader* reader) override
     {
+        Base::load(initCond, reader);
         const std::string path = removeModifiers(initCond);
         if (std::filesystem::exists(path))
         {
@@ -100,7 +101,11 @@ public:
         }
     }
 
-    void save(IFileWriter* writer) override { params_.loadOrStoreAttributes(writer); }
+    void save(IFileWriter* writer) override
+    {
+        Base::save(writer);
+        params_.loadOrStoreAttributes(writer);
+    }
 };
 
 template<class DomainType, class DataType>
