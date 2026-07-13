@@ -254,8 +254,11 @@ public:
             mHolder_.upsweep(d, domain);
             timer.step("Upsweep");
             pmReader.step();
-            mHolder_.traverse(gravGroup, d, domain);
-            timer.step("Gravity");
+            if (activeRungs_.numGroups > 0)
+            {
+                mHolder_.traverse(gravGroup, d, domain);
+                timer.step("Gravity");
+            }
             pmReader.step();
 
             auto stats = mHolder_.readStats();
