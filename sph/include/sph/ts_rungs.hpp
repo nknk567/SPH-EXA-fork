@@ -78,6 +78,28 @@ void groupAdvTimestep(float cAdv, const GroupView& grp, float* groupDt, const Da
     }
 }
 
+/*! @brief advection time-step limit coupled to the search margins of the tree structures frozen between full syncs
+ *
+ * Per-particle drift budget per substep: 2h * extGrowthMinusOne (the margin bought by growing
+ * treeView.searchExtFactor each substep, which scales the 2h search radius) plus cellFraction of the
+ * particle's leaf-cell edge divided by the number of substeps in the hierarchy (the leaf-box slack is
+ * a fixed budget consumed over the whole hierarchy, unlike the ext-factor margin which grows each substep).
+ *
+ * @return  the maximum |v| / leafEdge over the group particles of this rank, for drift diagnostics
+ */
+template<class Dataset>
+float groupAdvTreeTimestep(float extGrowthMinusOne, float cellFraction, int numSubsteps, const GroupView& grp,
+                           float* groupDt, const Dataset& d)
+{
+    if constexpr (d.useGpu)
+    {
+        return groupAdvTreeTimestepGpu(2.0f * extGrowthMinusOne, cellFraction / float(numSubsteps), d.treeView.layout,
+                                       d.treeView.numLeafNodes, d.treeView.leafToInternal, d.treeView.sizes, grp,
+                                       rawPtr(d.vx), rawPtr(d.vy), rawPtr(d.vz), rawPtr(d.h), groupDt);
+    }
+    return 0.0f;
+}
+
 //! @brief sort groupDt, keeping track of the ordering
 template<class AccVec>
 void sortGroupDt(float* groupDt, cstone::LocalIndex* groupIndices, cstone::LocalIndex numGroups, AccVec& scratch)

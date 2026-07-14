@@ -4,8 +4,10 @@
  * @author Sebastian Keller <sebastian.f.keller@gmail.com>
  */
 
+#include "cstone/cuda/cuda_utils.hpp"
 #include "cstone/cuda/gpu_config.cuh"
 #include "cstone/primitives/math.hpp"
+#include "cstone/primitives/warpscan.cuh"
 #include "sph/sph_gpu.hpp"
 
 namespace sph
@@ -137,6 +139,90 @@ template void groupAdvTimestepGpu(float, const GroupView&, const float*, const f
                                   float*);
 template void groupAdvTimestepGpu(float, const GroupView&, const double*, const double*, const double*, const float*,
                                   float*);
+
+__device__ float advMaxVoverL_device;
+
+/*! @brief advection time-step limit coupled to the tree structures frozen between full syncs
+ *
+ * Per particle, the drift budget is budgetPerH * h[i] (margin bought by the per-substep growth of
+ * treeView.searchExtFactor, which scales the h-based search radius) plus cellBudget * leafEdge(i)
+ * (slack from the extent of the particle's leaf cell box, a fixed budget per hierarchy).
+ * The leaf cell of each particle is located by walking the layout array; group bodies are
+ * index-contiguous, so after one binary search the leaf index only moves forward.
+ */
+template<class Tc, class Tv, class T>
+__global__ void groupAdvTreeKernel(float budgetPerH, float cellBudget, const LocalIndex* layout,
+                                   cstone::TreeNodeIndex numLeafNodes, const cstone::TreeNodeIndex* leafToInternal,
+                                   const cstone::Vec3<Tc>* sizes, const LocalIndex* grpStart, const LocalIndex* grpEnd,
+                                   LocalIndex numGroups, const Tv* vx, const Tv* vy, const Tv* vz, const T* h,
+                                   float* groupDt)
+{
+    LocalIndex tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= numGroups) { return; }
+
+    LocalIndex segStart = grpStart[tid];
+    LocalIndex segEnd   = grpEnd[tid];
+
+    //! binary search for the leaf cell of the first body: layout[leaf] <= segStart < layout[leaf + 1]
+    cstone::TreeNodeIndex low = 0, high = numLeafNodes;
+    while (high - low > 1)
+    {
+        cstone::TreeNodeIndex mid = (low + high) / 2;
+        if (layout[mid] <= LocalIndex(segStart)) { low = mid; }
+        else { high = mid; }
+    }
+    cstone::TreeNodeIndex leaf = low;
+
+    float minDt     = INFINITY;
+    float maxVoverL = 0.0f;
+    for (LocalIndex i = segStart; i < segEnd; ++i)
+    {
+        while (leaf + 1 < numLeafNodes && layout[leaf + 1] <= i)
+        {
+            leaf++;
+        }
+
+        auto  halfSize = sizes[leafToInternal[leaf]];
+        float leafEdge = 2.0f * float(min(halfSize[0], min(halfSize[1], halfSize[2])));
+
+        float v      = std::sqrt(norm2(cstone::Vec3<float>{float(vx[i]), float(vy[i]), float(vz[i])}));
+        float budget = budgetPerH * float(h[i]) + cellBudget * leafEdge;
+
+        minDt = min(minDt, v > 0.0f ? budget / v : INFINITY);
+        if (leafEdge > 0.0f) { maxVoverL = max(maxVoverL, v / leafEdge); }
+    }
+
+    groupDt[tid] = min(groupDt[tid], minDt);
+    cstone::atomicMaxFloat(&advMaxVoverL_device, maxVoverL);
+}
+
+template<class Tc, class Tv, class T>
+float groupAdvTreeTimestepGpu(float budgetPerH, float cellBudget, const LocalIndex* layout,
+                              cstone::TreeNodeIndex numLeafNodes, const cstone::TreeNodeIndex* leafToInternal,
+                              const cstone::Vec3<Tc>* sizes, const GroupView& grp, const Tv* vx, const Tv* vy,
+                              const Tv* vz, const T* h, float* groupDt)
+{
+    int numThreads = 256;
+    int numBlocks  = cstone::iceil(grp.numGroups, numThreads);
+
+    float maxVoverL = 0.0f;
+    if (numBlocks == 0) { return maxVoverL; }
+
+    checkGpuErrors(cudaMemcpyToSymbol(GPU_SYMBOL(advMaxVoverL_device), &maxVoverL, sizeof(maxVoverL)));
+    groupAdvTreeKernel<<<numBlocks, numThreads>>>(budgetPerH, cellBudget, layout, numLeafNodes, leafToInternal, sizes,
+                                                  grp.groupStart, grp.groupEnd, grp.numGroups, vx, vy, vz, h, groupDt);
+    checkGpuErrors(cudaMemcpyFromSymbol(&maxVoverL, GPU_SYMBOL(advMaxVoverL_device), sizeof(maxVoverL)));
+    return maxVoverL;
+}
+
+#define GROUP_ADV_TREE_TIMESTEP_GPU(Tc, Tv, T)                                                                         \
+    template float groupAdvTreeTimestepGpu(float, float, const LocalIndex*, cstone::TreeNodeIndex,                     \
+                                           const cstone::TreeNodeIndex*, const cstone::Vec3<Tc>*, const GroupView&,    \
+                                           const Tv*, const Tv*, const Tv*, const T*, float*);
+
+GROUP_ADV_TREE_TIMESTEP_GPU(double, double, double);
+GROUP_ADV_TREE_TIMESTEP_GPU(double, float, float);
+GROUP_ADV_TREE_TIMESTEP_GPU(float, float, float);
 
 __global__ void storeRungKernel(const GroupView grp, uint8_t rung, uint8_t* particleRungs)
 {

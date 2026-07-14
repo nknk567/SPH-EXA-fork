@@ -59,6 +59,18 @@ protected:
     //! number of initial steps to disable block time-steps
     int safetySteps{5};
 
+    /*! @brief per-substep growth of the neighbor-search extension factor
+     *
+     * Single source of truth for the coupling between the search margin (partialSync grows
+     * treeView.searchExtFactor by this factor each substep) and the advection time-step limit
+     * (which converts the margin bought per substep into a drift budget).
+     */
+    static constexpr float substepExtGrowth_{1.012f};
+    //! @brief fraction of the leaf-cell edge budgeted for particle drift over one full hierarchy
+    static constexpr float cellDriftFraction_{0.5f};
+    //! @brief global max |v| / leafEdge over active groups, for drift diagnostics
+    float maxVoverL_{0.0f};
+
     //! @brief no dependent fields can be temporarily reused as scratch space for halo exchanges
     AccVector<LocalIndex> haloRecvScratch;
 
@@ -169,7 +181,7 @@ public:
         }
 
         //! @brief increase tree-cell search radius for each substep to account for particles drifting out of cells
-        d.treeView.searchExtFactor *= 1.012;
+        d.treeView.searchExtFactor *= substepExtGrowth_;
 
         int highestRung = cstone::butterfly(timestep_.substep);
         activeRungs_    = makeSlicedView(tsGroups_.view(), timestep_.rungRanges[0], timestep_.rungRanges[highestRung]);
@@ -276,9 +288,14 @@ public:
          * In supersonic flow, particles can drift many smoothing lengths within one substep, invalidating the
          * tree, halo and neighbor structures that stay frozen between full syncs. Global time stepping is immune
          * (structures rebuilt every step), which is why this limit is needed only for block time-steps.
+         * The budget is coupled to the actual search margins: the searchExtFactor growth per substep plus a
+         * fraction of each particle's leaf-cell extent, spread over the substeps of one hierarchy.
          */
-        constexpr float cAdvect = 0.4f;
-        groupAdvTimestep(cAdvect, activeRungs_, cstone::rawPtr(groupDt_), d);
+        //! the leaf-cell budget divisor uses maxNumRungs: at a full sync, timestep_.numRungs still holds the
+        //! previous hierarchy's value, while these group time steps determine the (possibly deeper) next one
+        float vOverL = groupAdvTreeTimestep(substepExtGrowth_ - 1.0f, cellDriftFraction_,
+                                            1 << (Timestep::maxNumRungs - 1), activeRungs_, cstone::rawPtr(groupDt_), d);
+        mpiAllreduce(&vOverL, &maxVoverL_, 1, MPI_MAX, MPI_COMM_WORLD);
     }
 
     void computeRungs(DataType& simData)
@@ -336,6 +353,14 @@ public:
     {
         computeRungs(simData);
         printTimestepStats(timestep_);
+        //! drift diagnostic for calibrating cellDriftFraction_: projected rung-0 drift over one full
+        //! hierarchy in units of the leaf-cell edge; should stay of order cellDriftFraction_
+        if (Base::rank_ == 0 && maxVoverL_ > 0.0f)
+        {
+            std::cout << "# projected hierarchy drift: "
+                      << maxVoverL_ * timestep_.nextDt * (1 << (timestep_.numRungs - 1)) << " leaf-cell edges"
+                      << std::endl;
+        }
         timer.step("Timestep");
 
         auto  driftBack       = [](int subStep, int rung) { return subStep % (1 << rung); };

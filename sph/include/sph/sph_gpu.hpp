@@ -103,6 +103,17 @@ template<class Tv, class T>
 extern void groupAdvTimestepGpu(float cAdv, const GroupView&, const Tv* vx, const Tv* vy, const Tv* vz, const T* h,
                                 float* groupDt);
 
+/*! @brief advection time-step limit coupled to the tree structures frozen between full syncs
+ *
+ * Per-particle drift budget: budgetPerH * h[i] + cellBudget * leafEdge(i), converted to a time step via |v|.
+ * Returns the maximum |v| / leafEdge over all group particles for drift diagnostics.
+ */
+template<class Tc, class Tv, class T>
+extern float groupAdvTreeTimestepGpu(float budgetPerH, float cellBudget, const cstone::LocalIndex* layout,
+                                     cstone::TreeNodeIndex numLeafNodes, const cstone::TreeNodeIndex* leafToInternal,
+                                     const cstone::Vec3<Tc>* sizes, const GroupView& grp, const Tv* vx, const Tv* vy,
+                                     const Tv* vz, const T* h, float* groupDt);
+
 void storeRungGpu(const GroupView& grp, uint8_t rung, uint8_t* particleRungs);
 
 //! @brief max number of particles per group used in neighbor search for SPH
