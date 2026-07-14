@@ -146,17 +146,22 @@ protected:
     template<class HydroData>
     void printIadRegularizationStats(const HydroData& d, size_t first, size_t last, const char* label)
     {
+        if (rank_ == 0) { printf("printIadRegularizationStats begin\n"); }
         auto&& flags = cstone::toHost(d.iadRegularized);
-        last         = std::min(last, flags.size());
+        if (rank_ == 0) { printf("toHost\n"); }
+
+        last = std::min(last, flags.size());
 
         uint64_t localCount = 0;
         for (size_t i = first; i < last; ++i)
         {
             localCount += flags[i] != 0;
         }
+        if (rank_ == 0) { printf("for\n"); }
 
         uint64_t globalCount = 0;
         mpiAllreduce(&localCount, &globalCount, 1, MPI_SUM, MPI_COMM_WORLD);
+        if (rank_ == 0) { printf("mpi\n"); }
 
         if (rank_ == 0)
         {
