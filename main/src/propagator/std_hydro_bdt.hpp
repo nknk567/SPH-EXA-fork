@@ -215,7 +215,8 @@ public:
         size_t first = domain.startIndex();
         size_t last  = domain.endIndex();
 
-        domain.exchangeHalos(std::tie(get<"m">(d)), get<"ax">(d), get<"ay">(d));
+        //! @brief ax/ay must NOT be used as scratch: inactive rungs need their last accelerations for drifting
+        domain.exchangeHalos(std::tie(get<"m">(d)), get<"keys">(d), haloRecvScratch);
         //        computeGroups(first, last, d, domain.box(), groups_);
         if (activeRungs_.numGroups > 0)
         {
@@ -233,14 +234,14 @@ public:
         computeEOS_HydroStd(first, last, d);
         timer.step("EquationOfState");
 
-        domain.exchangeHalos(get<"vx", "vy", "vz", "rho", "p", "c">(d), get<"ax">(d), get<"ay">(d));
+        domain.exchangeHalos(get<"vx", "vy", "vz", "rho", "p", "c">(d), get<"keys">(d), haloRecvScratch);
         timer.step("mpi::synchronizeHalos");
         if (activeRungs_.numGroups > 0) { computeIAD(activeRungs_, d, domain.box()); }
         //! contains an MPI collective: must be called on all ranks, also those with no active groups
         Base::printIadRegularizationStats(d, activeRungs_.firstBody, activeRungs_.lastBody, "std-bdt");
         timer.step("IAD");
 
-        domain.exchangeHalos(get<"c11", "c12", "c13", "c22", "c23", "c33">(d), get<"ax">(d), get<"ay">(d));
+        domain.exchangeHalos(get<"c11", "c12", "c13", "c22", "c23", "c33">(d), get<"keys">(d), haloRecvScratch);
         timer.step("mpi::synchronizeHalos");
         if (activeRungs_.numGroups > 0)
         {
