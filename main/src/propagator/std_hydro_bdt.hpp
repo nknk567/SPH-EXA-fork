@@ -237,7 +237,6 @@ public:
                 updateSmoothingLengthIterative(groups_.view(), d, domain.box());
                 timer.step("updateSmoothingLengthIterative");
             }
-            updateSmoothingLengthIterative(activeRungs_, d, domain.box());
             findNeighborsSfc(activeRungs_, d, domain.box(), true);
         }
         timer.step("FindNeighbors");
