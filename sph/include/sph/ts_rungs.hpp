@@ -146,7 +146,15 @@ Timestep rungTimestep(float* groupDt, LocalIndex* groupIndices, LocalIndex numGr
 {
     auto minDtGlobal = computeMinTimestep(groupDt, groupIndices, numGroups, numGroups, scratch);
     int  numRungs    = std::min(int(log2(minDtGlobal[1] / minDtGlobal[0])) + 1, Timestep::maxNumRungs);
-    auto rungRanges  = findRungRanges<cstone::IsDeviceVector<AccVec>{}>(minDtGlobal[0], groupDt, numGroups, numRungs);
+
+    /*! While the time step is still growth-limited (maxDt below the smallest group time step), every group can
+     * advance with nextDt anyway, and a multi-rung hierarchy would let the highest rung advance by up to
+     * 2^(numRungs-1) * nextDt in a single kick, bypassing the incremental maxDtIncrease protection.
+     * Only build a hierarchy once the growth limit has caught up with the measured group time steps.
+     */
+    if (minDtGlobal[0] > maxDt) { numRungs = 1; }
+
+    auto rungRanges = findRungRanges<cstone::IsDeviceVector<AccVec>{}>(minDtGlobal[0], groupDt, numGroups, numRungs);
 
     minDtGlobal[0]   = std::min(maxDt, minDtGlobal[0]);
     float    totalDt = minDtGlobal[0] * (1 << numRungs);
