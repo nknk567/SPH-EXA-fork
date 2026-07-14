@@ -232,6 +232,11 @@ public:
         //        computeGroups(first, last, d, domain.box(), groups_);
         if (activeRungs_.numGroups > 0)
         {
+            if (!d.neighbourListsEnabled())
+            {
+                updateSmoothingLengthIterative(groups_.view(), d, domain.box());
+                timer.step("updateSmoothingLengthIterative");
+            }
             updateSmoothingLengthIterative(activeRungs_, d, domain.box());
             findNeighborsSfc(activeRungs_, d, domain.box(), true);
         }
@@ -293,8 +298,9 @@ public:
          */
         //! the leaf-cell budget divisor uses maxNumRungs: at a full sync, timestep_.numRungs still holds the
         //! previous hierarchy's value, while these group time steps determine the (possibly deeper) next one
-        float vOverL = groupAdvTreeTimestep(substepExtGrowth_ - 1.0f, cellDriftFraction_,
-                                            1 << (Timestep::maxNumRungs - 1), activeRungs_, cstone::rawPtr(groupDt_), d);
+        float vOverL =
+            groupAdvTreeTimestep(substepExtGrowth_ - 1.0f, cellDriftFraction_, 1 << (Timestep::maxNumRungs - 1),
+                                 activeRungs_, cstone::rawPtr(groupDt_), d);
         mpiAllreduce(&vOverL, &maxVoverL_, 1, MPI_MAX, MPI_COMM_WORLD);
     }
 
