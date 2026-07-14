@@ -65,9 +65,9 @@ protected:
      * treeView.searchExtFactor by this factor each substep) and the advection time-step limit
      * (which converts the margin bought per substep into a drift budget).
      */
-    static constexpr float substepExtGrowth_{1.012f};
+    static constexpr float substepExtGrowth_{1.05};
     //! @brief fraction of the leaf-cell edge budgeted for particle drift over one full hierarchy
-    static constexpr float cellDriftFraction_{0.5f};
+    static constexpr float cellDriftFraction_{0.75f};
     //! @brief global max |v| / leafEdge over active groups, for drift diagnostics
     float maxVoverL_{0.0f};
 
