@@ -235,11 +235,9 @@ public:
 
         domain.exchangeHalos(get<"vx", "vy", "vz", "rho", "p", "c">(d), get<"ax">(d), get<"ay">(d));
         timer.step("mpi::synchronizeHalos");
-        if (activeRungs_.numGroups > 0)
-        {
-            computeIAD(activeRungs_, d, domain.box());
-            Base::printIadRegularizationStats(d, activeRungs_.firstBody, activeRungs_.lastBody, "std-bdt");
-        }
+        if (activeRungs_.numGroups > 0) { computeIAD(activeRungs_, d, domain.box()); }
+        //! contains an MPI collective: must be called on all ranks, also those with no active groups
+        Base::printIadRegularizationStats(d, activeRungs_.firstBody, activeRungs_.lastBody, "std-bdt");
         timer.step("IAD");
 
         domain.exchangeHalos(get<"c11", "c12", "c13", "c22", "c23", "c33">(d), get<"ax">(d), get<"ay">(d));
@@ -320,7 +318,6 @@ public:
     void integrate(DomainType& domain, DataType& simData) override
     {
         computeRungs(simData);
-        computeTimestep(domain.startIndex(), domain.endIndex(), simData.hydro);
         printTimestepStats(timestep_);
         timer.step("Timestep");
 
