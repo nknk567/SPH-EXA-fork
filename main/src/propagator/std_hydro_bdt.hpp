@@ -300,6 +300,14 @@ public:
             std::copy(rungRanges.begin(), rungRanges.begin() + highRung, timestep_.rungRanges.begin());
         }
 
+        //! fail fast instead of running into division by zero (dt_m1) and NaN positions in the integrator
+        if (!(timestep_.nextDt > 0.0f))
+        {
+            throw std::runtime_error("std-bdt: non-positive substep time step " + std::to_string(timestep_.nextDt) +
+                                     " at substep " + std::to_string(timestep_.substep) +
+                                     ", indicating diverging particles (check Courant timestep collapse)\n");
+        }
+
         if (highRung == 0 || highRung > 1)
         {
             if (highRung > 1) { swap(groups_, tsGroups_); }

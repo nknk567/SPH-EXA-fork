@@ -105,7 +105,8 @@ auto computeMinTimestep(float* groupDt, LocalIndex* groupIndices, LocalIndex num
         sortGroupDt(groupDt, groupIndices, numGroups, scratch);
         cstone::sequence(cstone::execution::gpuDefaultStream, groupIndices + numGroups, numGroupsTot - numGroups,
                          numGroups);
-        minGroupDt = timestepRangeGpu(groupDt, numGroups, fastFraction);
+        //! ranks without active groups must contribute +inf, not a stale read of groupDt[0]
+        if (numGroups > 0) { minGroupDt = timestepRangeGpu(groupDt, numGroups, fastFraction); }
     }
 
     std::array<float, 2> minDtGlobal;
@@ -164,7 +165,9 @@ auto minimumGroupDt(Timestep ts, float* groupDt, LocalIndex* groupIndices, Local
     float timeLeft     = ts.totDt - ts.elapsedDt;
     int   substepsLeft = (1 << ts.numRungs) - ts.substep;
 
-    return std::make_tuple(std::min(minDtGlobal, timeLeft / substepsLeft), rungRanges);
+    //! guard against non-positive timeLeft from float round-off, which would yield dt <= 0 //EDIT
+    float dtCap = timeLeft > 0.0f ? timeLeft / substepsLeft : minDtGlobal;
+    return std::make_tuple(std::min(minDtGlobal, dtCap), rungRanges);
 }
 
 } // namespace sph
