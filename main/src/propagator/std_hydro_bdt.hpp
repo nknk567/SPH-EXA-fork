@@ -271,6 +271,14 @@ public:
             timer.logStatistics("sumM2P", stats[2] / timer.getLastStepTime());
         }
         groupAccTimestep(activeRungs_, cstone::rawPtr(groupDt_), d);
+
+        /*! Advection limit: the Courant criterion bounds motion relative to the signal speed, not bulk motion.
+         * In supersonic flow, particles can drift many smoothing lengths within one substep, invalidating the
+         * tree, halo and neighbor structures that stay frozen between full syncs. Global time stepping is immune
+         * (structures rebuilt every step), which is why this limit is needed only for block time-steps.
+         */
+        constexpr float cAdvect = 0.4f;
+        groupAdvTimestep(cAdvect, activeRungs_, cstone::rawPtr(groupDt_), d);
     }
 
     void computeRungs(DataType& simData)

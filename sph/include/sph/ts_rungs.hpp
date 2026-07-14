@@ -63,6 +63,21 @@ void groupAccTimestep(const GroupView& grp, float* groupDt, const Dataset& d)
     }
 }
 
+/*! @brief limit each group's time step such that particles move at most ~cAdv smoothing lengths per step
+ *
+ * Required when block time-steps are active: between full domain syncs, the octree, halo lists and neighbor
+ * structures are frozen and only stay valid while particle drift per substep remains small compared to h.
+ * Global time stepping does not need this limit because all structures are rebuilt every step.
+ */
+template<class Dataset>
+void groupAdvTimestep(float cAdv, const GroupView& grp, float* groupDt, const Dataset& d)
+{
+    if constexpr (d.useGpu)
+    {
+        groupAdvTimestepGpu(cAdv, grp, rawPtr(d.vx), rawPtr(d.vy), rawPtr(d.vz), rawPtr(d.h), groupDt);
+    }
+}
+
 //! @brief sort groupDt, keeping track of the ordering
 template<class AccVec>
 void sortGroupDt(float* groupDt, cstone::LocalIndex* groupIndices, cstone::LocalIndex numGroups, AccVec& scratch)
