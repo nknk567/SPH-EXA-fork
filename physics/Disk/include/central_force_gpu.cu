@@ -34,22 +34,28 @@ __device__ void atomicAddVec4(cstone::Vec4<T>* x, const cstone::Vec4<T>& y)
 template<size_t numThreads, typename Data>
 __global__ void computeCentralForceGPUKernel(cstone::GroupView grp, const Data d, StarPotentialType potentialType)
 {
-    //    cstone::LocalIndex i = first + blockDim.x * blockIdx.x + threadIdx.x;
     LocalIndex laneIdx = threadIdx.x & (GpuConfig::warpSize - 1);
     LocalIndex warpIdx = (blockDim.x * blockIdx.x + threadIdx.x) >> GpuConfig::warpSizeLog2;
-    if (warpIdx >= grp.numGroups) { return; }
-
-    LocalIndex i = grp.groupStart[warpIdx] + laneIdx;
-    //    if (i >= grp.groupEnd[warpIdx]) { return; }
 
     cstone::Vec4<double> force{};
     float                t_star{INFINITY};
 
-    if (i >= grp.groupEnd[warpIdx]) { force = {0., 0., 0., 0.}; }
-    else
+    /*! Out-of-range warps and lanes must NOT return early: the cub::BlockReduce calls below are block-wide
+     * collectives requiring all threads of the block. An early return leaves the shared-memory slots of the
+     * missing warps uninitialized, injecting garbage into the force sum and the t_star min-reduction.
+     * Instead, threads without work participate with neutral values (force = 0, t_star = inf).
+     */
+    if (warpIdx < grp.numGroups)
     {
-        if (potentialType == StarPotentialType::newtonian) { newtonianGravity(d, i, force, t_star); }
-        else if (potentialType == StarPotentialType::einstein_precession) { einsteinPrecession(d, i, force, t_star); }
+        LocalIndex i = grp.groupStart[warpIdx] + laneIdx;
+        if (i < grp.groupEnd[warpIdx])
+        {
+            if (potentialType == StarPotentialType::newtonian) { newtonianGravity(d, i, force, t_star); }
+            else if (potentialType == StarPotentialType::einstein_precession)
+            {
+                einsteinPrecession(d, i, force, t_star);
+            }
+        }
     }
 
     typedef cub::BlockReduce<cstone::Vec4<double>, numThreads> BlockReduce;
@@ -77,31 +83,40 @@ __global__ void computeCentralForceGPUBdtKernel(cstone::GroupView grp, cstone::G
 {
     LocalIndex laneIdx = threadIdx.x & (GpuConfig::warpSize - 1);
     LocalIndex warpIdx = (blockDim.x * blockIdx.x + threadIdx.x) >> GpuConfig::warpSizeLog2;
-    LocalIndex i       = grp.groupStart[warpIdx] + laneIdx;
 
     cstone::Vec4<double> force{};
     float                t_star{INFINITY};
 
-    if (i >= grp.groupEnd[warpIdx]) { force = {0., 0., 0., 0.}; }
-    else
+    /*! Out-of-range warps must not access grp.groupStart/groupEnd (out-of-bounds read: groupStart[numGroups + k]
+     * aliases groupEnd[k], yielding a plausible particle index and double-counted forces) nor write groupDt.
+     * They must still reach the block-wide force reduction below with a neutral contribution.
+     */
+    if (warpIdx < grp.numGroups)
     {
-        bool inactive_group = false;
-        if (grp.groupStart + warpIdx < active_grp.groupStart || grp.groupStart + warpIdx >= active_grp.groupEnd)
+        LocalIndex i = grp.groupStart[warpIdx] + laneIdx;
+        if (i < grp.groupEnd[warpIdx])
         {
-            inactive_group = true;
+            bool inactive_group = false;
+            if (grp.groupStart + warpIdx < active_grp.groupStart || grp.groupStart + warpIdx >= active_grp.groupEnd)
+            {
+                inactive_group = true;
+            }
+
+            if (potentialType == StarPotentialType::newtonian)
+            {
+                newtonianGravity(d, i, force, t_star, inactive_group);
+            }
+            else if (potentialType == StarPotentialType::einstein_precession)
+            {
+                einsteinPrecession(d, i, force, t_star, inactive_group);
+            }
+
+            if (inactive_group) { t_star = INFINITY; }
         }
 
-        if (potentialType == StarPotentialType::newtonian) { newtonianGravity(d, i, force, t_star, inactive_group); }
-        else if (potentialType == StarPotentialType::einstein_precession)
-        {
-            einsteinPrecession(d, i, force, t_star, inactive_group);
-        }
-
-        if (inactive_group) { t_star = INFINITY; }
+        auto t_star_warp = cstone::warpMin(t_star);
+        groupDt[warpIdx] = min(groupDt[warpIdx], t_star_warp);
     }
-
-    auto t_star_warp = cstone::warpMin(t_star);
-    groupDt[warpIdx] = min(groupDt[warpIdx], t_star_warp);
 
     typedef cub::BlockReduce<cstone::Vec4<double>, numThreads> BlockReduce;
     __shared__ typename BlockReduce::TempStorage               temp_storage;
