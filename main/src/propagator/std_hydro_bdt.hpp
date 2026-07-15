@@ -69,9 +69,12 @@ protected:
      */
     static constexpr float substepExtGrowth_{1.05};
     //! @brief fraction of the leaf-cell edge budgeted for particle drift over one full hierarchy
+    //!        (only used by the statistical groupAdvTreeTimestep limiter, kept as fallback)
     static constexpr float cellDriftFraction_{0.75f};
     //! @brief global max |v| / leafEdge over active groups, for drift diagnostics
     float maxVoverL_{0.0f};
+    //! @brief global number of active particles that drifted outside their leaf-cell box
+    uint64_t numOutsideLeaf_{0};
 
     //! @brief no dependent fields can be temporarily reused as scratch space for halo exchanges
     AccVector<LocalIndex> haloRecvScratch;
@@ -303,15 +306,14 @@ public:
          * In supersonic flow, particles can drift many smoothing lengths within one substep, invalidating the
          * tree, halo and neighbor structures that stay frozen between full syncs. Global time stepping is immune
          * (structures rebuilt every step), which is why this limit is needed only for block time-steps.
-         * The budget is coupled to the actual search margins: the searchExtFactor growth per substep plus a
-         * fraction of each particle's leaf-cell extent, spread over the substeps of one hierarchy.
+         * The budget is exact per particle: exit time from the own leaf-cell box along the velocity direction
+         * plus the sphere-inflation allowance from the per-substep searchExtFactor growth.
          */
-        //! the leaf-cell budget divisor uses maxNumRungs: at a full sync, timestep_.numRungs still holds the
-        //! previous hierarchy's value, while these group time steps determine the (possibly deeper) next one
-        float vOverL =
-            groupAdvTreeTimestep(substepExtGrowth_ - 1.0f, cellDriftFraction_, 1 << (Timestep::maxNumRungs - 1),
-                                 activeRungs_, cstone::rawPtr(groupDt_), d);
+        auto [vOverL, numOutside] =
+            groupAdvLeafTimestep(substepExtGrowth_ - 1.0f, activeRungs_, cstone::rawPtr(groupDt_), d);
         mpiAllreduce(&vOverL, &maxVoverL_, 1, MPI_MAX, MPI_COMM_WORLD);
+        uint64_t numOutside64 = numOutside;
+        mpiAllreduce(&numOutside64, &numOutsideLeaf_, 1, MPI_SUM, MPI_COMM_WORLD);
     }
 
     void computeRungs(DataType& simData)
@@ -381,13 +383,16 @@ public:
     {
         computeRungs(simData);
         printTimestepStats(timestep_);
-        //! drift diagnostic for calibrating cellDriftFraction_: projected rung-0 drift over one full
-        //! hierarchy in units of the leaf-cell edge; should stay of order cellDriftFraction_
+        /*! drift diagnostics: projected rung-0 drift over one full hierarchy in units of the leaf-cell edge,
+         * and the number of active particles that have already left their leaf box (health metric of the
+         * stay-inside-leaf criterion: near zero early in a hierarchy, growing slowly late is acceptable;
+         * a large fraction means substepExtGrowth_ is too small or the hierarchy too long).
+         */
         if (Base::rank_ == 0 && maxVoverL_ > 0.0f)
         {
             std::cout << "# projected hierarchy drift: "
-                      << maxVoverL_ * timestep_.nextDt * (1 << (timestep_.numRungs - 1)) << " leaf-cell edges"
-                      << std::endl;
+                      << maxVoverL_ * timestep_.nextDt * (1 << (timestep_.numRungs - 1)) << " leaf-cell edges, "
+                      << numOutsideLeaf_ << " active particles outside their leaf" << std::endl;
         }
         timer.step("Timestep");
 

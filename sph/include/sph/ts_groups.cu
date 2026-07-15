@@ -224,6 +224,135 @@ GROUP_ADV_TREE_TIMESTEP_GPU(double, double, double);
 GROUP_ADV_TREE_TIMESTEP_GPU(double, float, float);
 GROUP_ADV_TREE_TIMESTEP_GPU(float, float, float);
 
+__device__ unsigned long long advOutsideCount_device;
+
+/*! @brief position- and direction-aware advection time-step limit, one warp per group, one lane per body
+ *
+ * Exact criterion: as long as a particle's current position stays inside its own (un-inflated) leaf-cell
+ * box, any neighbor search that should find it is guaranteed to open that cell, independent of accumulated
+ * drift. The per-particle budget is therefore the exit time from the leaf box along the velocity direction,
+ * plus the sphere-inflation allowance 2h*(g-1)/|v|, which is renewed every substep consistent with
+ * treeView.searchExtFactor compounding by g per substep. Particles already outside their box (counted in
+ * the diagnostic) coast on the sphere allowance until the next full sync re-homes them.
+ */
+template<class Tc, class Tv, class T>
+__global__ void groupAdvLeafKernel(float extGrowthMinusOne, const LocalIndex* layout,
+                                   cstone::TreeNodeIndex numLeafNodes, const cstone::TreeNodeIndex* leafToInternal,
+                                   const cstone::Vec3<Tc>* centers, const cstone::Vec3<Tc>* sizes, GroupView grp,
+                                   const Tc* x, const Tc* y, const Tc* z, const Tv* vx, const Tv* vy, const Tv* vz,
+                                   const T* h, float* groupDt)
+{
+    LocalIndex laneIdx = threadIdx.x & (GpuConfig::warpSize - 1);
+    LocalIndex warpIdx = (blockDim.x * blockIdx.x + threadIdx.x) >> GpuConfig::warpSizeLog2;
+    //! no block-wide collectives below: whole warps may exit early
+    if (warpIdx >= grp.numGroups) { return; }
+
+    LocalIndex segStart = grp.groupStart[warpIdx];
+    LocalIndex segEnd   = grp.groupEnd[warpIdx];
+
+    //! lane 0 locates the leaf of the group's first body, all lanes then walk forward to their own body
+    cstone::TreeNodeIndex leaf = 0;
+    if (laneIdx == 0)
+    {
+        cstone::TreeNodeIndex low = 0, high = numLeafNodes;
+        while (high - low > 1)
+        {
+            cstone::TreeNodeIndex mid = (low + high) / 2;
+            if (layout[mid] <= segStart) { low = mid; }
+            else { high = mid; }
+        }
+        leaf = low;
+    }
+    leaf = cstone::shflSync(leaf, 0);
+
+    LocalIndex i       = segStart + laneIdx;
+    float      dt      = INFINITY;
+    float      vOverL  = 0.0f;
+    bool       outside = false;
+
+    if (i < segEnd)
+    {
+        while (leaf + 1 < numLeafNodes && layout[leaf + 1] <= i)
+        {
+            leaf++;
+        }
+
+        auto node     = leafToInternal[leaf];
+        auto center   = centers[node];
+        auto halfSize = sizes[node];
+
+        double pos[3] = {double(x[i]), double(y[i]), double(z[i])};
+        double vel[3] = {double(vx[i]), double(vy[i]), double(vz[i])};
+        double v      = std::sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
+
+        //! time until the particle exits its own leaf box along its velocity, per axis
+        double dtExit = INFINITY;
+        for (int k = 0; k < 3; ++k)
+        {
+            if (vel[k] > 0.0) { dtExit = min(dtExit, max(0.0, double(center[k] + halfSize[k]) - pos[k]) / vel[k]); }
+            else if (vel[k] < 0.0)
+            {
+                dtExit = min(dtExit, max(0.0, pos[k] - double(center[k] - halfSize[k])) / -vel[k]);
+            }
+        }
+        //! empty-cell marker: no cell slack
+        if (halfSize[0] == Tc(0) && halfSize[1] == Tc(0) && halfSize[2] == Tc(0)) { dtExit = 0.0; }
+
+        double dtExt = v > 0.0 ? 2.0 * double(extGrowthMinusOne) * double(h[i]) / v : INFINITY;
+        dt           = float(min(dtExit + dtExt, double(INFINITY)));
+
+        float leafEdge = 2.0f * float(min(halfSize[0], min(halfSize[1], halfSize[2])));
+        if (leafEdge > 0.0f) { vOverL = float(v) / leafEdge; }
+        outside = (dtExit == 0.0);
+    }
+
+    float dtWarp     = cstone::warpMin(dt);
+    float vOverLWarp = cstone::warpMax(vOverL);
+    if (laneIdx == 0)
+    {
+        groupDt[warpIdx] = min(groupDt[warpIdx], dtWarp);
+        cstone::atomicMaxFloat(&advMaxVoverL_device, vOverLWarp);
+    }
+    //! particles outside their leaf box are rare; one atomic per occurrence is acceptable
+    if (outside) { atomicAdd(&advOutsideCount_device, 1ull); }
+}
+
+template<class Tc, class Tv, class T>
+std::tuple<float, unsigned long long>
+groupAdvLeafTimestepGpu(float extGrowthMinusOne, const LocalIndex* layout, cstone::TreeNodeIndex numLeafNodes,
+                        const cstone::TreeNodeIndex* leafToInternal, const cstone::Vec3<Tc>* centers,
+                        const cstone::Vec3<Tc>* sizes, const GroupView& grp, const Tc* x, const Tc* y, const Tc* z,
+                        const Tv* vx, const Tv* vy, const Tv* vz, const T* h, float* groupDt)
+{
+    constexpr unsigned numThreads       = 256;
+    unsigned           numWarpsPerBlock = numThreads / GpuConfig::warpSize;
+    unsigned           numBlocks        = (grp.numGroups + numWarpsPerBlock - 1) / numWarpsPerBlock;
+
+    float              maxVoverL    = 0.0f;
+    unsigned long long numOutside   = 0;
+    if (numBlocks == 0) { return {maxVoverL, numOutside}; }
+
+    checkGpuErrors(cudaMemcpyToSymbol(GPU_SYMBOL(advMaxVoverL_device), &maxVoverL, sizeof(maxVoverL)));
+    checkGpuErrors(cudaMemcpyToSymbol(GPU_SYMBOL(advOutsideCount_device), &numOutside, sizeof(numOutside)));
+
+    groupAdvLeafKernel<<<numBlocks, numThreads>>>(extGrowthMinusOne, layout, numLeafNodes, leafToInternal, centers,
+                                                  sizes, grp, x, y, z, vx, vy, vz, h, groupDt);
+
+    checkGpuErrors(cudaMemcpyFromSymbol(&maxVoverL, GPU_SYMBOL(advMaxVoverL_device), sizeof(maxVoverL)));
+    checkGpuErrors(cudaMemcpyFromSymbol(&numOutside, GPU_SYMBOL(advOutsideCount_device), sizeof(numOutside)));
+    return {maxVoverL, numOutside};
+}
+
+#define GROUP_ADV_LEAF_TIMESTEP_GPU(Tc, Tv, T)                                                                         \
+    template std::tuple<float, unsigned long long> groupAdvLeafTimestepGpu(                                            \
+        float, const LocalIndex*, cstone::TreeNodeIndex, const cstone::TreeNodeIndex*, const cstone::Vec3<Tc>*,        \
+        const cstone::Vec3<Tc>*, const GroupView&, const Tc*, const Tc*, const Tc*, const Tv*, const Tv*, const Tv*,   \
+        const T*, float*);
+
+GROUP_ADV_LEAF_TIMESTEP_GPU(double, double, double);
+GROUP_ADV_LEAF_TIMESTEP_GPU(double, float, float);
+GROUP_ADV_LEAF_TIMESTEP_GPU(float, float, float);
+
 __global__ void storeRungKernel(const GroupView grp, uint8_t rung, uint8_t* particleRungs)
 {
     LocalIndex laneIdx = threadIdx.x & (cstone::GpuConfig::warpSize - 1);

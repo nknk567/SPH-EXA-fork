@@ -1,5 +1,7 @@
 #pragma once
 
+#include <tuple>
+
 #include "cstone/sfc/box.hpp"
 #include "cstone/traversal/groups.hpp"
 #include "cstone/tree/octree.hpp"
@@ -113,6 +115,20 @@ extern float groupAdvTreeTimestepGpu(float budgetPerH, float cellBudget, const c
                                      cstone::TreeNodeIndex numLeafNodes, const cstone::TreeNodeIndex* leafToInternal,
                                      const cstone::Vec3<Tc>* sizes, const GroupView& grp, const Tv* vx, const Tv* vy,
                                      const Tv* vz, const T* h, float* groupDt);
+
+/*! @brief position- and direction-aware advection time-step limit
+ *
+ * Per particle: exact time to exit its own (un-inflated) leaf-cell box along its velocity, plus the
+ * per-substep sphere-inflation allowance 2h * extGrowthMinusOne / |v|.
+ * Returns {max |v| / leafEdge, number of particles already outside their leaf box} for diagnostics.
+ */
+template<class Tc, class Tv, class T>
+extern std::tuple<float, unsigned long long>
+groupAdvLeafTimestepGpu(float extGrowthMinusOne, const cstone::LocalIndex* layout,
+                        cstone::TreeNodeIndex numLeafNodes, const cstone::TreeNodeIndex* leafToInternal,
+                        const cstone::Vec3<Tc>* centers, const cstone::Vec3<Tc>* sizes, const GroupView& grp,
+                        const Tc* x, const Tc* y, const Tc* z, const Tv* vx, const Tv* vy, const Tv* vz, const T* h,
+                        float* groupDt);
 
 void storeRungGpu(const GroupView& grp, uint8_t rung, uint8_t* particleRungs);
 

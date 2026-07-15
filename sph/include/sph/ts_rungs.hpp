@@ -100,6 +100,30 @@ float groupAdvTreeTimestep(float extGrowthMinusOne, float cellFraction, int numS
     return 0.0f;
 }
 
+/*! @brief position- and direction-aware advection time-step limit coupled to the frozen tree structures
+ *
+ * Exact per-particle budget: time to exit the own (un-inflated) leaf-cell box along the velocity direction
+ * (while inside, neighbor searches are guaranteed to open the cell, independent of accumulated drift),
+ * plus the sphere-inflation allowance 2h * extGrowthMinusOne / |v| renewed each substep. Unlike
+ * groupAdvTreeTimestep, no statistical cell fraction and no per-hierarchy spreading are needed: the
+ * criterion self-corrects as the remaining slack shrinks.
+ *
+ * @return  {max |v| / leafEdge, number of particles outside their leaf box} of this rank, for diagnostics
+ */
+template<class Dataset>
+std::tuple<float, unsigned long long> groupAdvLeafTimestep(float extGrowthMinusOne, const GroupView& grp,
+                                                           float* groupDt, const Dataset& d)
+{
+    if constexpr (d.useGpu)
+    {
+        return groupAdvLeafTimestepGpu(extGrowthMinusOne, d.treeView.layout, d.treeView.numLeafNodes,
+                                       d.treeView.leafToInternal, d.treeView.centers, d.treeView.sizes, grp,
+                                       rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.vx), rawPtr(d.vy),
+                                       rawPtr(d.vz), rawPtr(d.h), groupDt);
+    }
+    return {0.0f, 0ull};
+}
+
 //! @brief sort groupDt, keeping track of the ordering
 template<class AccVec>
 void sortGroupDt(float* groupDt, cstone::LocalIndex* groupIndices, cstone::LocalIndex numGroups, AccVec& scratch)
