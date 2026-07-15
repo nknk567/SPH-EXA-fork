@@ -110,7 +110,7 @@ struct StarData
     RemovalStatistics removed_local;
 
     //! @brief timestep from central acceleration (local to rank)
-    double t_star{};
+    float t_star{};
 
     //! @brief du-timestep (local to rank)
     double t_du{};
