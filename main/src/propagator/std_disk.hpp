@@ -165,6 +165,15 @@ public:
         disk::duTimestep(first, last, d, star);
         timer.step("duTimestep");
 
+        double t_du_all;
+        double t_starAll;
+        MPI_Allreduce(&star.t_du, &t_du_all, 1, MpiType<double>{}, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&star.t_star, &t_starAll, 1, MpiType<double>{}, MPI_MIN, MPI_COMM_WORLD);
+
+        if (Base::rank_ == 0) {
+            printf("t_du_all: %lf\n, t_starAll: %lf\n", t_du_all, t_starAll);
+        }
+
         computeTimestep(first, last, d, star.t_du, d.etaAcc * star.t_star);
         timer.step("Timestep");
 
