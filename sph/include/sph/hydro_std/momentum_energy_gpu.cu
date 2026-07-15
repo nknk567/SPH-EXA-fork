@@ -120,6 +120,7 @@ void computeMomentumEnergyStdGpu(const GroupView& grp, float* groupDt, Dataset& 
         {
             markNaN<<<numBlocks, numThreads>>>(grp, rawPtr(d.ax), rawPtr(d.ay), rawPtr(d.az), rawPtr(d.du),
                                                rawPtr(d.nc));
+            checkGpuErrors(cudaDeviceSynchronize());
         }
     }
 

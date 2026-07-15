@@ -103,6 +103,16 @@ void computeTimestep(size_t first, size_t last, Dataset& d, Ts... extraTimesteps
     using T = typename Dataset::RealType;
 
     T minDtAcc = (d.g != 0.0) ? accelerationTimestep(first, last, d) : INFINITY;
+    T minDtAccAll;
+    T minDtCourantAll;
+    MPI_Allreduce(&minDtAcc, &minDtAccAll, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&d.minDtCourant, &minDtCourantAll, 1, MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    if (rank == 0) {
+        printf("acc: %lf\n, courant: %lf\n", minDtAccAll, minDtCourantAll);
+    }
 
     T minDtLoc = std::min({minDtAcc, d.minDtCourant, d.minDtRho, d.maxDtIncrease * d.minDt, extraTimesteps...});
 
