@@ -58,8 +58,11 @@ void computeCentralForceBdt(const cstone::GroupView& grp, const cstone::GroupVie
 {
     if constexpr (d.useGpu)
     {
+        //! d.etaAcc scales the per-group star time step, equivalent to d.etaAcc * star.t_star in the
+        //! global time-step propagators
         computeCentralForceGPU(grp, active_grp, getPtr<"x">(d), getPtr<"y">(d), getPtr<"z">(d), getPtr<"ax">(d),
-                               getPtr<"ay">(d), getPtr<"az">(d), getPtr<"m">(d), d.g, star, rawPtr(groupDt));
+                               getPtr<"ay">(d), getPtr<"az">(d), getPtr<"m">(d), d.g, star, rawPtr(groupDt),
+                               float(d.etaAcc));
     }
     else { throw std::runtime_error("computeCentralForceBdt is only implemented on GPUs"); }
 }

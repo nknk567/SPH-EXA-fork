@@ -58,6 +58,8 @@ protected:
     Timestep timestep_, prevTimestep_;
     //! number of initial steps to disable block time-steps
     int safetySteps{5};
+    //! @brief whether timestep_.dt_m1 is consistent with the loaded particle state (x_m1 spans)
+    bool dtM1Initialized_{false};
 
     /*! @brief per-substep growth of the neighbor-search extension factor
      *
@@ -138,7 +140,16 @@ public:
         if (!std::filesystem::exists(path)) { return; }
 
         reader->setStep(path, step, FileMode::independent);
-        timestep_.loadOrStore(reader, "ts::");
+        try
+        {
+            timestep_.loadOrStore(reader, "ts::");
+            dtM1Initialized_ = true;
+        }
+        catch (const std::out_of_range&)
+        {
+            //! checkpoint written by a non-BDT propagator: dt_m1[0] is seeded from d.minDt at the first
+            //! computeRungs, which is consistent with the x_m1 stored in the file
+        }
         reader->closeStep();
 
         int numSplits = numberAfterSign(initCond, ",");
@@ -307,6 +318,18 @@ public:
     {
         auto& d        = simData.hydro;
         int   highRung = activeRung(timestep_.substep, timestep_.numRungs);
+
+        /*! The first advance reconstructs velocities as x_m1 / dt_m1, so dt_m1[0] must match the interval
+         * over which the initial x_m1 was accumulated. d.minDt carries that value for both file-based and
+         * test-case initialization. The settings value seeded in the constructor is only a fallback: it can
+         * be an unrelated default (e.g. 1e-12), which would inflate all reconstructed velocities by many
+         * orders of magnitude in the first step and destroy the simulation state.
+         */
+        if (!dtM1Initialized_)
+        {
+            timestep_.dt_m1[0] = d.minDt;
+            dtM1Initialized_   = true;
+        }
 
         if (highRung == 0)
         {

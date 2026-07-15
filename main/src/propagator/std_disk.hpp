@@ -248,16 +248,14 @@ public:
         //        disk::betaCooling(first, last, d, star);
         //        timer.step("betaCooling");
 
-        // adapt computeCentralForce
-        /*
-         * for (size_t rung = 1; rung <= highestRung; i++)
-         * {
-         *     auto rung_group = makeSlicedView(tsGroups_.view(), timestep_.rungRanges[0], timestep_.rungRanges[rung]);
-         *     disk::computeCentralForce(rung_group, groupDt_, rung, d, star);
-         * }
+        /*! The full group set must be the one groupDt_ is aligned with, and the same buffer that activeRungs_
+         * is sliced from (the kernel identifies active groups by pointer comparison): groups_ at full syncs,
+         * tsGroups_ (time-step sorted) on substeps.
          */
-        disk::computeCentralForceBdt(Base::groups_.view(), Base::activeRungs_, Base::groupDt_, d, star);
-        //        timer.step("computeCentralForce");
+        bool fullSyncStep = Base::activeRung(Base::timestep_.substep, Base::timestep_.numRungs) == 0;
+        auto allGroups    = fullSyncStep ? Base::groups_.view() : Base::tsGroups_.view();
+        disk::computeCentralForceBdt(allGroups, Base::activeRungs_, Base::groupDt_, d, star);
+        timer.step("computeCentralForce");
     }
 
     void integrate(DomainType& domain, DataType& simData) override

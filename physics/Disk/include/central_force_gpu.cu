@@ -79,7 +79,7 @@ __global__ void computeCentralForceGPUKernel(cstone::GroupView grp, const Data d
 }
 template<size_t numThreads, typename Data>
 __global__ void computeCentralForceGPUBdtKernel(cstone::GroupView grp, cstone::GroupView active_grp, float* groupDt,
-                                                const Data d, StarPotentialType potentialType)
+                                                float groupDtFactor, const Data d, StarPotentialType potentialType)
 {
     LocalIndex laneIdx = threadIdx.x & (GpuConfig::warpSize - 1);
     LocalIndex warpIdx = (blockDim.x * blockIdx.x + threadIdx.x) >> GpuConfig::warpSizeLog2;
@@ -115,7 +115,7 @@ __global__ void computeCentralForceGPUBdtKernel(cstone::GroupView grp, cstone::G
         }
 
         auto t_star_warp = cstone::warpMin(t_star);
-        if (laneIdx == 0) { groupDt[warpIdx] = min(groupDt[warpIdx], t_star_warp); }
+        if (laneIdx == 0) { groupDt[warpIdx] = min(groupDt[warpIdx], groupDtFactor * t_star_warp); }
     }
 
     typedef cub::BlockReduce<cstone::Vec4<double>, numThreads> BlockReduce;
@@ -130,7 +130,7 @@ __global__ void computeCentralForceGPUBdtKernel(cstone::GroupView grp, cstone::G
 template<typename Treal, typename Thydro, typename Tmass>
 void computeCentralForceGPU(const cstone::GroupView& grp, const cstone::GroupView& active_grp, const Treal* x,
                             const Treal* y, const Treal* z, Thydro* ax, Thydro* ay, Thydro* az, const Tmass* m, Treal g,
-                            StarData& star, float* groupDt)
+                            StarData& star, float* groupDt, float groupDtFactor)
 {
     //    cstone::LocalIndex numParticles = last - first;
     //    constexpr unsigned numThreads   = 256;
@@ -159,7 +159,7 @@ void computeCentralForceGPU(const cstone::GroupView& grp, const cstone::GroupVie
         else
         {
             computeCentralForceGPUBdtKernel<numThreads>
-                <<<numBlocks, numThreads>>>(grp, active_grp, groupDt, data, star.potentialType);
+                <<<numBlocks, numThreads>>>(grp, active_grp, groupDt, groupDtFactor, data, star.potentialType);
         }
 
         checkGpuErrors(cudaDeviceSynchronize());
@@ -175,7 +175,7 @@ void computeCentralForceGPU(const cstone::GroupView& grp, const cstone::GroupVie
 #define COMPUTE_CENTRAL_FORCE_GPU(Treal, Thydro, Tmass)                                                                \
     template void computeCentralForceGPU(const cstone::GroupView&, const cstone::GroupView&, const Treal* x,           \
                                          const Treal* y, const Treal* z, Thydro* ax, Thydro* ay, Thydro* az,           \
-                                         const Tmass* m, Treal g, StarData&, float*);
+                                         const Tmass* m, Treal g, StarData&, float*, float);
 
 COMPUTE_CENTRAL_FORCE_GPU(double, double, double);
 COMPUTE_CENTRAL_FORCE_GPU(double, float, double);
