@@ -115,7 +115,7 @@ __global__ void computeCentralForceGPUBdtKernel(cstone::GroupView grp, cstone::G
         }
 
         auto t_star_warp = cstone::warpMin(t_star);
-        groupDt[warpIdx] = min(groupDt[warpIdx], t_star_warp);
+        if (laneIdx == 0) { groupDt[warpIdx] = min(groupDt[warpIdx], t_star_warp); }
     }
 
     typedef cub::BlockReduce<cstone::Vec4<double>, numThreads> BlockReduce;
