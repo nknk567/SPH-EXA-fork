@@ -35,6 +35,9 @@ template<class Dataset>
 extern void computeVe(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
 template<class Dataset>
+extern void computeVeNR(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
+
+template<class Dataset>
 extern void computeIadDivvCurlvGradh(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
 template<class Dataset>

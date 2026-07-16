@@ -51,5 +51,20 @@ void computeVe(const GroupView&, Dataset& d, const cstone::Box<typename Dataset:
 template void computeVe(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
                         const cstone::Box<SphTypes::CoordinateType>&);
 
+template<class Dataset>
+void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>&)
+{
+    using T = typename Dataset::RealType;
+    veNRIjLoop(d.neighborhood, d.K, ballmassEta<T>(d.ng0), rawPtr(d.xm), rawPtr(d.m), rawPtr(d.wh), rawPtr(d.whd),
+               rawPtr(d.kx), rawPtr(d.ay));
+    // commit the updated smoothing lengths of locally owned particles
+    cstone::memcpyD2DAsync(cstone::execution::gpuDefaultStream, rawPtr(d.ay) + grp.firstBody,
+                           grp.lastBody - grp.firstBody, rawPtr(d.h) + grp.firstBody);
+    checkGpuErrors(cudaDeviceSynchronize());
+}
+
+template void computeVeNR(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
+                          const cstone::Box<SphTypes::CoordinateType>&);
+
 } // namespace gpu
 } // namespace sph

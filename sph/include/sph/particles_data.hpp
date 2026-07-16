@@ -96,6 +96,13 @@ public:
     //! @brief default maximum number of neighbors per particle before additional h-adjustment will be triggered
     unsigned ngmax{150};
 
+    /*! @brief number of Newton-Raphson iterations per step to converge the smoothing length (0 = disabled)
+     *
+     * When nonzero, h is iterated to satisfy rho * h^3 = eta * m with eta derived from ng0,
+     * making the grad-h terms formally consistent. SPHYNX uses 3 iterations.
+     */
+    unsigned hNRIterMax{0};
+
     //! @brief whether to remove unconverged particles when the smoothing length update failed
     int removeUnconvergedParticles{false};
 
@@ -185,6 +192,7 @@ public:
         ar->stepAttribute("numParticlesGlobal", &numParticlesGlobal, 1);
         optionalIO("ng0", &ng0, 1);
         optionalIO("ngmax", &ngmax, 1);
+        optionalIO("hNRIterMax", &hNRIterMax, 1);
         optionalIO("removeUnconvergedParticles", &removeUnconvergedParticles, 1);
         ar->stepAttribute("time", &ttot, 1);
         ar->stepAttribute("minDt", &minDt, 1);

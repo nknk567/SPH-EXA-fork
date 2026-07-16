@@ -151,9 +151,27 @@ public:
         domain.exchangeHalos(std::tie(get<"xm">(d)), get<"ax">(d), get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
 
+        if (d.hNRIterMax > 0)
+        {
+            /* Newton-Raphson iterations converging h towards rho * h^3 = eta * m, such that the
+             * grad-h terms are formally consistent with dh/drho = -h / (3 * rho). The iterations
+             * reuse the fixed neighbor list with fixed volume elements xm and are gather-only,
+             * i.e. they require no communication. Following SPHYNX (Cabezon & Garcia-Senz). */
+            for (unsigned it = 0; it < d.hNRIterMax; ++it)
+            {
+                computeVeNR(groups_.view(), d, domain.box());
+            }
+            timer.step("hNewtonRaphson");
+        }
         computeVe(groups_.view(), d, domain.box());
         timer.step("Generalized Volume Elements");
-        domain.exchangeHalos(get<"vx", "vy", "vz", "kx">(d), get<"ax">(d), get<"keys">(d));
+        if (d.hNRIterMax > 0)
+        {
+            //! h of locally owned particles changed: halos need updating, h_j enters the momentum equation
+            domain.exchangeHalos(std::tuple_cat(std::tie(get<"h">(d)), get<"vx", "vy", "vz", "kx">(d)), get<"ax">(d),
+                                 get<"keys">(d));
+        }
+        else { domain.exchangeHalos(get<"vx", "vy", "vz", "kx">(d), get<"ax">(d), get<"keys">(d)); }
         timer.step("mpi::synchronizeHalos");
 
         release(d, "ay", "az");

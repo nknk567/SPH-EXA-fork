@@ -31,6 +31,8 @@
 
 #pragma once
 
+#include <algorithm>
+
 #include "sph/sph_gpu.hpp"
 #include "ve_kern.hpp"
 
@@ -42,6 +44,23 @@ void computeVe(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box)
 {
     if constexpr (d.useGpu) { gpu::computeVe(grp, d, box); }
     else { veIjLoop(d.neighborhood, d.K, d.xm.data(), d.wh.data(), d.kx.data()); }
+}
+
+/*! @brief one Newton-Raphson iteration for the smoothing length constraint rho * h^3 = eta * m
+ *
+ * Iterates over the fixed neighbor list with fixed volume elements xm and updates h of locally
+ * owned particles in place. Uses the ay field as scratch space for the updated smoothing length.
+ */
+template<typename Tc, class Dataset>
+void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box)
+{
+    if constexpr (d.useGpu) { gpu::computeVeNR(grp, d, box); }
+    else
+    {
+        veNRIjLoop(d.neighborhood, d.K, ballmassEta<Tc>(d.ng0), d.xm.data(), d.m.data(), d.wh.data(), d.whd.data(),
+                   d.kx.data(), d.ay.data());
+        std::copy(d.ay.data() + grp.firstBody, d.ay.data() + grp.lastBody, d.h.data() + grp.firstBody);
+    }
 }
 
 } // namespace sph

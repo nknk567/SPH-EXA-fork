@@ -141,6 +141,7 @@ int main(int argc, char** argv)
     if (disableNeighborLists) d.disableNeighborLists();
 
     if (parser.exists("--G")) { d.g = parser.get<double>("--G"); }
+    if (parser.exists("--nrIter")) { d.hNRIterMax = parser.get<unsigned>("--nrIter"); }
     bool  haveGrav = (d.g != 0.0);
     float theta    = parser.get("--theta", haveGrav ? 0.5f : 1.0f);
 
@@ -266,6 +267,10 @@ void printHelp(char* name, int rank)
         printf("\t--G NUM \t Gravitational constant [default dependent on test-case selection]\n\n");
 
         printf("\t--prop STRING \t Choice of SPH propagator [default: modern SPH]. For standard SPH, use \"std\" \n\n");
+
+        printf("\t--nrIter NUM \t Number of Newton-Raphson iterations per step to converge the smoothing length\n"
+               "\t\t\t towards rho * h^3 = const * m (formally consistent grad-h terms, ve propagators only)\n"
+               "\t\t\t [default 0 = disabled]\n\n");
 
         printf("\t-s NUM \t\t int(NUM):  Number of iterations (time-steps) [200],\n\
                 \t real(NUM): Time of simulation (time-model)\n\n");
