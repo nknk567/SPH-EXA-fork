@@ -37,8 +37,11 @@ extern void computeVe(const GroupView&, Dataset& d, const cstone::Box<typename D
 template<class Dataset>
 extern void computeVeNR(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
-template<class Dataset>
-extern void convergedVolumeElements(const GroupView&, Dataset& d);
+template<class Dataset, class Tv>
+extern void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* volstd);
+
+template<class Dataset, class Tv>
+extern void setVolumeElements(const GroupView&, Dataset& d, const Tv* volstd);
 
 template<class Dataset>
 extern void ballmassFromDensity(const GroupView&, Dataset& d);

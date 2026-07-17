@@ -66,6 +66,17 @@ protected:
     MHolder_t      mHolder_;
     GroupData<Acc> groups_;
 
+    template<class VType>
+    using AccVector =
+        std::conditional_t<cstone::execution::HaveGpu<Acc>{}, cstone::DeviceVector<VType>, std::vector<VType>>;
+
+    /*! @brief SPH-smoothed converged particle volume, the VE weights xm of the next step (NR mode)
+     *
+     * Computed at force evaluation time, but only assigned to xm in integrate(), i.e. after the
+     * (checkpoint) output, so that restart files contain the weights belonging to the dumped positions.
+     */
+    AccVector<typename DataType::HydroData::HydroType> volstd_;
+
     /*! @brief the list of conserved particles fields with values preserved between iterations
      *
      * x, y, z, h and m are automatically considered conserved and must not be specified in this list
@@ -78,9 +89,8 @@ protected:
         FieldList<"temp", "vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id", "xm", "ballmass">;
 
     //! @brief list of dependent fields, these may be used as scratch space during domain sync
-    using DependentFields_ =
-        FieldList<"ax", "ay", "az", "prho", "c", "du", "c11", "c12", "c13", "c22", "c23", "c33", "kx", "nc",
-                  "dtCourant">;
+    using DependentFields_ = FieldList<"ax", "ay", "az", "prho", "c", "du", "c11", "c12", "c13", "c22", "c23", "c33",
+                                       "kx", "nc", "dtCourant">;
 
     //! @brief velocity gradient fields will only be allocated when avClean is true
     using GradVFields = FieldList<"dV11", "dV12", "dV13", "dV22", "dV23", "dV33">;
@@ -152,11 +162,10 @@ public:
         timer.step("FindNeighbors");
         pmReader.step();
 
-        /* With NR iterations, the volume elements are carried over from the converged density of the
-         * previous step (SPHYNX-style, see convergedVolumeElements) and only initialized from the
-         * standard SPH density on the first step. */
-        bool xmPersistent = d.hNRIterMax > 0 && !std::getenv("SPHEXA_NO_PERSISTENT_XM"); // TEMP: env toggle
-        if (!xmPersistent || d.iteration == 1)
+        /* With NR iterations, the volume elements are carried over from the smoothed converged
+         * volume of the previous step (SPHYNX-style, see computeVolstd) and only initialized from
+         * the standard SPH density on the first step. */
+        if (d.hNRIterMax == 0 || d.iteration == 1)
         {
             computeXMass(groups_.view(), d, domain.box());
             timer.step("XMass");
@@ -193,11 +202,17 @@ public:
             domain.exchangeHalos(std::tuple_cat(std::tie(get<"h">(d)), get<"vx", "vy", "vz", "kx">(d)), get<"ax">(d),
                                  get<"keys">(d));
         }
-        else
-        {
-            domain.exchangeHalos(get<"vx", "vy", "vz", "kx">(d), get<"ax">(d), get<"keys">(d));
-        }
+        else { domain.exchangeHalos(get<"vx", "vy", "vz", "kx">(d), get<"ax">(d), get<"keys">(d)); }
         timer.step("mpi::synchronizeHalos");
+
+        if (d.hNRIterMax > 0)
+        {
+            /* Smoothed converged volume, the VE weights of the next step; needs kx halos, computed
+             * before ay/az are released. Assigned to xm in integrate(), after the output. */
+            reallocate(volstd_, d.x.size(), d.getAllocGrowthRate());
+            computeVolstd(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_));
+            timer.step("Volstd");
+        }
 
         release(d, "ay", "az");
         acquire(d, "divv", "gradh");
@@ -220,10 +235,7 @@ public:
             domain.exchangeHalos(get<"dV11", "dV12", "dV13", "dV22", "dV23", "dV33", "prho", "alpha">(d), get<"ax">(d),
                                  get<"keys">(d));
         }
-        else
-        {
-            domain.exchangeHalos(get<"prho", "alpha">(d), get<"ax">(d), get<"keys">(d));
-        }
+        else { domain.exchangeHalos(get<"prho", "alpha">(d), get<"ax">(d), get<"keys">(d)); }
         timer.step("mpi::synchronizeHalos");
 
         release(d, "divv", "gradh");
@@ -261,12 +273,12 @@ public:
          * the force computation; nudging h towards the neighbor count target here would displace it
          * from the converged solution every step. Unresolvable particles are still flagged. */
         bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d, /*adjustH*/ d.hNRIterMax == 0);
-        if (d.hNRIterMax > 0 && !std::getenv("SPHEXA_NO_PERSISTENT_XM")) // TEMP: env toggle
+        if (d.hNRIterMax > 0)
         {
-            /* volume elements of the next step from the converged density of this step (SPHYNX-style);
-             * placed after the checkpoint output so that restarts see the weights that belong to the
-             * dumped positions */
-            convergedVolumeElements(groups_.view(), d);
+            /* volume elements of the next step, the smoothed converged volume of this step
+             * (SPHYNX-style); placed after the checkpoint output so that restarts see the weights
+             * that belong to the dumped positions */
+            setVolumeElements(groups_.view(), d, cstone::rawPtr(volstd_));
         }
         if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
         {

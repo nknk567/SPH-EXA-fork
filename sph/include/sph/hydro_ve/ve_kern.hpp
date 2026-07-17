@@ -84,7 +84,9 @@ struct VePostamble
 
 template<class Neighbordhood, class Tc, class T>
 void veIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const T* wh, T* kx)
-{ neighborhood.ijLoop(std::make_tuple(xm), std::make_tuple(kx), VeInteraction{wh}, VePostamble<T, Tc>{K}); }
+{
+    neighborhood.ijLoop(std::make_tuple(xm), std::make_tuple(kx), VeInteraction{wh}, VePostamble<T, Tc>{K});
+}
 
 /*! @brief factor eta of the smoothing-length constraint rho * h^3 = eta * m
  *
@@ -93,7 +95,64 @@ void veIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const T* wh,
  */
 template<class T>
 constexpr T ballmassEta(unsigned ng0)
-{ return T(3) * T(ng0) / (T(32) * M_PI); }
+{
+    return T(3) * T(ng0) / (T(32) * M_PI);
+}
+
+/*! @brief SPH-smoothed volume estimate, used as the volume element weights of the next time-step
+ *
+ * volstd_i = K/h_i^3 * sum_j V_j^2 * W_ij with V = xm / kx, the SPH interpolation of the converged
+ * particle volume, as in SPHYNX (calculate_IAD.f90/update.f90 with volstdprom enabled). Smoothing
+ * suppresses particle-scale noise that the raw recursion xm <- xm / kx would amplify.
+ */
+template<class T>
+struct VolstdInteraction
+{
+    const T* wh;
+
+    template<class ParticleData, class Tc>
+    constexpr auto operator()(const ParticleData& iData, const ParticleData& jData, cstone::Vec3<Tc> const& /* r_ij */,
+                              T r2) const
+    {
+        const auto [i, iPos, hi, xmassi, kxi] = iData;
+        const auto [j, jPos, hj, xmassj, kxj] = jData;
+
+        T dist = std::sqrt(r2);
+        T vloc = dist / hi;
+        T w    = lt::lookup(wh, vloc);
+
+        T vj = xmassj / kxj;
+
+        return std::make_tuple(vj * vj * w);
+    }
+};
+
+template<class T, class Tc>
+struct VolstdPostamble
+{
+    Tc K;
+
+    template<class ParticleData, class Result>
+    constexpr auto operator()(const ParticleData& iData, const Result& result) const
+    {
+        const auto [i, iPos, hi, xmassi, kxi] = iData;
+        auto [volstdi]                        = result;
+
+        auto hInv  = T(1) / hi;
+        auto h3Inv = hInv * hInv * hInv;
+
+        volstdi *= K * h3Inv;
+
+        return std::make_tuple(volstdi);
+    }
+};
+
+template<class Neighbordhood, class Tc, class T>
+void volstdIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const T* kx, const T* wh, T* volstd)
+{
+    neighborhood.ijLoop(std::make_tuple(xm, kx), std::make_tuple(volstd), VolstdInteraction<T>{wh},
+                        VolstdPostamble<T, Tc>{K});
+}
 
 /*! @brief kernel sums for the Newton-Raphson iteration of the smoothing length
  *

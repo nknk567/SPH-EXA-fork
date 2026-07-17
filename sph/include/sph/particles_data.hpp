@@ -98,8 +98,10 @@ public:
 
     /*! @brief number of Newton-Raphson iterations per step to converge the smoothing length (0 = disabled)
      *
-     * When nonzero, h is iterated to satisfy rho * h^3 = eta * m with eta derived from ng0,
-     * making the grad-h terms formally consistent. SPHYNX uses 3 iterations.
+     * When nonzero, h is iterated to satisfy rho * h^3 = ballmass (per-particle, re-baselined on
+     * count-based h adjustments) and the volume elements are carried over from the smoothed
+     * converged volume of the previous step, making the grad-h terms formally consistent.
+     * Following SPHYNX, which uses 3 iterations.
      */
     unsigned hNRIterMax{0};
 
@@ -176,10 +178,7 @@ public:
                     ar->stepAttribute(attribute, &tmp, attrSize);
                     *location = static_cast<EType>(tmp);
                 }
-                else
-                {
-                    ar->stepAttribute(attribute, location, attrSize);
-                }
+                else { ar->stepAttribute(attribute, location, attrSize); }
             }
             catch (std::out_of_range&)
             {
@@ -281,15 +280,22 @@ public:
      * Name of each field as string for use e.g in HDF5 output. Order has to correspond to what's returned by data().
      */
     inline static constexpr std::array fieldNames{
-        "x",   "y",    "z",     "x_m1",     "y_m1", "z_m1", "vx",    "vy",    "vz",    "rho",
-        "u",   "p",    "prho",  "tdpdTrho", "h",    "m",    "c",     "ugrav", "ax",    "ay",
-        "az",  "du",   "du_m1", "c11",      "c12",  "c13",  "c22",   "c23",   "c33",   "mue",
-        "mui", "temp", "cv",    "xm",       "kx",   "divv", "curlv", "alpha", "gradh", "keys",
-        "nc",  "dV11", "dV12",  "dV13",     "dV22", "dV23", "dV33",  "rung",  "id",    "dtCourant",
-        "ballmass"};
+        "x",     "y",    "z",        "x_m1",  "y_m1",  "z_m1",      "vx",      "vy",  "vz",   "rho",  "u",
+        "p",     "prho", "tdpdTrho", "h",     "m",     "c",         "ugrav",   "ax",  "ay",   "az",   "du",
+        "du_m1", "c11",  "c12",      "c13",   "c22",   "c23",       "c33",     "mue", "mui",  "temp", "cv",
+        "xm",    "kx",   "divv",     "curlv", "alpha", "gradh",     "keys",    "nc",  "dV11", "dV12", "dV13",
+        "dV22",  "dV23", "dV33",     "rung",  "id",    "dtCourant", "ballmass"};
 
     //! @brief dataset prefix to be prepended to fieldNames for structured output
     static const inline std::string prefix{};
+
+    /*! @brief conserved fields that may be missing in restart files from older versions
+     *
+     * These are zero-initialized with a warning instead of failing the restart. They are
+     * recomputed before first use when running without Newton-Raphson smoothing length
+     * iterations; NR-enabled continuation runs need a checkpoint that contains them.
+     */
+    inline static constexpr std::array optionalRestartFields{"xm", "ballmass"};
 
     /*! @brief return a tuple of field references
      *
@@ -417,11 +423,15 @@ private:
 
 template<class Dataset, class... Fs>
 void release(Dataset& d, const Fs&... fs)
-{ d.release(fs...); }
+{
+    d.release(fs...);
+}
 
 template<class Dataset, class... Fs>
 void acquire(Dataset& d, const Fs&... fs)
-{ d.acquire(fs...); }
+{
+    d.acquire(fs...);
+}
 
 // TODO move this to a better place
 template<class Vector, cstone::execution::Policy Exec>
@@ -434,10 +444,7 @@ void fillMassHalos(Exec exec, Vector& m, std::size_t first, std::size_t last)
         cstone::memcpyD2HAsync(exec, m.data() + first, 1, &mass);
         cstone::syncGpu(exec);
     }
-    else
-    {
-        mass = m[first];
-    }
+    else { mass = m[first]; }
 
     cstone::fill(exec, m.begin(), m.begin() + first, mass);
     cstone::fill(exec, m.begin() + last, m.end(), mass);

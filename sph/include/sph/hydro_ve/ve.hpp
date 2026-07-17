@@ -43,32 +43,28 @@ template<typename Tc, class Dataset>
 void computeVe(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box)
 {
     if constexpr (d.useGpu) { gpu::computeVe(grp, d, box); }
-    else
-    {
-        veIjLoop(d.neighborhood, d.K, d.xm.data(), d.wh.data(), d.kx.data());
-    }
+    else { veIjLoop(d.neighborhood, d.K, d.xm.data(), d.wh.data(), d.kx.data()); }
 }
 
-/*! @brief update volume elements from the converged density for use in the next time-step
+/*! @brief compute the SPH-smoothed converged particle volume, the VE weights of the next step
  *
- * As in SPHYNX (update.f90), the VE weights of the next step are m / rho with the converged
- * density rho = kx * m / xm of the current step, i.e. xm <- xm / kx. This makes the weights
- * independent of the positions at force evaluation time.
+ * As in SPHYNX (calculate_IAD.f90/update.f90), the weights of the next step are the smoothed
+ * volume estimate of the converged state, making them independent of the positions at force
+ * evaluation time. @p volstd must have room for absolute particle indices up to grp.lastBody.
  */
-template<class Dataset>
-void convergedVolumeElements(const GroupView& grp, Dataset& d)
+template<typename Tc, class Dataset, class Tv>
+void computeVolstd(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, Tv* volstd)
 {
-    if constexpr (d.useGpu) { gpu::convergedVolumeElements(grp, d); }
-    else
-    {
-        const auto* kx = d.kx.data();
-        auto*       xm = d.xm.data();
-#pragma omp parallel for schedule(static)
-        for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
-        {
-            xm[i] /= kx[i];
-        }
-    }
+    if constexpr (d.useGpu) { gpu::computeVolstd(grp, d, box, volstd); }
+    else { volstdIjLoop(d.neighborhood, d.K, d.xm.data(), d.kx.data(), d.wh.data(), volstd); }
+}
+
+//! @brief assign the volume elements of the next step for locally owned particles
+template<class Dataset, class Tv>
+void setVolumeElements(const GroupView& grp, Dataset& d, const Tv* volstd)
+{
+    if constexpr (d.useGpu) { gpu::setVolumeElements(grp, d, volstd); }
+    else { std::copy(volstd + grp.firstBody, volstd + grp.lastBody, d.xm.data() + grp.firstBody); }
 }
 
 /*! @brief initialize the per-particle Newton-Raphson target ballmass = rho * h^3

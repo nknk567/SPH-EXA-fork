@@ -31,6 +31,9 @@
 
 #pragma once
 
+#include <algorithm>
+#include <string_view>
+
 #include "cstone/primitives/primitives_acc.hpp"
 #include "cstone/sfc/box.hpp"
 
@@ -51,14 +54,37 @@ void restoreDataset(IFileReader* reader, Dataset& d)
     {
         if (d.isConserved(i))
         {
+            bool isOptional = false;
+            if constexpr (requires { Dataset::optionalRestartFields; })
+            {
+                isOptional = std::find(Dataset::optionalRestartFields.begin(), Dataset::optionalRestartFields.end(),
+                                       std::string_view(d.fieldNames[i])) != Dataset::optionalRestartFields.end();
+            }
+
             if (reader->rank() == 0) { std::cout << "restoring " << d.fieldNames[i]; }
             auto t0 = std::chrono::high_resolution_clock::now();
             std::visit(
-                [reader, key = d.fieldNames[i]](auto field)
+                [reader, key = d.fieldNames[i], isOptional](auto field)
                 {
                     using T = std::remove_reference<decltype(*field->data())>::type;
                     std::vector<T> tmp(field->size());
-                    reader->readField(Dataset::prefix + key, tmp.data());
+                    try
+                    {
+                        reader->readField(Dataset::prefix + key, tmp.data());
+                    }
+                    catch (std::exception& e)
+                    {
+                        if (!isOptional) { throw; }
+                        if (reader->rank() == 0)
+                        {
+                            std::cout << "\nWARNING: optional field " << key
+                                      << " not found in restart file, initializing to zero. It will be recomputed "
+                                         "when running without NR smoothing-length iterations; for --nrIter > 0, "
+                                         "first regenerate the checkpoint with a run without --nrIter."
+                                      << std::endl;
+                        }
+                        std::fill(tmp.begin(), tmp.end(), T(0));
+                    }
                     *field = std::move(tmp);
                 },
                 fieldPointers[i]);

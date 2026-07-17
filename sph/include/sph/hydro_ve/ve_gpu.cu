@@ -65,24 +65,26 @@ void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<typename Da
 template void computeVeNR(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
                           const cstone::Box<SphTypes::CoordinateType>&);
 
-template<class T>
-__global__ void convergedVolumeElementsKernel(cstone::LocalIndex first, cstone::LocalIndex last, const T* kx, T* xm)
+template<class Dataset, class Tv>
+void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* volstd)
 {
-    cstone::LocalIndex i = first + blockDim.x * blockIdx.x + threadIdx.x;
-    if (i < last) { xm[i] /= kx[i]; }
-}
-
-template<class Dataset>
-void convergedVolumeElements(const GroupView& grp, Dataset& d)
-{
-    unsigned numThreads = 256;
-    unsigned numBlocks  = cstone::iceil(grp.lastBody - grp.firstBody, numThreads);
-    if (numBlocks == 0) { return; }
-    convergedVolumeElementsKernel<<<numBlocks, numThreads>>>(grp.firstBody, grp.lastBody, rawPtr(d.kx), rawPtr(d.xm));
+    volstdIjLoop(d.neighborhood, d.K, rawPtr(d.xm), rawPtr(d.kx), rawPtr(d.wh), volstd);
     checkGpuErrors(cudaDeviceSynchronize());
 }
 
-template void convergedVolumeElements(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d);
+template void computeVolstd(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
+                            const cstone::Box<SphTypes::CoordinateType>&, SphTypes::HydroType*);
+
+template<class Dataset, class Tv>
+void setVolumeElements(const GroupView& grp, Dataset& d, const Tv* volstd)
+{
+    cstone::memcpyD2DAsync(cstone::execution::gpuDefaultStream, volstd + grp.firstBody, grp.lastBody - grp.firstBody,
+                           rawPtr(d.xm) + grp.firstBody);
+    checkGpuErrors(cudaDeviceSynchronize());
+}
+
+template void setVolumeElements(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
+                                const SphTypes::HydroType*);
 
 template<class T, class Th, class Tm>
 __global__ void ballmassFromDensityKernel(cstone::LocalIndex first, cstone::LocalIndex last, const T* kx, const T* xm,
