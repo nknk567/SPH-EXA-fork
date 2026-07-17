@@ -59,12 +59,13 @@ bool updateSmoothingLength(const GroupView& grp, Dataset& d, bool adjustH = true
 template<class Tc, class T, class KeyType>
 void updateSmoothingLengthIterativeCpu(const Tc* x, const Tc* y, const Tc* z, T* h, unsigned* nc, LocalIndex firstId,
                                        LocalIndex lastId, const cstone::Box<Tc>& box,
-                                       const cstone::OctreeNsView<Tc, KeyType>& treeView, unsigned ng0, unsigned ngmax)
+                                       const cstone::OctreeNsView<Tc, KeyType>& treeView, unsigned ng0, unsigned ngmax,
+                                       T* ballmass)
 {
 #pragma omp parallel for
     for (LocalIndex i = firstId; i < lastId; ++i)
     {
-        updateHIterative(ng0, ngmax, box, treeView, i, x, y, z, h, nc);
+        updateHIterative(ng0, ngmax, box, treeView, i, x, y, z, h, nc, ballmass);
     }
 }
 
@@ -75,7 +76,8 @@ void updateSmoothingLengthIterative(const cstone::GroupView& groups, Dataset& d,
     else
     {
         updateSmoothingLengthIterativeCpu(d.x.data(), d.y.data(), d.z.data(), d.h.data(), d.nc.data(), groups.firstBody,
-                                          groups.lastBody, box, d.treeView, d.ng0, d.ngmax);
+                                          groups.lastBody, box, d.treeView, d.ng0, d.ngmax,
+                                          d.ballmass.empty() ? nullptr : d.ballmass.data());
     }
 }
 

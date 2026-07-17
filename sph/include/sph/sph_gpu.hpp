@@ -38,6 +38,12 @@ template<class Dataset>
 extern void computeVeNR(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
 template<class Dataset>
+extern void convergedVolumeElements(const GroupView&, Dataset& d);
+
+template<class Dataset>
+extern void ballmassFromDensity(const GroupView&, Dataset& d);
+
+template<class Dataset>
 extern void computeIadDivvCurlvGradh(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
 template<class Dataset>

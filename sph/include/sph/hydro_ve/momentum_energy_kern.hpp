@@ -67,6 +67,8 @@ struct MomentumAndEnergyInteraction
 {
     const T* wh;
     T        Atmin, Atmax, ramp;
+    //! @brief true if h is converged with Newton-Raphson iterations to satisfy rho * h^3 = const
+    bool nrMode = false;
 
     template<class ParticleData, class Tc>
     constexpr auto operator()(const ParticleData& iData, const ParticleData& jData, cstone::Vec3<Tc> const& r_ij,
@@ -127,22 +129,34 @@ struct MomentumAndEnergyInteraction
         T vijsignal = i == j ? 0 : T(0.5) * (ci + cj) - T(2) * wij;
 
         T a_mom, b_mom;
-        T Atwood = (std::abs(rhoi - rhoj)) / (rhoi + rhoj);
-        if (Atwood < Atmin)
+        if (nrMode)
         {
-            a_mom = xmassi * xmassi;
-            b_mom = xmassj * xmassj;
-        }
-        else if (Atwood > Atmax)
-        {
-            a_mom = xmassi * xmassj;
-            b_mom = a_mom;
+            /* Pairing consistent with the Lagrangian at fixed volume elements xm and constraint
+             * rho * h^3 = const (as in SPHYNX momeqnmod.f90): the pairwise pressure term is
+             * xm_i * xm_j / m_i * P_i / (kx_i^2 * Omega_i) * A_i. Expressed through
+             * prho = P / (kx * m^2 * Omega) this requires the coefficients below. */
+            a_mom = xmassi * xmassj * mi / (mj * kxi);
+            b_mom = xmassi * xmassj * mj / (mi * kxj);
         }
         else
         {
-            T sigma_ij = ramp * (Atwood - Atmin);
-            a_mom      = pow(xmassi, T(2) - sigma_ij) * pow(xmassj, sigma_ij);
-            b_mom      = pow(xmassj, T(2) - sigma_ij) * pow(xmassi, sigma_ij);
+            T Atwood = (std::abs(rhoi - rhoj)) / (rhoi + rhoj);
+            if (Atwood < Atmin)
+            {
+                a_mom = xmassi * xmassi;
+                b_mom = xmassj * xmassj;
+            }
+            else if (Atwood > Atmax)
+            {
+                a_mom = xmassi * xmassj;
+                b_mom = a_mom;
+            }
+            else
+            {
+                T sigma_ij = ramp * (Atwood - Atmin);
+                a_mom      = pow(xmassi, T(2) - sigma_ij) * pow(xmassj, sigma_ij);
+                b_mom      = pow(xmassj, T(2) - sigma_ij) * pow(xmassi, sigma_ij);
+            }
         }
 
         auto a_visc        = mj / rhoi * viscosity_ij;
@@ -220,7 +234,7 @@ void momentumAndEnergyIjLoop(Neighborhood const& neighborhood, Tc K, Tc Kcour, T
                              const T* xm, const T* prho, const T* c11, const T* c12, const T* c13, const T* c22,
                              const T* c23, const T* c33, const unsigned* nc, const T* dV11, const T* dV12,
                              const T* dV13, const T* dV22, const T* dV23, const T* dV33, const T* tdpdTrho, const T* wh,
-                             Tm1* du, T* grad_P_x, T* grad_P_y, T* grad_P_z, T* dt)
+                             Tm1* du, T* grad_P_x, T* grad_P_y, T* grad_P_z, T* dt, bool nrMode)
 {
     if constexpr (!AvClean) dV11 = dV12 = dV13 = dV22 = dV23 = dV33 = vx;
     const auto input =
@@ -229,12 +243,12 @@ void momentumAndEnergyIjLoop(Neighborhood const& neighborhood, Tc K, Tc Kcour, T
     const auto output = std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt);
     if (tdpdTrho)
     {
-        neighborhood.ijLoop(input, output, MomentumAndEnergyInteraction<AvClean, T>{wh, Atmin, Atmax, ramp},
+        neighborhood.ijLoop(input, output, MomentumAndEnergyInteraction<AvClean, T>{wh, Atmin, Atmax, ramp, nrMode},
                             MomentumAndEnergyPostambleWithDt<true, T, Tc>{K, Kcour});
     }
     else
     {
-        neighborhood.ijLoop(input, output, MomentumAndEnergyInteraction<AvClean, T>{wh, Atmin, Atmax, ramp},
+        neighborhood.ijLoop(input, output, MomentumAndEnergyInteraction<AvClean, T>{wh, Atmin, Atmax, ramp, nrMode},
                             MomentumAndEnergyPostambleWithDt<false, T, Tc>{K, Kcour});
     }
 }

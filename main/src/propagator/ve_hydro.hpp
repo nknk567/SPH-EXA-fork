@@ -70,11 +70,17 @@ protected:
      *
      * x, y, z, h and m are automatically considered conserved and must not be specified in this list
      */
-    using ConservedFields = FieldList<"temp", "vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id">;
+    /* xm is conserved because with Newton-Raphson smoothing length iterations (hNRIterMax > 0) the
+     * volume elements are carried over from the converged density of the previous step (as in SPHYNX);
+     * without NR iterations it is recomputed from scratch every step and could be a dependent field.
+     * ballmass is the per-particle target of the NR constraint rho * h^3 = ballmass. */
+    using ConservedFields =
+        FieldList<"temp", "vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id", "xm", "ballmass">;
 
     //! @brief list of dependent fields, these may be used as scratch space during domain sync
-    using DependentFields_ = FieldList<"ax", "ay", "az", "prho", "c", "du", "c11", "c12", "c13", "c22", "c23", "c33",
-                                       "xm", "kx", "nc", "dtCourant">;
+    using DependentFields_ =
+        FieldList<"ax", "ay", "az", "prho", "c", "du", "c11", "c12", "c13", "c22", "c23", "c33", "kx", "nc",
+                  "dtCourant">;
 
     //! @brief velocity gradient fields will only be allocated when avClean is true
     using GradVFields = FieldList<"dV11", "dV12", "dV13", "dV22", "dV23", "dV33">;
@@ -146,14 +152,27 @@ public:
         timer.step("FindNeighbors");
         pmReader.step();
 
-        computeXMass(groups_.view(), d, domain.box());
-        timer.step("XMass");
+        /* With NR iterations, the volume elements are carried over from the converged density of the
+         * previous step (SPHYNX-style, see convergedVolumeElements) and only initialized from the
+         * standard SPH density on the first step. */
+        bool xmPersistent = d.hNRIterMax > 0 && !std::getenv("SPHEXA_NO_PERSISTENT_XM"); // TEMP: env toggle
+        if (!xmPersistent || d.iteration == 1)
+        {
+            computeXMass(groups_.view(), d, domain.box());
+            timer.step("XMass");
+        }
         domain.exchangeHalos(std::tie(get<"xm">(d)), get<"ax">(d), get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
 
         if (d.hNRIterMax > 0)
         {
-            /* Newton-Raphson iterations converging h towards rho * h^3 = eta * m, such that the
+            if (d.iteration == 1)
+            {
+                //! anchor the per-particle NR target ballmass = rho * h^3 with the initial density
+                computeVe(groups_.view(), d, domain.box());
+                ballmassFromDensity(groups_.view(), d);
+            }
+            /* Newton-Raphson iterations converging h towards rho * h^3 = ballmass, such that the
              * grad-h terms are formally consistent with dh/drho = -h / (3 * rho). The iterations
              * reuse the fixed neighbor list with fixed volume elements xm and are gather-only,
              * i.e. they require no communication. Following SPHYNX (Cabezon & Garcia-Senz). */
@@ -164,6 +183,9 @@ public:
             timer.step("hNewtonRaphson");
         }
         computeVe(groups_.view(), d, domain.box());
+        /* In classical mode, keep the NR target anchored to the current state so that checkpoints
+         * remain valid starting points for NR-enabled continuation runs. */
+        if (d.hNRIterMax == 0) { ballmassFromDensity(groups_.view(), d); }
         timer.step("Generalized Volume Elements");
         if (d.hNRIterMax > 0)
         {
@@ -239,6 +261,13 @@ public:
          * the force computation; nudging h towards the neighbor count target here would displace it
          * from the converged solution every step. Unresolvable particles are still flagged. */
         bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d, /*adjustH*/ d.hNRIterMax == 0);
+        if (d.hNRIterMax > 0 && !std::getenv("SPHEXA_NO_PERSISTENT_XM")) // TEMP: env toggle
+        {
+            /* volume elements of the next step from the converged density of this step (SPHYNX-style);
+             * placed after the checkpoint output so that restarts see the weights that belong to the
+             * dumped positions */
+            convergedVolumeElements(groups_.view(), d);
+        }
         if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
         {
             throw std::runtime_error("Neighbor search did not converge\n");

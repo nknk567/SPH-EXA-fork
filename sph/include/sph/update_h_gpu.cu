@@ -85,7 +85,7 @@ template<class Tc, class T, class KeyType>
 __global__ __launch_bounds__(128) void updateSmoothingLengthIterativeGpuKernel(
     GroupView grp, unsigned ng0, unsigned ngmax, const cstone::Box<Tc> box,
     const cstone::OctreeNsView<Tc, KeyType> tree, const Tc* __restrict__ x, const Tc* __restrict__ y,
-    const Tc* __restrict__ z, T* __restrict__ h, unsigned* __restrict__ nc)
+    const Tc* __restrict__ z, T* __restrict__ h, unsigned* __restrict__ nc, T* __restrict__ ballmass)
 {
     LocalIndex laneIdx = threadIdx.x & (cstone::GpuConfig::warpSize - 1);
     LocalIndex warpIdx = (blockDim.x * blockIdx.x + threadIdx.x) >> cstone::GpuConfig::warpSizeLog2;
@@ -94,7 +94,7 @@ __global__ __launch_bounds__(128) void updateSmoothingLengthIterativeGpuKernel(
     const LocalIndex i = grp.groupStart[warpIdx] + laneIdx;
     if (i >= grp.groupEnd[warpIdx]) { return; }
 
-    updateHIterative(ng0, ngmax, box, tree, i, x, y, z, h, nc);
+    updateHIterative(ng0, ngmax, box, tree, i, x, y, z, h, nc, ballmass);
 }
 
 template<class T, class Dataset>
@@ -106,7 +106,8 @@ void updateSmoothingLengthIterativeGpu(const cstone::GroupView& grp, Dataset& d,
     if (numBlocks == 0) { return; }
 
     updateSmoothingLengthIterativeGpuKernel<<<numBlocks, numThreads>>>(
-        grp, d.ng0, d.ngmax, box, d.treeView, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), rawPtr(d.nc));
+        grp, d.ng0, d.ngmax, box, d.treeView, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), rawPtr(d.nc),
+        d.ballmass.empty() ? nullptr : rawPtr(d.ballmass));
 }
 
 template void updateSmoothingLengthIterativeGpu(const cstone::GroupView&,

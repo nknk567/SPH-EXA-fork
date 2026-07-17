@@ -54,8 +54,7 @@ template void computeVe(const GroupView&, sphexa::ParticlesData<cstone::executio
 template<class Dataset>
 void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>&)
 {
-    using T = typename Dataset::RealType;
-    veNRIjLoop(d.neighborhood, d.K, ballmassEta<T>(d.ng0), rawPtr(d.xm), rawPtr(d.m), rawPtr(d.wh), rawPtr(d.whd),
+    veNRIjLoop(d.neighborhood, d.K, rawPtr(d.xm), rawPtr(d.m), rawPtr(d.ballmass), rawPtr(d.wh), rawPtr(d.whd),
                rawPtr(d.kx), rawPtr(d.ay));
     // commit the updated smoothing lengths of locally owned particles
     cstone::memcpyD2DAsync(cstone::execution::gpuDefaultStream, rawPtr(d.ay) + grp.firstBody,
@@ -65,6 +64,46 @@ void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<typename Da
 
 template void computeVeNR(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
                           const cstone::Box<SphTypes::CoordinateType>&);
+
+template<class T>
+__global__ void convergedVolumeElementsKernel(cstone::LocalIndex first, cstone::LocalIndex last, const T* kx, T* xm)
+{
+    cstone::LocalIndex i = first + blockDim.x * blockIdx.x + threadIdx.x;
+    if (i < last) { xm[i] /= kx[i]; }
+}
+
+template<class Dataset>
+void convergedVolumeElements(const GroupView& grp, Dataset& d)
+{
+    unsigned numThreads = 256;
+    unsigned numBlocks  = cstone::iceil(grp.lastBody - grp.firstBody, numThreads);
+    if (numBlocks == 0) { return; }
+    convergedVolumeElementsKernel<<<numBlocks, numThreads>>>(grp.firstBody, grp.lastBody, rawPtr(d.kx), rawPtr(d.xm));
+    checkGpuErrors(cudaDeviceSynchronize());
+}
+
+template void convergedVolumeElements(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d);
+
+template<class T, class Th, class Tm>
+__global__ void ballmassFromDensityKernel(cstone::LocalIndex first, cstone::LocalIndex last, const T* kx, const T* xm,
+                                          const Tm* m, const Th* h, T* ballmass)
+{
+    cstone::LocalIndex i = first + blockDim.x * blockIdx.x + threadIdx.x;
+    if (i < last) { ballmass[i] = kx[i] * m[i] / xm[i] * h[i] * h[i] * h[i]; }
+}
+
+template<class Dataset>
+void ballmassFromDensity(const GroupView& grp, Dataset& d)
+{
+    unsigned numThreads = 256;
+    unsigned numBlocks  = cstone::iceil(grp.lastBody - grp.firstBody, numThreads);
+    if (numBlocks == 0) { return; }
+    ballmassFromDensityKernel<<<numBlocks, numThreads>>>(grp.firstBody, grp.lastBody, rawPtr(d.kx), rawPtr(d.xm),
+                                                         rawPtr(d.m), rawPtr(d.h), rawPtr(d.ballmass));
+    checkGpuErrors(cudaDeviceSynchronize());
+}
+
+template void ballmassFromDensity(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d);
 
 } // namespace gpu
 } // namespace sph

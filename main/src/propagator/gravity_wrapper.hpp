@@ -80,10 +80,22 @@ public:
         bool        usePbc    = box.boundaryX() == cstone::BoundaryType::periodic;
         int         numShells = usePbc ? ewaldSettings_.numReplicaShells : 0;
 
+        // TEMPORARY DIAGNOSTIC (to be removed): freeze the gravitational softening length to a constant
+        const auto* hGrav = d.h.data();
+        {
+            using ThLoc = std::decay_t<decltype(*hGrav)>;
+            static std::vector<ThLoc> hFixed;
+            if (const char* fix = std::getenv("SPHEXA_FIXED_SOFTENING"))
+            {
+                hFixed.assign(d.h.size(), std::atof(fix));
+                hGrav = hFixed.data();
+            }
+        }
+
         d.egrav = 0;
         ryoanji::computeGravity(octree.childOffsets, octree.parents, octree.internalToLeaf,
                                 focusTree.expansionCentersAcc().data(), multipoles_.data(), domain.layout().data(),
-                                domain.startCell(), domain.endCell(), d.x.data(), d.y.data(), d.z.data(), d.h.data(),
+                                domain.startCell(), domain.endCell(), d.x.data(), d.y.data(), d.z.data(), hGrav,
                                 d.m.data(), domain.box(), d.g, d.ugrav.data(), d.ax.data(), d.ay.data(), d.az.data(),
                                 &d.egrav, numShells);
 

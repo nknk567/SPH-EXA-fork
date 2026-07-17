@@ -37,10 +37,12 @@ template<class Tc, class T, class KeyType>
 HOST_DEVICE_FUN void updateHIterative(unsigned ng0, unsigned ngmax, const cstone::Box<Tc>& box,
                                       const cstone::OctreeNsView<Tc, KeyType>& treeView, cstone::LocalIndex i,
                                       const Tc* __restrict__ x, const Tc* __restrict__ y, const Tc* __restrict__ z,
-                                      T* __restrict__ h, unsigned* __restrict__ nc)
+                                      T* __restrict__ h, unsigned* __restrict__ nc, T* __restrict__ ballmass = nullptr)
 {
     constexpr int  maxIteration = 10;
     const unsigned ngmin        = ng0 / 4;
+
+    const T hOld = h[i];
 
     unsigned ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
 
@@ -52,6 +54,15 @@ HOST_DEVICE_FUN void updateHIterative(unsigned ng0, unsigned ngmax, const cstone
     }
 
     if (iteration == maxIteration && (ngmin > ncSph || (ncSph - 1) > ngmax)) { ncSph = 1; }
+
+    /* Re-baseline the Newton-Raphson smoothing length target such that the constraint
+     * rho * h^3 = ballmass remains satisfied across this count-based h adjustment (equivalent to
+     * the ballmass update in SPHYNX findneighbors.f90). No-op for particles with unchanged h. */
+    if (ballmass != nullptr && h[i] != hOld)
+    {
+        T f = h[i] / hOld;
+        ballmass[i] *= f * f * f;
+    }
 
     nc[i] = ncSph;
 }

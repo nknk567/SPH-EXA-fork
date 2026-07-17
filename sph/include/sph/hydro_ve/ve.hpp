@@ -49,7 +49,53 @@ void computeVe(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box)
     }
 }
 
-/*! @brief one Newton-Raphson iteration for the smoothing length constraint rho * h^3 = eta * m
+/*! @brief update volume elements from the converged density for use in the next time-step
+ *
+ * As in SPHYNX (update.f90), the VE weights of the next step are m / rho with the converged
+ * density rho = kx * m / xm of the current step, i.e. xm <- xm / kx. This makes the weights
+ * independent of the positions at force evaluation time.
+ */
+template<class Dataset>
+void convergedVolumeElements(const GroupView& grp, Dataset& d)
+{
+    if constexpr (d.useGpu) { gpu::convergedVolumeElements(grp, d); }
+    else
+    {
+        const auto* kx = d.kx.data();
+        auto*       xm = d.xm.data();
+#pragma omp parallel for schedule(static)
+        for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
+        {
+            xm[i] /= kx[i];
+        }
+    }
+}
+
+/*! @brief initialize the per-particle Newton-Raphson target ballmass = rho * h^3
+ *
+ * Called with the current density estimate rho = kx * m / xm, this anchors the constraint such
+ * that it is satisfiable at the current h for every particle, including free surfaces.
+ */
+template<class Dataset>
+void ballmassFromDensity(const GroupView& grp, Dataset& d)
+{
+    if constexpr (d.useGpu) { gpu::ballmassFromDensity(grp, d); }
+    else
+    {
+        const auto* kx       = d.kx.data();
+        const auto* xm       = d.xm.data();
+        const auto* m        = d.m.data();
+        const auto* h        = d.h.data();
+        auto*       ballmass = d.ballmass.data();
+#pragma omp parallel for schedule(static)
+        for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
+        {
+            ballmass[i] = kx[i] * m[i] / xm[i] * h[i] * h[i] * h[i];
+        }
+    }
+}
+
+/*! @brief one Newton-Raphson iteration for the smoothing length constraint rho * h^3 = ballmass
  *
  * Iterates over the fixed neighbor list with fixed volume elements xm and updates h of locally
  * owned particles in place. Uses the ay field as scratch space for the updated smoothing length.
@@ -60,7 +106,7 @@ void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box)
     if constexpr (d.useGpu) { gpu::computeVeNR(grp, d, box); }
     else
     {
-        veNRIjLoop(d.neighborhood, d.K, ballmassEta<Tc>(d.ng0), d.xm.data(), d.m.data(), d.wh.data(), d.whd.data(),
+        veNRIjLoop(d.neighborhood, d.K, d.xm.data(), d.m.data(), d.ballmass.data(), d.wh.data(), d.whd.data(),
                    d.kx.data(), d.ay.data());
         std::copy(d.ay.data() + grp.firstBody, d.ay.data() + grp.lastBody, d.h.data() + grp.firstBody);
     }
