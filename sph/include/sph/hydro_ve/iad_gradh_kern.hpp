@@ -84,6 +84,10 @@ template<class T, class Tc>
 struct IADGradhPostamble
 {
     Tc K;
+    //! @brief kernel lookup table, needed for the self-contribution to grad-h when nrMode is active
+    const T* wh = nullptr;
+    //! @brief true if h is converged with Newton-Raphson iterations to satisfy rho * h^3 = const
+    bool nrMode = false;
 
     template<class ParticleData, class Result>
     constexpr auto operator()(const ParticleData& iData, const Result& result) const
@@ -131,10 +135,22 @@ struct IADGradhPostamble
 
         T rhoi = kxi * mi / xmi;
 
-        // The following line uses kxi instead of rhoi/rho0i so that it doesn't need to save an extra variable.
-        // It is correct. However, assumes that the VE definition is xmass=mass/rho.
-        // If the VE definition changes, this line needs to be updated accordingly.
-        whomegai = whomegai * mi / xmi - rhoi * sum_error + (kxi - K * xmi * h3Inv) * (wrho0i - rhoi / kxi * sum_error);
+        if (nrMode)
+        {
+            /* With Newton-Raphson iterated h, the volume elements xm_j are fixed weights and h satisfies
+             * rho * h^3 = const, so the consistent grad-h term is Omega = 1 + h/(3 rho) * m/xm * dkx/dh
+             * at fixed xm. The self-contribution -3 * W(0) * xm_i * K/h^4 to dkx/dh is added here
+             * because the pairwise sum excludes i == j. */
+            whomegai = (whomegai - T(3) * lt::lookup(wh, T(0)) * xmi * dnorm) * mi / xmi;
+        }
+        else
+        {
+            // The following line uses kxi instead of rhoi/rho0i so that it doesn't need to save an extra variable.
+            // It is correct. However, assumes that the VE definition is xmass=mass/rho.
+            // If the VE definition changes, this line needs to be updated accordingly.
+            whomegai =
+                whomegai * mi / xmi - rhoi * sum_error + (kxi - K * xmi * h3Inv) * (wrho0i - rhoi / kxi * sum_error);
+        }
         T dhdrho = -hi / (rhoi * T(3)); // This /3 is the dimension hard-coded.
 
         T gradhi = T(1) - dhdrho * whomegai;

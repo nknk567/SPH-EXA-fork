@@ -89,7 +89,8 @@ extern void computePositionsGpu(const GroupView& grp, float dt, util::array<floa
                                 Thydro* mui, Tc gamma, Tc constCv, const cstone::Box<Tc>& box);
 
 template<class Th, class KeyType>
-extern bool updateSmoothingLengthGpu(const GroupView&, unsigned ng0, const unsigned* nc, Th* h, KeyType* keys);
+extern bool updateSmoothingLengthGpu(const GroupView&, unsigned ng0, const unsigned* nc, Th* h, KeyType* keys,
+                                     bool adjustH);
 
 template<class T, class Dataset>
 extern void updateSmoothingLengthIterativeGpu(const GroupView&, Dataset& d, const cstone::Box<T>& box);

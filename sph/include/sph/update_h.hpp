@@ -14,7 +14,8 @@ namespace sph
 using cstone::LocalIndex;
 
 template<class T, class KeyType>
-bool updateSmoothingLengthCpu(size_t startIndex, size_t endIndex, unsigned ng0, const unsigned* nc, T* h, KeyType* keys)
+bool updateSmoothingLengthCpu(size_t startIndex, size_t endIndex, unsigned ng0, const unsigned* nc, T* h, KeyType* keys,
+                              bool adjustH)
 {
     bool keysRemoved = false;
 #pragma omp parallel for schedule(static)
@@ -25,7 +26,7 @@ bool updateSmoothingLengthCpu(size_t startIndex, size_t endIndex, unsigned ng0, 
             keys[i]     = cstone::removeKey<KeyType>{};
             keysRemoved = true;
         }
-        h[i] = updateH(ng0, nc[i], h[i]);
+        if (adjustH) { h[i] = updateH(ng0, nc[i], h[i]); }
 
 #ifndef NDEBUG
         if (std::isinf(h[i]) || std::isnan(h[i])) printf("ERROR::h(%lu) ngi %d h %f\n", i, nc[i], h[i]);
@@ -34,18 +35,24 @@ bool updateSmoothingLengthCpu(size_t startIndex, size_t endIndex, unsigned ng0, 
     return keysRemoved;
 }
 
+/*! @brief flag unresolvable particles for removal and nudge h towards the target neighbor count
+ *
+ * @param adjustH  if false, only the removal flagging is performed. Used when h is instead
+ *                 converged with Newton-Raphson iterations during the force computation.
+ */
 template<class Dataset>
-bool updateSmoothingLength(const GroupView& grp, Dataset& d)
+bool updateSmoothingLength(const GroupView& grp, Dataset& d, bool adjustH = true)
 {
     using namespace cstone;
     if constexpr (d.useGpu)
     {
-        bool keysRemoved = updateSmoothingLengthGpu(grp, d.ng0, rawPtr(d.nc), rawPtr(d.h), rawPtr(d.keys));
+        bool keysRemoved = updateSmoothingLengthGpu(grp, d.ng0, rawPtr(d.nc), rawPtr(d.h), rawPtr(d.keys), adjustH);
         return keysRemoved;
     }
     else
     {
-        return updateSmoothingLengthCpu(grp.firstBody, grp.lastBody, d.ng0, rawPtr(d.nc), rawPtr(d.h), rawPtr(d.keys));
+        return updateSmoothingLengthCpu(grp.firstBody, grp.lastBody, d.ng0, rawPtr(d.nc), rawPtr(d.h), rawPtr(d.keys),
+                                        adjustH);
     }
 }
 

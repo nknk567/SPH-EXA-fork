@@ -84,9 +84,7 @@ struct VePostamble
 
 template<class Neighbordhood, class Tc, class T>
 void veIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const T* wh, T* kx)
-{
-    neighborhood.ijLoop(std::make_tuple(xm), std::make_tuple(kx), VeInteraction{wh}, VePostamble<T, Tc>{K});
-}
+{ neighborhood.ijLoop(std::make_tuple(xm), std::make_tuple(kx), VeInteraction{wh}, VePostamble<T, Tc>{K}); }
 
 /*! @brief factor eta of the smoothing-length constraint rho * h^3 = eta * m
  *
@@ -95,9 +93,7 @@ void veIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const T* wh,
  */
 template<class T>
 constexpr T ballmassEta(unsigned ng0)
-{
-    return T(3) * T(ng0) / (T(32) * M_PI);
-}
+{ return T(3) * T(ng0) / (T(32) * M_PI); }
 
 /*! @brief kernel sums for the Newton-Raphson iteration of the smoothing length
  *
@@ -158,8 +154,13 @@ struct VeNRPostamble
         T dg       = -(T(3) * ballmass * h3Inv * hInv + dkxdh * mi / xmassi);
 
         T deltah = -g / dg;
-        // reject diverging steps (also catches NaN), same safeguard as SPHYNX calculate_hNR.f90
-        if (!(std::abs(deltah) < T(0.2) * hi)) { deltah = T(0); }
+        if (!std::isfinite(deltah)) { deltah = T(0); }
+        /* Limit steps to 20% of h. SPHYNX (calculate_hNR.f90) rejects such steps entirely, but its
+         * ballmass target is re-baselined to the current h whenever neighbor counts get out of
+         * bounds, whereas the fixed target eta * m can legitimately require larger adjustments,
+         * e.g. at density discontinuities or free surfaces. Clamping keeps making progress there. */
+        T maxStep = T(0.2) * hi;
+        deltah    = deltah > maxStep ? maxStep : (deltah < -maxStep ? -maxStep : deltah);
 
         return std::make_tuple(kxi, hi + deltah);
     }

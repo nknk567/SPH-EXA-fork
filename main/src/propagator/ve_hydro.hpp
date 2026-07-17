@@ -171,7 +171,10 @@ public:
             domain.exchangeHalos(std::tuple_cat(std::tie(get<"h">(d)), get<"vx", "vy", "vz", "kx">(d)), get<"ax">(d),
                                  get<"keys">(d));
         }
-        else { domain.exchangeHalos(get<"vx", "vy", "vz", "kx">(d), get<"ax">(d), get<"keys">(d)); }
+        else
+        {
+            domain.exchangeHalos(get<"vx", "vy", "vz", "kx">(d), get<"ax">(d), get<"keys">(d));
+        }
         timer.step("mpi::synchronizeHalos");
 
         release(d, "ay", "az");
@@ -195,7 +198,10 @@ public:
             domain.exchangeHalos(get<"dV11", "dV12", "dV13", "dV22", "dV23", "dV33", "prho", "alpha">(d), get<"ax">(d),
                                  get<"keys">(d));
         }
-        else { domain.exchangeHalos(get<"prho", "alpha">(d), get<"ax">(d), get<"keys">(d)); }
+        else
+        {
+            domain.exchangeHalos(get<"prho", "alpha">(d), get<"ax">(d), get<"keys">(d));
+        }
         timer.step("mpi::synchronizeHalos");
 
         release(d, "divv", "gradh");
@@ -229,7 +235,10 @@ public:
         computeTimestep(first, last, d);
         timer.step("Timestep");
         computePositions(groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)});
-        bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d);
+        /* With Newton-Raphson iterations active, h is converged towards rho * h^3 = eta * m during
+         * the force computation; nudging h towards the neighbor count target here would displace it
+         * from the converged solution every step. Unresolvable particles are still flagged. */
+        bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d, /*adjustH*/ d.hNRIterMax == 0);
         if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
         {
             throw std::runtime_error("Neighbor search did not converge\n");

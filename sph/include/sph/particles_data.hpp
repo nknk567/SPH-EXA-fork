@@ -176,7 +176,10 @@ public:
                     ar->stepAttribute(attribute, &tmp, attrSize);
                     *location = static_cast<EType>(tmp);
                 }
-                else { ar->stepAttribute(attribute, location, attrSize); }
+                else
+                {
+                    ar->stepAttribute(attribute, location, attrSize);
+                }
             }
             catch (std::out_of_range&)
             {
@@ -412,15 +415,11 @@ private:
 
 template<class Dataset, class... Fs>
 void release(Dataset& d, const Fs&... fs)
-{
-    d.release(fs...);
-}
+{ d.release(fs...); }
 
 template<class Dataset, class... Fs>
 void acquire(Dataset& d, const Fs&... fs)
-{
-    d.acquire(fs...);
-}
+{ d.acquire(fs...); }
 
 // TODO move this to a better place
 template<class Vector, cstone::execution::Policy Exec>
@@ -433,7 +432,10 @@ void fillMassHalos(Exec exec, Vector& m, std::size_t first, std::size_t last)
         cstone::memcpyD2HAsync(exec, m.data() + first, 1, &mass);
         cstone::syncGpu(exec);
     }
-    else { mass = m[first]; }
+    else
+    {
+        mass = m[first];
+    }
 
     cstone::fill(exec, m.begin(), m.begin() + first, mass);
     cstone::fill(exec, m.begin() + last, m.end(), mass);
