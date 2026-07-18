@@ -213,7 +213,8 @@ struct VeNRPostamble
         if (!std::isfinite(deltah)) { deltah = T(0); }
         // limit steps to 20% of h, as SPHYNX calculate_hNR.f90 (which zeroes such steps instead)
         T maxStep = T(0.2) * hi;
-        deltah    = deltah > maxStep ? maxStep : (deltah < -maxStep ? -maxStep : deltah);
+        //        deltah    = deltah > maxStep ? maxStep : (deltah < -maxStep ? -maxStep : deltah);
+        if (deltah > maxStep || deltah < -maxStep) { deltah = 0.; }
 
         return std::make_tuple(kxi, hi + deltah);
     }
