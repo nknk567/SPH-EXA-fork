@@ -272,17 +272,21 @@ public:
         /* With Newton-Raphson iterations active, h is converged towards rho * h^3 = eta * m during
          * the force computation; nudging h towards the neighbor count target here would displace it
          * from the converged solution every step. Unresolvable particles are still flagged. */
-        bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d, /*adjustH*/ d.hNRIterMax == 0);
+        if (d.hNRIterMax == 0)
+        {
+            bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d);//, /*adjustH*/ d.hNRIterMax == 0);
+            if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
+            {
+                throw std::runtime_error("Neighbor search did not converge\n");
+            }
+        }
+
         if (d.hNRIterMax > 0)
         {
             /* volume elements of the next step, the smoothed converged volume of this step
              * (SPHYNX-style); placed after the checkpoint output so that restarts see the weights
              * that belong to the dumped positions */
             setVolumeElements(groups_.view(), d, cstone::rawPtr(volstd_));
-        }
-        if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
-        {
-            throw std::runtime_error("Neighbor search did not converge\n");
         }
         timer.step("UpdateQuantities");
     }
