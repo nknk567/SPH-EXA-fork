@@ -269,16 +269,13 @@ public:
         computeTimestep(first, last, d);
         timer.step("Timestep");
         computePositions(groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)});
-        /* With Newton-Raphson iterations active, h is converged towards rho * h^3 = eta * m during
+        /* With Newton-Raphson iterations active, h is converged towards rho * h^3 = ballmass during
          * the force computation; nudging h towards the neighbor count target here would displace it
          * from the converged solution every step. Unresolvable particles are still flagged. */
-        if (d.hNRIterMax == 0)
+        bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d, /*adjustH*/ d.hNRIterMax == 0);
+        if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
         {
-            bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d);//, /*adjustH*/ d.hNRIterMax == 0);
-            if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
-            {
-                throw std::runtime_error("Neighbor search did not converge\n");
-            }
+            throw std::runtime_error("Neighbor search did not converge\n");
         }
 
         if (d.hNRIterMax > 0)

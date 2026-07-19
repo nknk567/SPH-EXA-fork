@@ -12,7 +12,8 @@ void findNeighborsSfc(const cstone::GroupView& groups, sphexa::ParticlesData<cst
                       const cstone::Box<SphTypes::CoordinateType>& box, bool subgroups = false);
 
 template<class Th, class KeyType>
-extern bool updateSmoothingLengthGpu(const cstone::GroupView&, unsigned ng0, const unsigned* nc, Th* h, KeyType* keys);
+extern bool updateSmoothingLengthGpu(const cstone::GroupView&, unsigned ng0, const unsigned* nc, Th* h, KeyType* keys,
+                                     bool adjustH);
 
 template<class T, class Dataset>
 extern void updateSmoothingLengthIterativeGpu(const cstone::GroupView&, Dataset& d, const cstone::Box<T>& box);

@@ -236,16 +236,12 @@ template<size_t stride = 1, class Tc, class T>
 HOST_DEVICE_FUN inline void IAD_gradhJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box,
                                            const cstone::LocalIndex* neighbors, unsigned neighborsCount, const Tc* x,
                                            const Tc* y, const Tc* z, const T* h, const T* m, const T* wh, const T* whd,
-<<<<<<< HEAD
-                                           const T* xm, const T* kx, const unsigned* nc, T* c11, T* c12, T* c13, T* c22,
-                                           T* c23, T* c33, T* gradh, bool nrMode = false)
-=======
-                                           const T* xm, const T* kx, const unsigned* nc, uint64_t* id,
-                                           T* c11, T* c12, T* c13, T* c22, T* c23, T* c33, T* gradh)
->>>>>>> iad-conditioning
+                                           const T* xm, const T* kx, const unsigned* nc, uint64_t* id, T* c11, T* c12,
+                                           T* c13, T* c22, T* c23, T* c33, T* gradh, bool nrMode = false)
 {
     IADGradhInteraction      interaction{wh, whd};
-    IADGradhPostamble<T, Tc> postamble{K, wh, nrMode};
+    // condition-quality target 0: regularization disabled, reference values below are unregularized
+    IADGradhPostamble<T, Tc> postamble{K, wh, nrMode, T(0), 0u};
 
     const auto input  = std::make_tuple(m, xm, kx, nc, static_cast<const uint64_t*>(id));
     const auto output = std::make_tuple(c11, c12, c13, c22, c23, c33, gradh, id);
@@ -577,10 +573,10 @@ TEST_F(SphKernelTests, VeSmoothingLengthNewtonRaphson)
     EXPECT_LT(relResidual, 1e-8);
     EXPECT_NEAR(h[i], h0 * std::cbrt(T(1.05)), 0.02 * h0);
 
-    // a far-away target (ballmass -> inf implies deltah -> h/3) must be clamped to a 20% step
+    // a far-away target (ballmass -> inf implies deltah -> h/3) exceeds the 20% limit: step rejected
     bm[i] *= T(1e12);
     T hCap = std::get<1>(callNR());
-    EXPECT_NEAR(hCap, T(1.2) * h[i], 1e-9 * h[i]);
+    EXPECT_EQ(hCap, h[i]);
 
     h[i] = h0;
 }
@@ -608,10 +604,11 @@ TEST_F(SphKernelTests, VeNRGradhConsistency)
     T rhoi = rhoOf(hi);
     kx[i]  = rhoi * xm[i] / m[i]; // kx input of the gradh kernel, consistent with the NR density
 
-    T gradhNR = -1;
+    T                     gradhNR = -1;
+    std::vector<uint64_t> id(x.size(), 0);
     IAD_gradhJLoop(i, K, box(), neighbors.data(), neighborsCount, x.data(), y.data(), z.data(), h.data(), m.data(),
-                   wh.data(), whd.data(), xm.data(), kx.data(), nc.data(), &iad[0], &iad[1], &iad[2], &iad[3], &iad[4],
-                   &iad[5], &gradhNR, /*nrMode*/ true);
+                   wh.data(), whd.data(), xm.data(), kx.data(), nc.data(), id.data(), &iad[0], &iad[1], &iad[2],
+                   &iad[3], &iad[4], &iad[5], &gradhNR, /*nrMode*/ true);
 
     // Omega = 1 + h/(3 rho) * drho/dh with drho/dh from central finite differences
     T dh      = T(1e-4) * hi;
