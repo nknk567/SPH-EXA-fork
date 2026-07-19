@@ -164,11 +164,10 @@ struct CpuFullNbListNeighborhoodBuilder
 #pragma omp parallel for reduction(max : maxNeighbors)
         for (LocalIndex i = 0; i < numBodies; ++i)
         {
-            const unsigned neighborCount = std::min(
-                findNeighbors(i + groups.firstBody, x, y, z, hExt, tree, box, ngmax, &nbList.neighbors[i * ngmax]),
-                ngmax);
-            nbList.neighborsCount[i] = neighborCount;
-            maxNeighbors             = std::max(maxNeighbors, neighborCount);
+            const unsigned found =
+                findNeighbors(i + groups.firstBody, x, y, z, hExt, tree, box, ngmax, &nbList.neighbors[i * ngmax]);
+            nbList.neighborsCount[i] = std::min(found, ngmax);
+            maxNeighbors             = std::max(maxNeighbors, found);
         }
 
         if (maxNeighbors > ngmax)

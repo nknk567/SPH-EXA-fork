@@ -184,10 +184,13 @@ public:
             /* Newton-Raphson iterations converging h towards rho * h^3 = ballmass, such that the
              * grad-h terms are formally consistent with dh/drho = -h / (3 * rho). The iterations
              * reuse the fixed neighbor list with fixed volume elements xm and are gather-only,
-             * i.e. they require no communication. Following SPHYNX (Cabezon & Garcia-Senz). */
+             * i.e. they require no communication. Following SPHYNX (Cabezon & Garcia-Senz).
+             * volstd_ temporarily holds the pre-iteration h, bounding the cumulative change per
+             * step; it is reused for the smoothed volume later in the step. */
+            reallocate(volstd_, d.x.size(), d.getAllocGrowthRate());
             for (unsigned it = 0; it < d.hNRIterMax; ++it)
             {
-                computeVeNR(groups_.view(), d, domain.box());
+                computeVeNR(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_), it == 0);
             }
             timer.step("hNewtonRaphson");
         }

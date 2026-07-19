@@ -51,10 +51,15 @@ void computeVe(const GroupView&, Dataset& d, const cstone::Box<typename Dataset:
 template void computeVe(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
                         const cstone::Box<SphTypes::CoordinateType>&);
 
-template<class Dataset>
-void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>&)
+template<class Dataset, class Tv>
+void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* h0,
+                 bool firstIteration)
 {
-    veNRIjLoop(d.neighborhood, d.K, rawPtr(d.xm), rawPtr(d.m), rawPtr(d.ballmass), rawPtr(d.wh), rawPtr(d.whd),
+    if (firstIteration)
+    {
+        cstone::memcpyD2DAsync(cstone::execution::gpuDefaultStream, rawPtr(d.h), d.x.size(), h0);
+    }
+    veNRIjLoop(d.neighborhood, d.K, rawPtr(d.xm), rawPtr(d.m), rawPtr(d.ballmass), h0, rawPtr(d.wh), rawPtr(d.whd),
                rawPtr(d.kx), rawPtr(d.ay));
     // commit the updated smoothing lengths of locally owned particles
     cstone::memcpyD2DAsync(cstone::execution::gpuDefaultStream, rawPtr(d.ay) + grp.firstBody,
@@ -63,7 +68,7 @@ void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<typename Da
 }
 
 template void computeVeNR(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
-                          const cstone::Box<SphTypes::CoordinateType>&);
+                          const cstone::Box<SphTypes::CoordinateType>&, SphTypes::HydroType*, bool);
 
 template<class Dataset, class Tv>
 void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* volstd)

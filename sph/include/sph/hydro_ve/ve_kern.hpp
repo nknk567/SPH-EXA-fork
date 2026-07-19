@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "cstone/primitives/stl.hpp"
 #include "cstone/traversal/ijloop/ijloop.hpp"
 
 #include "sph/table_lookup.hpp"
@@ -170,8 +171,8 @@ struct VeNRInteraction
     constexpr auto operator()(const ParticleData& iData, const ParticleData& jData, cstone::Vec3<Tc> const& /* r_ij */,
                               T r2) const
     {
-        const auto [i, iPos, hi, xmassi, mi, ballmassi] = iData;
-        const auto [j, jPos, hj, xmassj, mj, ballmassj] = jData;
+        const auto [i, iPos, hi, xmassi, mi, ballmassi, h0i] = iData;
+        const auto [j, jPos, hj, xmassj, mj, ballmassj, h0j] = jData;
 
         auto hInv = T(1) / hi;
 
@@ -196,8 +197,8 @@ struct VeNRPostamble
     template<class ParticleData, class Result>
     constexpr auto operator()(const ParticleData& iData, const Result& result) const
     {
-        const auto [i, iPos, hi, xmassi, mi, ballmassi] = iData;
-        auto [kxi, dkxi]                                = result;
+        const auto [i, iPos, hi, xmassi, mi, ballmassi, h0i] = iData;
+        auto [kxi, dkxi]                                     = result;
 
         auto hInv  = T(1) / hi;
         auto h3Inv = hInv * hInv * hInv;
@@ -211,24 +212,39 @@ struct VeNRPostamble
 
         T deltah = -g / dg;
         if (!std::isfinite(deltah)) { deltah = T(0); }
+
+        /* Omega measures the h-sensitivity of the density with fixed volume elements. It vanishes
+         * when all kernel mass sits near the center or the edge of the support (isolated particle
+         * in a void, or a clustered pair). There the constraint may have no root: Newton would run
+         * h towards zero in always-accepted steps (observed as a blow-up trigger), so freeze h and
+         * leave the adjustment to the neighbor-count management. */
+        T omega = T(1) + hi * dkxdh / (T(3) * kxi);
+        if (!(omega > T(0.1))) { deltah = T(0); }
+
         // reject steps larger than 20% of h, as SPHYNX calculate_hNR.f90
         T maxStep = T(0.2) * hi;
         if (deltah > maxStep || deltah < -maxStep) { deltah = T(0); }
 
-        return std::make_tuple(kxi, hi + deltah);
+        // limit the cumulative change over all NR iterations of this step to +-20% of the initial h
+        T hNew = hi + deltah;
+        hNew   = stl::min(hNew, T(1.2) * h0i);
+        hNew   = stl::max(hNew, T(0.8) * h0i);
+
+        return std::make_tuple(kxi, hNew);
     }
 };
 
 /*! @brief one Newton-Raphson iteration of the smoothing length
  *
  * The updated smoothing length is stored in @p hNew (may not alias h: h_j is read concurrently),
- * @p kx receives the volume element normalization evaluated at the old h.
+ * @p kx receives the volume element normalization evaluated at the old h. @p h0 is the smoothing
+ * length before the first NR iteration of the step, bounding the cumulative change.
  */
 template<class Neighbordhood, class Tc, class T, class Tm>
-void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const Tm* m, const T* ballmass, const T* wh,
-                const T* whd, T* kx, T* hNew)
+void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const Tm* m, const T* ballmass, const T* h0,
+                const T* wh, const T* whd, T* kx, T* hNew)
 {
-    neighborhood.ijLoop(std::make_tuple(xm, m, ballmass), std::make_tuple(kx, hNew), VeNRInteraction<T>{wh, whd},
+    neighborhood.ijLoop(std::make_tuple(xm, m, ballmass, h0), std::make_tuple(kx, hNew), VeNRInteraction<T>{wh, whd},
                         VeNRPostamble<T, Tc>{K});
 }
 

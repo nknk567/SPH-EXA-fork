@@ -95,14 +95,17 @@ void ballmassFromDensity(const GroupView& grp, Dataset& d)
  *
  * Iterates over the fixed neighbor list with fixed volume elements xm and updates h of locally
  * owned particles in place. Uses the ay field as scratch space for the updated smoothing length.
+ * @p h0 holds the smoothing lengths before the first NR iteration (filled here when
+ * @p firstIteration is set) and bounds the cumulative h change of the step to +-20%.
  */
-template<typename Tc, class Dataset>
-void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box)
+template<typename Tc, class Dataset, class Tv>
+void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, Tv* h0, bool firstIteration)
 {
-    if constexpr (d.useGpu) { gpu::computeVeNR(grp, d, box); }
+    if constexpr (d.useGpu) { gpu::computeVeNR(grp, d, box, h0, firstIteration); }
     else
     {
-        veNRIjLoop(d.neighborhood, d.K, d.xm.data(), d.m.data(), d.ballmass.data(), d.wh.data(), d.whd.data(),
+        if (firstIteration) { std::copy(d.h.data(), d.h.data() + d.x.size(), h0); }
+        veNRIjLoop(d.neighborhood, d.K, d.xm.data(), d.m.data(), d.ballmass.data(), h0, d.wh.data(), d.whd.data(),
                    d.kx.data(), d.ay.data());
         std::copy(d.ay.data() + grp.firstBody, d.ay.data() + grp.lastBody, d.h.data() + grp.firstBody);
     }

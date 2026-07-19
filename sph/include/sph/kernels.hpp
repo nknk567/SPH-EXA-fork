@@ -2,6 +2,7 @@
 
 #include "cstone/cuda/annotation.hpp"
 #include "cstone/findneighbors.hpp"
+#include "cstone/primitives/stl.hpp"
 #include "cstone/util/array.hpp"
 
 namespace sph
@@ -39,11 +40,50 @@ HOST_DEVICE_FUN void updateHIterative(unsigned ng0, unsigned ngmax, const cstone
                                       const Tc* __restrict__ x, const Tc* __restrict__ y, const Tc* __restrict__ z,
                                       T* __restrict__ h, unsigned* __restrict__ nc, T* __restrict__ ballmass = nullptr)
 {
+    const T hOld = h[i];
+
+    if (ballmass != nullptr)
+    {
+        /* Newton-Raphson mode: h is controlled by the constraint rho * h^3 = ballmass; the neighbor
+         * count only guards the neighbor list capacity. As in SPHYNX findneighbors.f90, the band is
+         * wide, violations are corrected with a single gentle nudge towards just inside the violated
+         * boundary (hysteresis), and the per-step change of h is limited to +-10%. Every h change
+         * re-baselines ballmass, so frequent or large corrections would degrade energy conservation
+         * and fight the NR iteration (limit cycle).
+         */
+        /* The upper limit stays below the neighbor list capacity ngmax: NR may grow h by up to 20%
+         * after this check, so intervening early keeps list overflow (silent truncation) rare. */
+        const unsigned bandMin = T(0.6) * ng0;
+        const unsigned bandMax = stl::min(unsigned(T(0.9) * ngmax), unsigned(T(1.5) * ng0));
+
+        unsigned ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
+        if (ncSph - 1 > bandMax)
+        {
+            T target = T(0.5) * std::pow(T(1) + T(7) * T(0.9) * bandMax / T(ncSph - 1), T(1) / T(3));
+            h[i]     = stl::max(T(0.9) * hOld, hOld * target);
+        }
+        else if (ncSph < bandMin)
+        {
+            T target = T(0.5) * std::pow(T(1) + T(7) * T(1.1) * bandMin / stl::max(T(ncSph - 1), T(1)), T(1) / T(3));
+            h[i]     = stl::min(T(1.1) * hOld, hOld * target);
+        }
+
+        if (h[i] != hOld)
+        {
+            /* Re-baseline the NR target such that rho * h^3 = ballmass remains satisfied across the
+             * count-based adjustment (the ballmass update in SPHYNX findneighbors.f90). */
+            T f = h[i] / hOld;
+            ballmass[i] *= f * f * f;
+            ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
+        }
+        nc[i] = ncSph;
+        return;
+    }
+
     constexpr int maxIteration = 10;
     //    const unsigned ngmin        = ng0 / 4;
     const unsigned ngmin = 0.8 * ng0;
     if (ngmax > 1.2 * ng0) { ngmax = 1.2 * ng0; }
-    const T hOld = h[i];
 
     unsigned ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
 
@@ -55,15 +95,6 @@ HOST_DEVICE_FUN void updateHIterative(unsigned ng0, unsigned ngmax, const cstone
     }
 
     if (iteration == maxIteration && (ngmin > ncSph || (ncSph - 1) > ngmax)) { ncSph = 1; }
-
-    /* Re-baseline the Newton-Raphson smoothing length target such that the constraint
-     * rho * h^3 = ballmass remains satisfied across this count-based h adjustment (equivalent to
-     * the ballmass update in SPHYNX findneighbors.f90). No-op for particles with unchanged h. */
-    if (ballmass != nullptr && h[i] != hOld)
-    {
-        T f = h[i] / hOld;
-        ballmass[i] *= f * f * f;
-    }
 
     nc[i] = ncSph;
 }

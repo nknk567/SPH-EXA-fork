@@ -34,8 +34,9 @@ void computeDensity(const GroupView&, Dataset& d, const cstone::Box<typename Dat
 template<class Dataset>
 extern void computeVe(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
-template<class Dataset>
-extern void computeVeNR(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
+template<class Dataset, class Tv>
+extern void computeVeNR(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* h0,
+                        bool firstIteration);
 
 template<class Dataset, class Tv>
 extern void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* volstd);

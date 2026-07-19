@@ -506,7 +506,9 @@ HOST_DEVICE_FUN inline std::tuple<T, T> veNRJLoop(cstone::LocalIndex i, Tc K, co
     VeNRInteraction<T>   interaction{wh, whd};
     VeNRPostamble<T, Tc> postamble{K};
 
-    const auto input = std::make_tuple(xm, m, ballmass);
+    // each call passes the current h as the step-start h0, i.e. the cumulative +-20% limit
+    // acts per call here
+    const auto input = std::make_tuple(xm, m, ballmass, h);
     T          kxi = 0, hNew = 0;
     const auto output = std::make_tuple((&kxi) - i, (&hNew) - i);
 

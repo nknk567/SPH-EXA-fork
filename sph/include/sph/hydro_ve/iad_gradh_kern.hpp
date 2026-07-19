@@ -160,6 +160,11 @@ struct IADGradhPostamble
         T dhdrho = -hi / (rhoi * T(3)); // This /3 is the dimension hard-coded.
 
         T gradhi = T(1) - dhdrho * whomegai;
+        /* With NR-iterated h, Omega >= 0 by construction but approaches zero when all kernel mass
+         * sits near the center or edge of the support (void or clustered-pair configurations).
+         * prho ~ 1/Omega in the EOS: floor it to keep the pressure term bounded in such transients.
+         * Legitimate values stay well above the floor. */
+        if (nrMode && gradhi < T(0.1)) { gradhi = T(0.1); }
         return std::make_tuple(c11i, c12i, c13i, c22i, c23i, c33i, gradhi, newId);
     }
 };
