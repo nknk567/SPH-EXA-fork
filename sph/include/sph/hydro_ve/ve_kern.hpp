@@ -34,6 +34,7 @@
 #include "cstone/primitives/stl.hpp"
 #include "cstone/traversal/ijloop/ijloop.hpp"
 
+#include "sph/kernels.hpp"
 #include "sph/table_lookup.hpp"
 
 namespace sph
@@ -225,10 +226,12 @@ struct VeNRPostamble
         T maxStep = T(0.2) * hi;
         if (deltah > maxStep || deltah < -maxStep) { deltah = T(0); }
 
-        // limit the cumulative change over all NR iterations of this step to +-20% of the initial h
+        /* Limit the cumulative change over all NR iterations of this step to +-hNRStepMax of the
+         * initial h. The upper bound also guarantees that the extended-radius neighbor list built
+         * before the iterations remains complete for the final h. */
         T hNew = hi + deltah;
-        hNew   = stl::min(hNew, T(1.2) * h0i);
-        hNew   = stl::max(hNew, T(0.8) * h0i);
+        hNew   = stl::min(hNew, (T(1) + T(hNRStepMax)) * h0i);
+        hNew   = stl::max(hNew, (T(1) - T(hNRStepMax)) * h0i);
 
         return std::make_tuple(kxi, hNew);
     }

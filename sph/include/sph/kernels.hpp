@@ -8,6 +8,25 @@
 namespace sph
 {
 
+/*! @brief NR mode: maximum relative h change per step by the neighbor-count management (updateHIterative)
+ *
+ * Together with @a hNRStepMax this bounds the total growth of h between halo discovery and the
+ * force kernels, which sizes the halo search extension.
+ */
+constexpr float hNudgeMax = 0.1;
+
+/*! @brief NR mode: maximum cumulative relative h change over the NR iterations of one step (VeNRPostamble)
+ *
+ * The neighbor lists are built before the NR iterations move h; extending the list search radius
+ * by (1 + hNRStepMax) keeps them complete for the final h (the interaction cutoff uses the live h).
+ * Keep this tight: it is ample for the sub-percent per-step h movement of converged NR tracking
+ * (bulk changes are handled by the neighbor-count management before the list build), while the
+ * extended capture radius reaching past the kernel support inflates neighbor counts steeply where
+ * a large-h particle borders a dense region (e.g. the shell of a blast wave) and would overflow
+ * the neighbor list capacity ngmax (silently truncating pairs) if chosen generously.
+ */
+constexpr float hNRStepMax = 0.05;
+
 //! @brief compute time-step based on the signal velocity
 template<class T1, class T2, class T3>
 HOST_DEVICE_FUN auto tsKCourant(T1 maxvsignal, T2 h, T3 c, float Kcour)
@@ -47,25 +66,28 @@ HOST_DEVICE_FUN void updateHIterative(unsigned ng0, unsigned ngmax, const cstone
         /* Newton-Raphson mode: h is controlled by the constraint rho * h^3 = ballmass; the neighbor
          * count only guards the neighbor list capacity. As in SPHYNX findneighbors.f90, the band is
          * wide, violations are corrected with a single gentle nudge towards just inside the violated
-         * boundary (hysteresis), and the per-step change of h is limited to +-10%. Every h change
-         * re-baselines ballmass, so frequent or large corrections would degrade energy conservation
-         * and fight the NR iteration (limit cycle).
+         * boundary (hysteresis), and the per-step change of h is limited to +-hNudgeMax. Every h
+         * change re-baselines ballmass, so frequent or large corrections would degrade energy
+         * conservation and fight the NR iteration (limit cycle).
          */
-        /* The upper limit stays below the neighbor list capacity ngmax: NR may grow h by up to 20%
-         * after this check, so intervening early keeps list overflow (silent truncation) rare. */
+        /* ngmax bounds the extended-radius neighbor list (search radius scaled by 1 + hNRStepMax to
+         * stay complete under the NR iterations), which holds up to (1 + hNRStepMax)^3 more entries
+         * than counted here within 2h. The 0.9 leaves headroom for counts transiently above the band
+         * (the nudge only moves h by hNudgeMax per step). */
+        constexpr T extVol     = (T(1) + T(hNRStepMax)) * (T(1) + T(hNRStepMax)) * (T(1) + T(hNRStepMax));
         const unsigned bandMin = T(0.6) * ng0;
-        const unsigned bandMax = stl::min(unsigned(T(0.9) * ngmax), unsigned(T(1.5) * ng0));
+        const unsigned bandMax = stl::min(unsigned(T(0.9) * ngmax / extVol), unsigned(T(1.5) * ng0));
 
         unsigned ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
         if (ncSph - 1 > bandMax)
         {
             T target = T(0.5) * std::pow(T(1) + T(7) * T(0.9) * bandMax / T(ncSph - 1), T(1) / T(3));
-            h[i]     = stl::max(T(0.9) * hOld, hOld * target);
+            h[i]     = stl::max((T(1) - T(hNudgeMax)) * hOld, hOld * target);
         }
         else if (ncSph < bandMin)
         {
             T target = T(0.5) * std::pow(T(1) + T(7) * T(1.1) * bandMin / stl::max(T(ncSph - 1), T(1)), T(1) / T(3));
-            h[i]     = stl::min(T(1.1) * hOld, hOld * target);
+            h[i]     = stl::min((T(1) + T(hNudgeMax)) * hOld, hOld * target);
         }
 
         if (h[i] != hOld)

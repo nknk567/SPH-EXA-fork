@@ -126,6 +126,14 @@ public:
     void sync(DomainType& domain, DataType& simData) override
     {
         auto& d = simData.hydro;
+        if (d.hNRIterMax > 0)
+        {
+            /* After halo discovery, h can still grow by up to hNudgeMax (neighbor-count management)
+             * times hNRStepMax (NR iterations) before the force kernels run. Enlarging the halo
+             * search accordingly guarantees that all remote particles within the final support
+             * radius 2h are present as halos. */
+            domain.setHaloFactor((1.0f + sph::hNudgeMax) * (1.0f + sph::hNRStepMax));
+        }
         if (d.g != 0.0)
         {
             domain.syncGrav(get<"keys">(d), get<"x">(d), get<"y">(d), get<"z">(d), get<"h">(d), get<"m">(d),
@@ -137,6 +145,11 @@ public:
                         std::tuple_cat(std::tie(get<"m">(d)), get<ConservedFields>(d)), get<DependentFields>(d));
         }
         d.treeView = domain.octreeProperties();
+        /* The neighbor list is built right after this sync, but the NR iterations move h by up to
+         * hNRStepMax before the force kernels run. The list builders extend the capture radius to
+         * 2h * searchExtFactor (the interaction kernels always cut at the live 2h), so the lists
+         * stay complete for the final h and no pair inside the converged support is missed. */
+        if (d.hNRIterMax > 0) { d.treeView.searchExtFactor = 1.0f + sph::hNRStepMax; }
     }
 
     void computeForces(DomainType& domain, DataType& simData) override
@@ -153,6 +166,25 @@ public:
         size_t last  = domain.endIndex();
 
         fillMassHalos(domain.exec(), get<"m">(d), first, last);
+
+        if (d.hNRIterMax > 0)
+        {
+            /* The extended-radius neighbor list holds up to (1 + hNRStepMax)^3 more entries per
+             * particle than the neighbor-count band allows within 2h (up to 1.5 * ng0, see
+             * updateHIterative); the 0.9 leaves headroom for counts transiently above the band. */
+            const float    extVol   = std::pow(1.0f + sph::hNRStepMax, 3);
+            const unsigned ngmaxMin = std::ceil(1.5f * d.ng0 * extVol / 0.9f);
+            if (d.ngmax < ngmaxMin)
+            {
+                if (Base::rank_ == 0)
+                {
+                    std::cout << "Raising ngmax from " << d.ngmax << " to " << ngmaxMin
+                              << " to fit the extended neighbor search of the smoothing-length NR iterations"
+                              << std::endl;
+                }
+                d.ngmax = ngmaxMin;
+            }
+        }
 
         computeGroups(first, last, d, domain.box(), groups_);
         timer.step("computeGroups");
