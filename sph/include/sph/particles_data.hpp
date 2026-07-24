@@ -97,12 +97,13 @@ public:
     //! @brief default maximum number of neighbors per particle before additional h-adjustment will be triggered
     unsigned ngmax{150};
 
-    /*! @brief number of Newton-Raphson iterations per step to converge the smoothing length (0 = disabled)
+    /*! @brief maximum number of Newton-Raphson iterations per step to converge the smoothing length (0 = disabled)
      *
-     * When nonzero, h is iterated to satisfy rho * h^3 = ballmass (per-particle, re-baselined on
-     * count-based h adjustments) and the volume elements are carried over from the smoothed
-     * converged volume of the previous step, making the grad-h terms formally consistent.
-     * Following SPHYNX, which uses 3 iterations.
+     * When nonzero, h is iterated until convergence (at most hNRIterMax iterations) to satisfy
+     * rho * h^3 = 3 * ng0 * m / (32 * pi), a fixed target that only depends on the desired
+     * neighbor count, and the volume elements are carried over from the smoothed converged
+     * volume of the previous step, making the grad-h terms formally consistent.
+     * Following SPHYNX (Cabezon & Garcia-Senz).
      */
     unsigned hNRIterMax{0};
 
@@ -269,7 +270,6 @@ public:
     FieldVector<uint8_t>   rung;                               // rung per particle of previous timestep
     FieldVector<uint64_t>  id;                                 // unique particle id
     FieldVector<HydroType> dtCourant;                          // per-particle timestep restriction
-    FieldVector<HydroType> ballmass;                           // rho * h^3 target of the NR smoothing length iteration
 
     std::conditional_t<useGpu, sph::DeviceNeighborhoodData, sph::NeighborhoodData> neighborhood;
     cstone::OctreeNsView<RealType, KeyType>                                        treeView;
@@ -285,22 +285,21 @@ public:
      * Name of each field as string for use e.g in HDF5 output. Order has to correspond to what's returned by data().
      */
     inline static constexpr std::array fieldNames{
-        "x",     "y",    "z",        "x_m1",  "y_m1",  "z_m1",      "vx",      "vy",  "vz",   "rho",  "u",
-        "p",     "prho", "tdpdTrho", "h",     "m",     "c",         "ugrav",   "ax",  "ay",   "az",   "du",
-        "du_m1", "c11",  "c12",      "c13",   "c22",   "c23",       "c33",     "mue", "mui",  "temp", "cv",
-        "xm",    "kx",   "divv",     "curlv", "alpha", "gradh",     "keys",    "nc",  "dV11", "dV12", "dV13",
-        "dV22",  "dV23", "dV33",     "rung",  "id",    "dtCourant", "ballmass"};
+        "x",     "y",    "z",        "x_m1",  "y_m1",  "z_m1",  "vx",    "vy",   "vz", "rho",  "u",
+        "p",     "prho", "tdpdTrho", "h",     "m",     "c",     "ugrav", "ax",   "ay", "az",   "du",
+        "du_m1", "c11",  "c12",      "c13",   "c22",   "c23",   "c33",   "mue",  "mui", "temp", "cv",
+        "xm",    "kx",   "divv",     "curlv", "alpha", "gradh", "keys",  "nc",   "dV11", "dV12", "dV13",
+        "dV22",  "dV23", "dV33",     "rung",  "id",    "dtCourant"};
 
     //! @brief dataset prefix to be prepended to fieldNames for structured output
     static const inline std::string prefix{};
 
     /*! @brief conserved fields that may be missing in restart files from older versions
      *
-     * These are zero-initialized with a warning instead of failing the restart. They are
-     * recomputed before first use when running without Newton-Raphson smoothing length
-     * iterations; NR-enabled continuation runs need a checkpoint that contains them.
+     * These are zero-initialized with a warning instead of failing the restart; they are
+     * recomputed on the first step after the restart.
      */
-    inline static constexpr std::array optionalRestartFields{"xm", "ballmass"};
+    inline static constexpr std::array optionalRestartFields{"xm"};
 
     /*! @brief return a tuple of field references
      *
@@ -310,7 +309,7 @@ public:
     {
         auto ret = std::tie(x, y, z, x_m1, y_m1, z_m1, vx, vy, vz, rho, u, p, prho, tdpdTrho, h, m, c, ugrav, ax, ay,
                             az, du, du_m1, c11, c12, c13, c22, c23, c33, mue, mui, temp, cv, xm, kx, divv, curlv, alpha,
-                            gradh, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant, ballmass);
+                            gradh, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant);
 
 #if defined(__clang__) || __GNUC__ > 11
         static_assert(std::tuple_size_v<decltype(ret)> == fieldNames.size());

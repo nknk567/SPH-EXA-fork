@@ -142,6 +142,12 @@ int main(int argc, char** argv)
 
     if (parser.exists("--G")) { d.g = parser.get<double>("--G"); }
     if (parser.exists("--nrIter")) { d.hNRIterMax = parser.get<unsigned>("--nrIter"); }
+    // diagnostic override of the Courant factor, e.g. for timestep-convergence studies
+    if (const char* kcourEnv = std::getenv("SPHEXA_KCOUR"))
+    {
+        d.Kcour = std::atof(kcourEnv);
+        if (rank == 0) { std::cout << "Kcour overridden to " << d.Kcour << " (SPHEXA_KCOUR)" << std::endl; }
+    }
     bool  haveGrav = (d.g != 0.0);
     float theta    = parser.get("--theta", haveGrav ? 0.5f : 1.0f);
 
@@ -268,9 +274,9 @@ void printHelp(char* name, int rank)
 
         printf("\t--prop STRING \t Choice of SPH propagator [default: modern SPH]. For standard SPH, use \"std\" \n\n");
 
-        printf("\t--nrIter NUM \t Number of Newton-Raphson iterations per step to converge the smoothing length\n"
-               "\t\t\t towards rho * h^3 = const * m (formally consistent grad-h terms, ve propagators only)\n"
-               "\t\t\t [default 0 = disabled]\n\n");
+        printf("\t--nrIter NUM \t Maximum number of Newton-Raphson iterations per step to converge the smoothing\n"
+               "\t\t\t length towards rho * h^3 = 3 * ng0 * m / (32 pi) (formally consistent grad-h terms,\n"
+               "\t\t\t ve propagators only); iterations stop early on convergence [default 0 = disabled]\n\n");
 
         printf("\t-s NUM \t\t int(NUM):  Number of iterations (time-steps) [200],\n\
                 \t real(NUM): Time of simulation (time-model)\n\n");

@@ -67,47 +67,39 @@ void setVolumeElements(const GroupView& grp, Dataset& d, const Tv* volstd)
     else { std::copy(volstd + grp.firstBody, volstd + grp.lastBody, d.xm.data() + grp.firstBody); }
 }
 
-/*! @brief initialize the per-particle Newton-Raphson target ballmass = rho * h^3
- *
- * Called with the current density estimate rho = kx * m / xm, this anchors the constraint such
- * that it is satisfiable at the current h for every particle, including free surfaces.
- */
-template<class Dataset>
-void ballmassFromDensity(const GroupView& grp, Dataset& d)
-{
-    if constexpr (d.useGpu) { gpu::ballmassFromDensity(grp, d); }
-    else
-    {
-        const auto* kx       = d.kx.data();
-        const auto* xm       = d.xm.data();
-        const auto* m        = d.m.data();
-        const auto* h        = d.h.data();
-        auto*       ballmass = d.ballmass.data();
-#pragma omp parallel for schedule(static)
-        for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
-        {
-            ballmass[i] = kx[i] * m[i] / xm[i] * h[i] * h[i] * h[i];
-        }
-    }
-}
-
-/*! @brief one Newton-Raphson iteration for the smoothing length constraint rho * h^3 = ballmass
+/*! @brief one Newton-Raphson iteration for the smoothing length constraint rho * h^3 = eta * m
  *
  * Iterates over the fixed neighbor list with fixed volume elements xm and updates h of locally
  * owned particles in place. Uses the ay field as scratch space for the updated smoothing length.
- * @p h0 holds the smoothing lengths before the first NR iteration (filled here when
- * @p firstIteration is set) and bounds the cumulative h change of the step to +-20%.
+ * The constraint target eta = ballmassEta(ng0) depends only on the desired neighbor count.
+ * @p h0 holds the smoothing lengths at the start of the step's NR iterations (filled here when
+ * @p firstIteration is set); the cumulative upward h movement is capped at hNRExtFactor * h0 so
+ * that the neighbor lists built before the iterations remain complete for the final h.
+ *
+ * @return the largest relative h change among locally owned particles, the convergence measure
+ *         of the iteration
  */
 template<typename Tc, class Dataset, class Tv>
-void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, Tv* h0, bool firstIteration)
+auto computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, Tv* h0, bool firstIteration)
 {
-    if constexpr (d.useGpu) { gpu::computeVeNR(grp, d, box, h0, firstIteration); }
+    if constexpr (d.useGpu) { return gpu::computeVeNR(grp, d, box, h0, firstIteration); }
     else
     {
         if (firstIteration) { std::copy(d.h.data(), d.h.data() + d.x.size(), h0); }
-        veNRIjLoop(d.neighborhood, d.K, d.xm.data(), d.m.data(), d.ballmass.data(), h0, d.wh.data(), d.whd.data(),
-                   d.kx.data(), d.ay.data());
-        std::copy(d.ay.data() + grp.firstBody, d.ay.data() + grp.lastBody, d.h.data() + grp.firstBody);
+        veNRIjLoop(d.neighborhood, d.K, d.ng0, d.xm.data(), d.m.data(), h0, d.wh.data(), d.whd.data(), d.kx.data(),
+                   d.ay.data());
+
+        using Th        = std::decay_t<decltype(d.h[0])>;
+        const Th* hNew  = d.ay.data();
+        Th*       h     = d.h.data();
+        Th        maxDh = 0;
+#pragma omp parallel for schedule(static) reduction(max : maxDh)
+        for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
+        {
+            maxDh = std::max(maxDh, std::abs(hNew[i] - h[i]) / h[i]);
+            h[i]  = hNew[i];
+        }
+        return maxDh;
     }
 }
 

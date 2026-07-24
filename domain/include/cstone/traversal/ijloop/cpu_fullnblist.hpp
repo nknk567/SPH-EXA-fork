@@ -143,10 +143,11 @@ struct CpuFullNbListNeighborhoodBuilder
             h,
             ngmax};
 
-        using Th = std::remove_cvref_t<std::remove_pointer_t<ThP>>;
-        ThP hExt = h;
+        using Th            = std::remove_cvref_t<std::remove_pointer_t<ThP>>;
+        ThP        hExt     = h;
+        const bool extended = tree.searchExtFactor != 1;
         std::unique_ptr<Th[]> hExtData;
-        if (tree.searchExtFactor != 1)
+        if (extended)
         {
             if constexpr (std::is_pointer_v<ThP>)
             {
@@ -164,17 +165,34 @@ struct CpuFullNbListNeighborhoodBuilder
 #pragma omp parallel for reduction(max : maxNeighbors)
         for (LocalIndex i = 0; i < numBodies; ++i)
         {
-            const unsigned found =
+            unsigned found =
                 findNeighbors(i + groups.firstBody, x, y, z, hExt, tree, box, ngmax, &nbList.neighbors[i * ngmax]);
+            maxNeighbors = std::max(maxNeighbors, found);
+            if (extended && found > ngmax)
+            {
+                /* The neighborhood with the extended capture radius does not fit: fall back to the
+                 * plain radius for this particle instead of storing an arbitrary truncation, which
+                 * could drop neighbors inside the interaction radius while keeping extended-shell
+                 * entries outside of it. */
+                found = findNeighbors(i + groups.firstBody, x, y, z, h, tree, box, ngmax, &nbList.neighbors[i * ngmax]);
+            }
             nbList.neighborsCount[i] = std::min(found, ngmax);
-            maxNeighbors             = std::max(maxNeighbors, found);
         }
 
         if (maxNeighbors > ngmax)
         {
-            std::cerr
-                << "WARNING: overflow in neighbor list. Missing neighbors! Try to increase ngmax. Current ngmax is "
-                << ngmax << ", but found up to " << maxNeighbors << " neighbor particles." << std::endl;
+            if (extended)
+            {
+                std::cerr << "WARNING: extended neighbor search found up to " << maxNeighbors
+                          << " particles, exceeding ngmax = " << ngmax
+                          << ". Fell back to the unextended search radius for the affected particles." << std::endl;
+            }
+            else
+            {
+                std::cerr << "WARNING: overflow in neighbor list. Missing neighbors! Try to increase ngmax. Current "
+                             "ngmax is "
+                          << ngmax << ", but found up to " << maxNeighbors << " neighbor particles." << std::endl;
+            }
         }
         return nbList;
     }

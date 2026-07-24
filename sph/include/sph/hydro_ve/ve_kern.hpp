@@ -172,8 +172,8 @@ struct VeNRInteraction
     constexpr auto operator()(const ParticleData& iData, const ParticleData& jData, cstone::Vec3<Tc> const& /* r_ij */,
                               T r2) const
     {
-        const auto [i, iPos, hi, xmassi, mi, ballmassi, h0i] = iData;
-        const auto [j, jPos, hj, xmassj, mj, ballmassj, h0j] = jData;
+        const auto [i, iPos, hi, xmassi, mi, h0i] = iData;
+        const auto [j, jPos, hj, xmassj, mj, h0j] = jData;
 
         auto hInv = T(1) / hi;
 
@@ -194,12 +194,16 @@ template<class T, class Tc>
 struct VeNRPostamble
 {
     Tc K;
+    //! @brief coefficient of the fixed constraint target, ballmass_i = ballmassEta(ng0) * m_i
+    T etaBallmass;
 
     template<class ParticleData, class Result>
     constexpr auto operator()(const ParticleData& iData, const Result& result) const
     {
-        const auto [i, iPos, hi, xmassi, mi, ballmassi, h0i] = iData;
-        auto [kxi, dkxi]                                     = result;
+        const auto [i, iPos, hi, xmassi, mi, h0i] = iData;
+        auto [kxi, dkxi]                          = result;
+
+        const T ballmassi = etaBallmass * mi;
 
         auto hInv  = T(1) / hi;
         auto h3Inv = hInv * hInv * hInv;
@@ -222,16 +226,18 @@ struct VeNRPostamble
         T omega = T(1) + hi * dkxdh / (T(3) * kxi);
         if (!(omega > T(0.1))) { deltah = T(0); }
 
-        // reject steps larger than 20% of h, as SPHYNX calculate_hNR.f90
-        T maxStep = T(0.2) * hi;
-        if (deltah > maxStep || deltah < -maxStep) { deltah = T(0); }
-
-        /* Limit the cumulative change over all NR iterations of this step to +-hNRStepMax of the
-         * initial h. The upper bound also guarantees that the extended-radius neighbor list built
-         * before the iterations remains complete for the final h. */
+        /* Clamp the step to [0.5, 1.5] * h: far from the root this limits the speed of approach
+         * per iteration, the iterations continue until the relative change falls below hNRTol. */
         T hNew = hi + deltah;
-        hNew   = stl::min(hNew, (T(1) + T(hNRStepMax)) * h0i);
-        hNew   = stl::max(hNew, (T(1) - T(hNRStepMax)) * h0i);
+        hNew   = stl::min(hNew, T(1.1) * hi);
+        hNew   = stl::max(hNew, T(0.5) * hi);
+
+        /* The neighbor list of this step was built with the capture radius extended by
+         * hNRExtFactor around the step-start h0. Cumulative upward movement beyond that margin
+         * would miss pairs inside the final support (breaking momentum/energy conservation in
+         * every fast rarefaction), so cap it and let the affected particles finish converging
+         * in the following steps. Downward movement always stays inside the list. */
+        hNew = stl::min(hNew, T(hNRExtFactor) * h0i);
 
         return std::make_tuple(kxi, hNew);
     }
@@ -240,15 +246,17 @@ struct VeNRPostamble
 /*! @brief one Newton-Raphson iteration of the smoothing length
  *
  * The updated smoothing length is stored in @p hNew (may not alias h: h_j is read concurrently),
- * @p kx receives the volume element normalization evaluated at the old h. @p h0 is the smoothing
- * length before the first NR iteration of the step, bounding the cumulative change.
+ * @p kx receives the volume element normalization evaluated at the old h. The constraint target
+ * ballmassEta(ng0) * m_i depends only on the desired neighbor count and the particle mass.
+ * @p h0 is the smoothing length at the start of the step's NR iterations; the cumulative upward
+ * movement is capped at hNRExtFactor * h0 to stay within the extended neighbor list.
  */
 template<class Neighbordhood, class Tc, class T, class Tm>
-void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const Tm* m, const T* ballmass, const T* h0,
+void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, unsigned ng0, const T* xm, const Tm* m, const T* h0,
                 const T* wh, const T* whd, T* kx, T* hNew)
 {
-    neighborhood.ijLoop(std::make_tuple(xm, m, ballmass, h0), std::make_tuple(kx, hNew), VeNRInteraction<T>{wh, whd},
-                        VeNRPostamble<T, Tc>{K});
+    neighborhood.ijLoop(std::make_tuple(xm, m, h0), std::make_tuple(kx, hNew), VeNRInteraction<T>{wh, whd},
+                        VeNRPostamble<T, Tc>{K, ballmassEta<T>(ng0)});
 }
 
 } // namespace sph

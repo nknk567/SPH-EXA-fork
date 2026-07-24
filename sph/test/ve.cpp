@@ -501,14 +501,13 @@ template<size_t stride = 1, class Tc, class T, class Tm>
 HOST_DEVICE_FUN inline std::tuple<T, T> veNRJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box,
                                                   const cstone::LocalIndex* neighbors, unsigned neighborsCount,
                                                   const Tc* x, const Tc* y, const Tc* z, const T* h, const T* xm,
-                                                  const Tm* m, const T* ballmass, const T* wh, const T* whd)
+                                                  const Tm* m, T etaBallmass, const T* wh, const T* whd)
 {
     VeNRInteraction<T>   interaction{wh, whd};
-    VeNRPostamble<T, Tc> postamble{K};
+    VeNRPostamble<T, Tc> postamble{K, etaBallmass};
 
-    // each call passes the current h as the step-start h0, i.e. the cumulative +-20% limit
-    // acts per call here
-    const auto input = std::make_tuple(xm, m, ballmass, h);
+    // each call passes the current h as the step-start h0, i.e. the upward cap acts per call
+    const auto input = std::make_tuple(xm, m, h);
     T          kxi = 0, hNew = 0;
     const auto output = std::make_tuple((&kxi) - i, (&hNew) - i);
 
@@ -539,13 +538,13 @@ HOST_DEVICE_FUN inline std::tuple<T, T> veNRJLoop(cstone::LocalIndex i, Tc K, co
 
 TEST_F(SphKernelTests, VeSmoothingLengthNewtonRaphson)
 {
-    cstone::LocalIndex i = 0;
-    std::vector<T>     bm(npart, 0);
+    cstone::LocalIndex i   = 0;
+    T                  eta = 0;
 
     auto callNR = [&]()
     {
         return veNRJLoop(i, K, box(), neighbors.data(), neighborsCount, x.data(), y.data(), z.data(), h.data(),
-                         xm.data(), m.data(), bm.data(), wh.data(), whd.data());
+                         xm.data(), m.data(), eta, wh.data(), whd.data());
     };
 
     // the kx output does not depend on the ballmass target and matches the plain Ve kernel
@@ -553,9 +552,9 @@ TEST_F(SphKernelTests, VeSmoothingLengthNewtonRaphson)
     T kx0 = std::get<0>(callNR());
     EXPECT_NEAR(kx0, 1.0042661134076782, 3e-7);
 
-    // set the target constraint rho * h^3 = ballmass to 5% above the current state and perturb h
-    bm[i] = T(1.05) * kx0 * m[i] / xm[i] * h0 * h0 * h0;
-    h[i]  = T(0.9) * h0;
+    // set the target constraint rho * h^3 = eta * m to 5% above the current state and perturb h
+    eta  = T(1.05) * kx0 / xm[i] * h0 * h0 * h0;
+    h[i] = T(0.9) * h0;
 
     T relResidual = 1;
     for (int it = 0; it < 10; ++it)
@@ -564,10 +563,11 @@ TEST_F(SphKernelTests, VeSmoothingLengthNewtonRaphson)
 
         T hi        = h[i];
         T rhoi      = kxi * m[i] / xm[i];
-        relResidual = std::abs(bm[i] / (hi * hi * hi) - rhoi) / rhoi;
+        relResidual = std::abs(eta * m[i] / (hi * hi * hi) - rhoi) / rhoi;
 
-        // Newton-Raphson steps are capped at 20% of h
-        EXPECT_LE(std::abs(hNew - hi), T(0.2) * hi);
+        // Newton-Raphson steps are clamped to [0.5, 1.5] * h and capped upward at hNRExtFactor * h0
+        EXPECT_GE(hNew, T(0.5) * hi);
+        EXPECT_LE(hNew, T(hNRExtFactor) * hi);
         h[i] = hNew;
     }
 
@@ -575,10 +575,11 @@ TEST_F(SphKernelTests, VeSmoothingLengthNewtonRaphson)
     EXPECT_LT(relResidual, 1e-8);
     EXPECT_NEAR(h[i], h0 * std::cbrt(T(1.05)), 0.02 * h0);
 
-    // a far-away target (ballmass -> inf implies deltah -> h/3) exceeds the 20% limit: step rejected
-    bm[i] *= T(1e12);
-    T hCap = std::get<1>(callNR());
-    EXPECT_EQ(hCap, h[i]);
+    // a far-away target (ballmass -> inf implies deltah -> h/3) is capped at the list extension
+    T hBefore = h[i];
+    eta *= T(1e12);
+    T hFar = std::get<1>(callNR());
+    EXPECT_NEAR(hFar, hBefore * T(hNRExtFactor), 1e-6 * hBefore);
 
     h[i] = h0;
 }
@@ -589,7 +590,6 @@ TEST_F(SphKernelTests, VeNRGradhConsistency)
     cstone::LocalIndex    i = 0;
     std::vector<unsigned> nc(x.size(), neighborsCount + 1);
     std::vector<T>        iad(6);
-    std::vector<T>        bm(npart, 1);
 
     // rho(h_i) with fixed volume elements xm, evaluated through the NR kernel sums (includes self)
     auto rhoOf = [&](T hi)
@@ -597,7 +597,7 @@ TEST_F(SphKernelTests, VeNRGradhConsistency)
         T hSave = h[i];
         h[i]    = hi;
         T kxi   = std::get<0>(veNRJLoop(i, K, box(), neighbors.data(), neighborsCount, x.data(), y.data(), z.data(),
-                                        h.data(), xm.data(), m.data(), bm.data(), wh.data(), whd.data()));
+                                        h.data(), xm.data(), m.data(), T(1), wh.data(), whd.data()));
         h[i]    = hSave;
         return kxi * m[i] / xm[i];
     };

@@ -29,6 +29,10 @@
  * @author Sebastian Keller <sebastian.f.keller@gmail.com>
  */
 
+#include <thrust/execution_policy.h>
+#include <thrust/transform_reduce.h>
+#include <thrust/tuple.h>
+
 #include "cstone/cuda/cuda_utils.cuh"
 
 #include "sph/neighborhood_gpu.hpp"
@@ -51,24 +55,39 @@ void computeVe(const GroupView&, Dataset& d, const cstone::Box<typename Dataset:
 template void computeVe(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
                         const cstone::Box<SphTypes::CoordinateType>&);
 
-template<class Dataset, class Tv>
-void computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* h0,
-                 bool firstIteration)
+template<class T>
+struct RelativeHChange
 {
+    __device__ T operator()(const thrust::tuple<T, T>& hNew_h) const
+    {
+        return std::abs(thrust::get<0>(hNew_h) - thrust::get<1>(hNew_h)) / thrust::get<1>(hNew_h);
+    }
+};
+
+template<class Dataset, class Tv>
+typename Dataset::HydroType computeVeNR(const GroupView& grp, Dataset& d,
+                                        const cstone::Box<typename Dataset::RealType>&, Tv* h0, bool firstIteration)
+{
+    using Th = typename Dataset::HydroType;
     if (firstIteration)
     {
         cstone::memcpyD2DAsync(cstone::execution::gpuDefaultStream, rawPtr(d.h), d.x.size(), h0);
     }
-    veNRIjLoop(d.neighborhood, d.K, rawPtr(d.xm), rawPtr(d.m), rawPtr(d.ballmass), h0, rawPtr(d.wh), rawPtr(d.whd),
-               rawPtr(d.kx), rawPtr(d.ay));
+    veNRIjLoop(d.neighborhood, d.K, d.ng0, rawPtr(d.xm), rawPtr(d.m), h0, rawPtr(d.wh), rawPtr(d.whd), rawPtr(d.kx),
+               rawPtr(d.ay));
+    auto begin = thrust::make_zip_iterator(rawPtr(d.ay) + grp.firstBody, rawPtr(d.h) + grp.firstBody);
+    auto end   = thrust::make_zip_iterator(rawPtr(d.ay) + grp.lastBody, rawPtr(d.h) + grp.lastBody);
+    Th   maxDh =
+        thrust::transform_reduce(thrust::device, begin, end, RelativeHChange<Th>{}, Th(0), thrust::maximum<Th>{});
     // commit the updated smoothing lengths of locally owned particles
     cstone::memcpyD2DAsync(cstone::execution::gpuDefaultStream, rawPtr(d.ay) + grp.firstBody,
                            grp.lastBody - grp.firstBody, rawPtr(d.h) + grp.firstBody);
     checkGpuErrors(cudaDeviceSynchronize());
+    return maxDh;
 }
 
-template void computeVeNR(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
-                          const cstone::Box<SphTypes::CoordinateType>&, SphTypes::HydroType*, bool);
+template SphTypes::HydroType computeVeNR(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
+                                         const cstone::Box<SphTypes::CoordinateType>&, SphTypes::HydroType*, bool);
 
 template<class Dataset, class Tv>
 void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* volstd)
@@ -91,26 +110,6 @@ void setVolumeElements(const GroupView& grp, Dataset& d, const Tv* volstd)
 template void setVolumeElements(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
                                 const SphTypes::HydroType*);
 
-template<class T, class Th, class Tm>
-__global__ void ballmassFromDensityKernel(cstone::LocalIndex first, cstone::LocalIndex last, const T* kx, const T* xm,
-                                          const Tm* m, const Th* h, T* ballmass)
-{
-    cstone::LocalIndex i = first + blockDim.x * blockIdx.x + threadIdx.x;
-    if (i < last) { ballmass[i] = kx[i] * m[i] / xm[i] * h[i] * h[i] * h[i]; }
-}
-
-template<class Dataset>
-void ballmassFromDensity(const GroupView& grp, Dataset& d)
-{
-    unsigned numThreads = 256;
-    unsigned numBlocks  = cstone::iceil(grp.lastBody - grp.firstBody, numThreads);
-    if (numBlocks == 0) { return; }
-    ballmassFromDensityKernel<<<numBlocks, numThreads>>>(grp.firstBody, grp.lastBody, rawPtr(d.kx), rawPtr(d.xm),
-                                                         rawPtr(d.m), rawPtr(d.h), rawPtr(d.ballmass));
-    checkGpuErrors(cudaDeviceSynchronize());
-}
-
-template void ballmassFromDensity(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d);
 
 } // namespace gpu
 } // namespace sph

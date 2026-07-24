@@ -34,18 +34,17 @@ void computeDensity(const GroupView&, Dataset& d, const cstone::Box<typename Dat
 template<class Dataset>
 extern void computeVe(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
+//! @brief returns the largest relative h change among locally owned particles
 template<class Dataset, class Tv>
-extern void computeVeNR(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* h0,
-                        bool firstIteration);
+extern typename Dataset::HydroType computeVeNR(const GroupView&, Dataset& d,
+                                               const cstone::Box<typename Dataset::RealType>&, Tv* h0,
+                                               bool firstIteration);
 
 template<class Dataset, class Tv>
 extern void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* volstd);
 
 template<class Dataset, class Tv>
 extern void setVolumeElements(const GroupView&, Dataset& d, const Tv* volstd);
-
-template<class Dataset>
-extern void ballmassFromDensity(const GroupView&, Dataset& d);
 
 template<class Dataset>
 extern void computeIadDivvCurlvGradh(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
