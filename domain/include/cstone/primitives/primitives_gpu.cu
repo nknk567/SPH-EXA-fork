@@ -93,6 +93,8 @@ template void gather(execution::Gpu, const int*, size_t, const uint8_t*, uint32_
 template void gather(execution::Gpu, const int*, size_t, const int*, int*);
 template void gather(execution::Gpu, const int*, size_t, const uint32_t*, uint32_t*);
 template void gather(execution::Gpu, const int*, size_t, const uint64_t*, uint64_t*);
+template void gather(execution::Gpu, const int*, size_t, const float*, float*);
+template void gather(execution::Gpu, const int*, size_t, const double*, double*);
 template void gather(execution::Gpu, const int*, size_t, const util::array<float, 3>*, util::array<float, 3>*);
 template void gather(execution::Gpu, const int*, size_t, const util::array<float, 4>*, util::array<float, 4>*);
 template void gather(execution::Gpu, const int*, size_t, const util::array<float, 8>*, util::array<float, 8>*);
@@ -137,6 +139,8 @@ void scatter(execution::Gpu exec, const IndexType* map, size_t n, const T* sourc
 template void scatter(execution::Gpu, const int*, size_t, const int*, int*);
 template void scatter(execution::Gpu, const int*, size_t, const uint32_t*, uint32_t*);
 template void scatter(execution::Gpu, const int*, size_t, const uint64_t*, uint64_t*);
+template void scatter(execution::Gpu, const int*, size_t, const float*, float*);
+template void scatter(execution::Gpu, const int*, size_t, const double*, double*);
 template void scatter(execution::Gpu, const int*, size_t, const util::array<float, 4>*, util::array<float, 4>*);
 template void scatter(execution::Gpu, const int*, size_t, const util::array<float, 8>*, util::array<float, 8>*);
 template void scatter(execution::Gpu, const int*, size_t, const util::array<float, 12>*, util::array<float, 12>*);
