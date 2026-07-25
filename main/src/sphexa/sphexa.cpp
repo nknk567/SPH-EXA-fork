@@ -143,12 +143,6 @@ int main(int argc, char** argv)
     if (parser.exists("--G")) { d.g = parser.get<double>("--G"); }
     if (parser.exists("--nrIter")) { d.hNRIterMax = parser.get<unsigned>("--nrIter"); }
     if (parser.exists("--symInteractions")) { d.symmetricInteractions = parser.get<int>("--symInteractions"); }
-    // diagnostic override of the Courant factor, e.g. for timestep-convergence studies
-    if (const char* kcourEnv = std::getenv("SPHEXA_KCOUR"))
-    {
-        d.Kcour = std::atof(kcourEnv);
-        if (rank == 0) { std::cout << "Kcour overridden to " << d.Kcour << " (SPHEXA_KCOUR)" << std::endl; }
-    }
     bool  haveGrav = (d.g != 0.0);
     float theta    = parser.get("--theta", haveGrav ? 0.5f : 1.0f);
 

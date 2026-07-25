@@ -51,55 +51,62 @@ HOST_DEVICE_FUN T updateH(unsigned ng0, unsigned nc, T h)
     return h * T(0.5) * std::pow(T(1) + c0 * ng0 / T(nc), exp);
 }
 
+/*! @brief neighbor-count guard for Newton-Raphson controlled smoothing lengths
+ *
+ * With NR iterations, h is controlled by the constraint rho * h^3 = ballmassEta(ng0) * m; the
+ * neighbor count only guards the neighbor-list capacity, so the bounds are wide and this pass
+ * must interfere with the converged NR solution as rarely and as gently as possible: any h
+ * change here is undone by the NR iterations pulling h back to its root, and if that pull-back
+ * exceeds the list extension hNRExtFactor, the neighbor list built in between misses pairs
+ * inside the final support (observed as a steady energy drift in shocks, where the count at
+ * the NR root can reach ~2x ng0).
+ * The upper bound is the capacity emergency threshold: it is enforced (not just approached),
+ * so count(2h) <= bandMax < ngmax guarantees that the physical 2h neighborhood always fits
+ * into the list at build time. The extended capture shell (radius scaled by hNRExtFactor for
+ * completeness under the NR iterations) may overflow for counts above
+ * ~0.9 * ngmax / hNRExtFactor^3; the list builder resolves that by falling back to the plain
+ * 2h search for the affected particles. Shrinking h never invalidates the halos discovered for
+ * the larger h; growing h is capped at hNRExtFactor per step to stay within the halo search
+ * margin.
+ */
+template<class Tc, class T, class KeyType>
+HOST_DEVICE_FUN void updateHIterativeNR(unsigned ng0, unsigned ngmax, const cstone::Box<Tc>& box,
+                                        const cstone::OctreeNsView<Tc, KeyType>& treeView, cstone::LocalIndex i,
+                                        const Tc* __restrict__ x, const Tc* __restrict__ y, const Tc* __restrict__ z,
+                                        T* __restrict__ h, unsigned* __restrict__ nc)
+{
+    constexpr int  maxIteration = 10;
+    const unsigned bandMin      = ng0 / 4;
+    const unsigned bandMax      = T(0.9) * ngmax;
+
+    unsigned ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
+
+    if (ncSph < bandMin)
+    {
+        h[i]  = stl::min(T(hNRExtFactor) * h[i], updateH(ng0, ncSph, h[i]));
+        ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
+    }
+    else
+    {
+        int iteration = 0;
+        while ((ncSph - 1) > bandMax && iteration++ < maxIteration)
+        {
+            //! gentle shrink targeting just below the threshold, minimizing the NR pull-back
+            h[i] *= std::cbrt(T(0.85) * bandMax / T(ncSph - 1));
+            ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
+        }
+    }
+
+    nc[i] = ncSph;
+}
+
 template<class Tc, class T, class KeyType>
 HOST_DEVICE_FUN void updateHIterative(unsigned ng0, unsigned ngmax, const cstone::Box<Tc>& box,
                                       const cstone::OctreeNsView<Tc, KeyType>& treeView, cstone::LocalIndex i,
                                       const Tc* __restrict__ x, const Tc* __restrict__ y, const Tc* __restrict__ z,
-                                      T* __restrict__ h, unsigned* __restrict__ nc, bool nrMode = false)
+                                      T* __restrict__ h, unsigned* __restrict__ nc)
 {
     constexpr int maxIteration = 10;
-
-    if (nrMode)
-    {
-        /* Newton-Raphson mode: h is controlled by the constraint rho * h^3 = ballmassEta(ng0) * m;
-         * the neighbor count only guards the neighbor-list capacity, so the bounds are wide and
-         * this pass must interfere with the converged NR solution as rarely and as gently as
-         * possible: any h change here is undone by the NR iterations pulling h back to its root,
-         * and if that pull-back exceeds the list extension hNRExtFactor, the neighbor list built
-         * in between misses pairs inside the final support (observed as a steady energy drift in
-         * shocks, where the count at the NR root can reach ~2x ng0).
-         * The upper bound is the capacity emergency threshold: it is enforced (not just
-         * approached), so count(2h) <= bandMax < ngmax guarantees that the physical 2h
-         * neighborhood always fits into the list at build time. The extended capture shell
-         * (radius scaled by hNRExtFactor for completeness under the NR iterations) may overflow
-         * for counts above ~0.9 * ngmax / hNRExtFactor^3; the list builder resolves that by
-         * falling back to the plain 2h search for the affected particles. Shrinking h never
-         * invalidates the halos discovered for the larger h; growing h is capped at hNRExtFactor
-         * per step to stay within the halo search margin. */
-        const unsigned bandMin = ng0 / 4;
-        const unsigned bandMax = T(0.9) * ngmax;
-
-        unsigned ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
-
-        if (ncSph < bandMin)
-        {
-            h[i]  = stl::min(T(hNRExtFactor) * h[i], updateH(ng0, ncSph, h[i]));
-            ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
-        }
-        else
-        {
-            int iteration = 0;
-            while ((ncSph - 1) > bandMax && iteration++ < maxIteration)
-            {
-                //! gentle shrink targeting just below the threshold, minimizing the NR pull-back
-                h[i] *= std::cbrt(T(0.85) * bandMax / T(ncSph - 1));
-                ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
-            }
-        }
-
-        nc[i] = ncSph;
-        return;
-    }
     //    const unsigned ngmin        = ng0 / 4;
     const unsigned ngmin = 0.8 * ng0;
     if (ngmax > 1.2 * ng0) { ngmax = 1.2 * ng0; }

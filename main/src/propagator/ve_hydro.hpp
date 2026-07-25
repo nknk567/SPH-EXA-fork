@@ -32,8 +32,6 @@
 
 #pragma once
 
-#include <cstdlib>
-
 #include "cstone/fields/field_get.hpp"
 #include "sph/particles_data.hpp"
 #include "sph/sph.hpp"
@@ -205,7 +203,8 @@ public:
 
         computeGroups(first, last, d, domain.box(), groups_);
         timer.step("computeGroups");
-        updateSmoothingLengthIterative(groups_.view(), d, domain.box());
+        if (d.hNRIterMax > 0) { updateSmoothingLengthIterativeNR(groups_.view(), d, domain.box()); }
+        else { updateSmoothingLengthIterative(groups_.view(), d, domain.box()); }
         timer.step("updateSmoothingLengthIterative");
         findNeighborsSfc(groups_.view(), d, domain.box());
         timer.step("FindNeighbors");
@@ -331,11 +330,7 @@ public:
             throw std::runtime_error("Neighbor search did not converge\n");
         }
 
-        /* Diagnostic switch: freeze the VE weights xm at their step-1 values, isolating the
-         * energy-conservation effect of the per-step re-weighting (the equations are consistent
-         * for any constant xm; only the weight evolution is unaccounted work). */
-        static const bool freezeXm = std::getenv("SPHEXA_FREEZE_XM") != nullptr;
-        if (d.hNRIterMax > 0 && !freezeXm)
+        if (d.hNRIterMax > 0)
         {
             /* volume elements of the next step, the smoothed converged volume of this step
              * (SPHYNX-style); placed after the checkpoint output so that restarts see the weights

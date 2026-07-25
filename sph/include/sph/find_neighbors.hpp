@@ -63,27 +63,42 @@ bool updateSmoothingLength(const GroupView& grp, Dataset& d, bool adjustH = true
     }
 }
 
-template<class Tc, class T, class KeyType>
-void updateSmoothingLengthIterativeCpu(const Tc* x, const Tc* y, const Tc* z, T* h, unsigned* nc, LocalIndex firstId,
-                                       LocalIndex lastId, const cstone::Box<Tc>& box,
-                                       const cstone::OctreeNsView<Tc, KeyType>& treeView, unsigned ng0, unsigned ngmax,
-                                       bool nrMode)
-{
-#pragma omp parallel for
-    for (LocalIndex i = firstId; i < lastId; ++i)
-    {
-        updateHIterative(ng0, ngmax, box, treeView, i, x, y, z, h, nc, nrMode);
-    }
-}
-
 template<class T, class Dataset>
 void updateSmoothingLengthIterative(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box)
 {
     if constexpr (d.useGpu) { updateSmoothingLengthIterativeGpu(groups, d, box); }
     else
     {
-        updateSmoothingLengthIterativeCpu(d.x.data(), d.y.data(), d.z.data(), d.h.data(), d.nc.data(), groups.firstBody,
-                                          groups.lastBody, box, d.treeView, d.ng0, d.ngmax, d.hNRIterMax > 0);
+        const auto* x  = d.x.data();
+        const auto* y  = d.y.data();
+        const auto* z  = d.z.data();
+        auto*       h  = d.h.data();
+        auto*       nc = d.nc.data();
+#pragma omp parallel for
+        for (LocalIndex i = groups.firstBody; i < groups.lastBody; ++i)
+        {
+            updateHIterative(d.ng0, d.ngmax, box, d.treeView, i, x, y, z, h, nc);
+        }
+    }
+}
+
+//! @brief neighbor-count capacity guard for Newton-Raphson controlled smoothing lengths, see updateHIterativeNR
+template<class T, class Dataset>
+void updateSmoothingLengthIterativeNR(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box)
+{
+    if constexpr (d.useGpu) { updateSmoothingLengthIterativeNRGpu(groups, d, box); }
+    else
+    {
+        const auto* x  = d.x.data();
+        const auto* y  = d.y.data();
+        const auto* z  = d.z.data();
+        auto*       h  = d.h.data();
+        auto*       nc = d.nc.data();
+#pragma omp parallel for
+        for (LocalIndex i = groups.firstBody; i < groups.lastBody; ++i)
+        {
+            updateHIterativeNR(d.ng0, d.ngmax, box, d.treeView, i, x, y, z, h, nc);
+        }
     }
 }
 
