@@ -35,6 +35,10 @@
 #include "turb_ve.hpp"
 #include "ve_hydro.hpp"
 
+#ifdef SPH_EXA_HAVE_DISKS
+#include "ve_disk.hpp"
+#endif
+
 namespace sphexa
 {
 
@@ -54,6 +58,17 @@ PropLib<DomainType, ParticleDataType>::makeTurbVeProp(std::ostream& output, size
     if (avClean) { return std::make_unique<TurbVeProp<true, DomainType, ParticleDataType>>(output, rank, settings); }
     else { return std::make_unique<TurbVeProp<false, DomainType, ParticleDataType>>(output, rank, settings); }
 }
+
+#ifdef SPH_EXA_HAVE_DISKS
+template<class DomainType, class ParticleDataType>
+std::unique_ptr<Propagator<DomainType, ParticleDataType>>
+PropLib<DomainType, ParticleDataType>::makeVeDiskProp(std::ostream& output, size_t rank, const InitSettings& settings,
+                                                      bool avClean)
+{
+    if (avClean) { return std::make_unique<VeDiskProp<true, DomainType, ParticleDataType>>(output, rank, settings); }
+    else { return std::make_unique<VeDiskProp<false, DomainType, ParticleDataType>>(output, rank, settings); }
+}
+#endif
 
 #ifdef USE_CUDA
 template struct PropLib<cstone::Domain<SphTypes::KeyType, SphTypes::CoordinateType, cstone::execution::Gpu>,

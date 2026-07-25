@@ -45,7 +45,7 @@ namespace sphexa
 using namespace sph;
 using util::FieldList;
 
-template<bool avClean, class DomainType, class DataType>
+template<bool avClean, class DomainType, class DataType, util::StructuralString TempField = "temp">
 class HydroVeProp : public Propagator<DomainType, DataType>
 {
 protected:
@@ -85,8 +85,10 @@ protected:
      * volume elements are carried over from the converged density of the previous step (as in SPHYNX);
      * without NR iterations it is recomputed from scratch every step and could be a dependent field.
      */
-    using ConservedFields =
-        FieldList<"temp", "vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id", "xm">;
+    using ConservedFields_ = FieldList<"vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id", "xm">;
+
+    //! @brief the energy variable is selectable per instantiation: "temp" (default) or "u"
+    using ConservedFields = decltype(FieldList<TempField>{} + ConservedFields_{});
 
     //! @brief list of dependent fields, these may be used as scratch space during domain sync
     using DependentFields_ = FieldList<"ax", "ay", "az", "prho", "c", "du", "c11", "c12", "c13", "c22", "c23", "c33",
