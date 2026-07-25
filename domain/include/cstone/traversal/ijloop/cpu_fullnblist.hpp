@@ -16,6 +16,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <iostream>
 #include <tuple>
 #include <memory>
@@ -102,7 +103,15 @@ protected:
 
             const auto [ijPosDiff, distSq] = posDiffAndDistSq(usePbc, box, iData, jData);
 
-            if (distSq < radiusSq(iData)) updateResult(result, interaction(iData, jData, ijPosDiff, distSq));
+            /* With symmetric interactions, pairs interact within 2 * max(h_i, h_j): each side
+             * of the pair force carries the other side's kernel, which is nonzero out to the
+             * other side's support radius (the own-kernel terms vanish there on their own).
+             * Cutting at 2 * h_i only drops the reaction to the neighbor's contribution,
+             * breaking momentum and energy conservation wherever h varies across a pair. */
+            if (distSq < radiusSq(iData) || (tree.symmetric && distSq < radiusSq(jData)))
+            {
+                updateResult(result, interaction(iData, jData, ijPosDiff, distSq));
+            }
         }
 
         storeParticleData(std::forward<Output>(output), i, postamble(iData, unwrapModifiers(result)));
@@ -161,6 +170,9 @@ struct CpuFullNbListNeighborhoodBuilder
             tree.searchExtFactor = 1;
         }
 
+        std::unique_ptr<std::uint8_t[]> fellBack;
+        if (extended) { fellBack = std::make_unique<std::uint8_t[]>(numBodies); }
+
         unsigned maxNeighbors = 0;
 #pragma omp parallel for reduction(max : maxNeighbors)
         for (LocalIndex i = 0; i < numBodies; ++i)
@@ -175,8 +187,83 @@ struct CpuFullNbListNeighborhoodBuilder
                  * could drop neighbors inside the interaction radius while keeping extended-shell
                  * entries outside of it. */
                 found = findNeighbors(i + groups.firstBody, x, y, z, h, tree, box, ngmax, &nbList.neighbors[i * ngmax]);
+                fellBack[i] = 1;
             }
             nbList.neighborsCount[i] = std::min(found, ngmax);
+        }
+
+        unsigned maxAugmented = 0;
+        if constexpr (std::is_pointer_v<ThP>)
+        {
+            if (tree.symmetric)
+            {
+                /* Transpose augmentation: the interaction loops process pairs within
+                 * 2 * max(h_i, h_j) (see jLoop), but a pair with r beyond particle j's own
+                 * search radius is only present in i's list. Append the reverse entry so that
+                 * j receives the reaction to the neighbor-kernel term. Readers use the
+                 * pre-augmentation counts, appends go through atomic cursors, so the pass is
+                 * race-free; the appended entries are in nondeterministic order. */
+                auto originalCount = std::make_unique_for_overwrite<LocalIndex[]>(numBodies);
+                std::copy(nbList.neighborsCount.get(), nbList.neighborsCount.get() + numBodies, originalCount.get());
+
+                //! search radius that particle j's own list build used
+                auto ownSearchRadius = [&](LocalIndex gj, LocalIndex jl)
+                { return Th(2) * ((fellBack && fellBack[jl]) ? h[gj] : hExt[gj]); };
+                auto appendReverse = [&](LocalIndex source, LocalIndex gj)
+                {
+                    const LocalIndex jl = gj - groups.firstBody;
+                    const Tc r2 = distanceSq<true>(x[source], y[source], z[source], x[gj], y[gj], z[gj], box);
+                    const Th searchRadiusJ = ownSearchRadius(gj, jl);
+                    if (r2 < searchRadiusJ * searchRadiusJ) { return; } // already in j's own list
+
+                    unsigned pos;
+#pragma omp atomic capture
+                    pos = nbList.neighborsCount[jl]++;
+                    if (pos < ngmax) { nbList.neighbors[std::size_t(jl) * ngmax + pos] = source; }
+                };
+
+#pragma omp parallel for
+                for (LocalIndex i = 0; i < numBodies; ++i)
+                {
+                    const LocalIndex gi = i + groups.firstBody;
+                    for (unsigned nb = 0; nb < originalCount[i]; ++nb)
+                    {
+                        const LocalIndex gj = nbList.neighbors[i * ngmax + nb];
+                        if (gj < groups.firstBody || gj >= groups.lastBody) { continue; }
+                        appendReverse(gi, gj);
+                    }
+                }
+
+                /* Halo sources: a halo particle H with a large support may cover owned
+                 * particles beyond their own search radii. Halos have no stored list, so search
+                 * from H directly and transpose the finds. The reaction data of H (it is
+                 * evaluated as a neighbor only) comes from the halo field exchanges; H's own
+                 * force is computed by its owning rank the same way. No-op without halos. */
+#pragma omp parallel
+                {
+                    auto scratch = std::make_unique_for_overwrite<LocalIndex[]>(ngmax);
+#pragma omp for
+                    for (LocalIndex gh = 0; gh < totalBodies; ++gh)
+                    {
+                        const bool isHalo = gh < groups.firstBody || gh >= groups.lastBody;
+                        if (!isHalo) { continue; }
+                        const unsigned found = findNeighbors(gh, x, y, z, hExt, tree, box, ngmax, scratch.get());
+                        for (unsigned nb = 0; nb < std::min(found, ngmax); ++nb)
+                        {
+                            const LocalIndex gj = scratch[nb];
+                            if (gj < groups.firstBody || gj >= groups.lastBody) { continue; }
+                            appendReverse(gh, gj);
+                        }
+                    }
+                }
+
+#pragma omp parallel for reduction(max : maxAugmented)
+                for (LocalIndex i = 0; i < numBodies; ++i)
+                {
+                    maxAugmented             = std::max(maxAugmented, unsigned(nbList.neighborsCount[i]));
+                    nbList.neighborsCount[i] = std::min(nbList.neighborsCount[i], ngmax);
+                }
+            }
         }
 
         if (maxNeighbors > ngmax)
@@ -193,6 +280,12 @@ struct CpuFullNbListNeighborhoodBuilder
                              "ngmax is "
                           << ngmax << ", but found up to " << maxNeighbors << " neighbor particles." << std::endl;
             }
+        }
+        if (maxAugmented > ngmax)
+        {
+            std::cerr << "WARNING: neighbor-list symmetrization needed up to " << maxAugmented
+                      << " entries, exceeding ngmax = " << ngmax
+                      << ". Some pair reactions across strong h contrasts are dropped." << std::endl;
         }
         return nbList;
     }

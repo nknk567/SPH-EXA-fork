@@ -280,6 +280,16 @@ struct OctreeNsView
      *          Default for fully converged trees: 1.0, >1.0 otherwise
      */
     float searchExtFactor{1.0};
+
+    /*! @brief Process pair interactions symmetrically, i.e. within 2 * max(h_i, h_j)
+     *
+     * The SPH pair force contains terms with either particle's kernel; the term with the
+     * neighbor's kernel is nonzero out to the neighbor's support radius, beyond the own one.
+     * When enabled, the neighborhood builders and interaction loops include and evaluate pairs
+     * within the larger of the two support radii, so that every such term has its reaction.
+     * When disabled (default), pairs are processed within the own support radius only.
+     */
+    bool symmetric{false};
 };
 
 template<class KeyType, execution::Policy Exec>
@@ -401,6 +411,20 @@ struct SumCombination
     T operator()(TreeNodeIndex /*nodeIdx*/, TreeNodeIndex c, const T* Q)
     {
         return Q[c] + Q[c + 1] + Q[c + 2] + Q[c + 3] + Q[c + 4] + Q[c + 5] + Q[c + 6] + Q[c + 7];
+    }
+};
+
+template<class T>
+struct MaxCombination
+{
+    HOST_DEVICE_FUN T operator()(TreeNodeIndex /*nodeIdx*/, TreeNodeIndex c, const T* Q)
+    {
+        T ret = Q[c];
+        for (TreeNodeIndex octant = 1; octant < 8; ++octant)
+        {
+            ret = stl::max(ret, Q[c + octant]);
+        }
+        return ret;
     }
 };
 

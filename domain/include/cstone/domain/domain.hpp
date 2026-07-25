@@ -204,7 +204,8 @@ public:
 
             reallocate(focusTree_.octreeViewAcc().numLeafNodes + 1, allocGrowthRate_, layout_, layoutAcc_);
             focusTree_.discoverHalos(rawPtr(x), rawPtr(y), rawPtr(z), rawPtr(h),
-                                     {rawPtr(layoutAcc_), layoutAcc_.size()}, haloSearchExt_, get<0>(scratch), false);
+                                     {rawPtr(layoutAcc_), layoutAcc_.size()}, haloSearchExt_, get<0>(scratch), false,
+                                     symmetricHalos_);
             fail = focusTree_.computeLayout({rawPtr(layoutAcc_), layoutAcc_.size()}, layout_);
             MPI_Allreduce(MPI_IN_PLACE, &fail, 1, MPI_INT, MPI_SUM, comm_);
 
@@ -271,7 +272,8 @@ public:
 
             reallocate(focusTree_.octreeViewAcc().numLeafNodes + 1, allocGrowthRate_, layout_, layoutAcc_);
             focusTree_.discoverHalos(rawPtr(x), rawPtr(y), rawPtr(z), rawPtr(h),
-                                     {rawPtr(layoutAcc_), layoutAcc_.size()}, haloSearchExt_, get<0>(scratch), true);
+                                     {rawPtr(layoutAcc_), layoutAcc_.size()}, haloSearchExt_, get<0>(scratch), true,
+                                     symmetricHalos_);
             fail = focusTree_.computeLayout({rawPtr(layoutAcc_), layoutAcc_.size()}, layout_);
             MPI_Allreduce(MPI_IN_PLACE, &fail, 1, MPI_INT, MPI_SUM, comm_);
 
@@ -364,6 +366,14 @@ public:
 
     void setTreeConv(bool flag) { convergeTrees = flag; }
     void setHaloFactor(float factor) { haloSearchExt_ = factor; }
+
+    /*! @brief also discover halos whose own interaction reach extends into the local domain
+     *
+     * Required for symmetric pair interactions within 2 * max(h_i, h_j): the reaction to a
+     * remote particle's force contribution can only be computed locally if that particle is
+     * present as a halo, even when it lies beyond the reach of all local search spheres.
+     */
+    void setSymmetricHalos(bool symmetric) { symmetricHalos_ = symmetric; }
     void setGrowthAllocRate(float factor) { allocGrowthRate_ = factor; }
 
     //! @brief update expansion (c.o.m) centers of the focus tree
@@ -631,6 +641,8 @@ private:
     bool convergeTrees{false};
     //! @brief Extra search factor for halo discovery, allowing multiple time integration steps between sync() calls
     float haloSearchExt_{1.0};
+    //! @brief additionally discover halos by their own interaction reach (symmetric pair sets)
+    bool symmetricHalos_{false};
     //! @brief factor to tighten theta to avoid failed macs by remote cells due to centers having moved closer
     float centerDriftTol_{1.05};
     //! @brief buffer growth rate when reallocating

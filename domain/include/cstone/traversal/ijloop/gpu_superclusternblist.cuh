@@ -89,8 +89,10 @@ struct GpuSuperclusterNbListNeighborhood
     ThP h;
     util::UniqueManagedPtr<std::uint32_t[]> neighborData;
     util::UniqueDevicePtr<SuperclusterInfo[]> superclusterInfo;
-    unsigned ncmax       = 0;
-    std::size_t numBytes = 0;
+    unsigned ncmax = 0;
+    //! @brief process pairs within 2 * max(h_i, h_j) instead of the own radius (OctreeNsView::symmetric)
+    bool symmetricInteractions = false;
+    std::size_t numBytes       = 0;
 
     template<class... In, class... Out, class Interaction, class Postamble>
     void ijLoop(const std::tuple<In*...>& input,
@@ -187,7 +189,7 @@ protected:
 
         runIjLoop<Config>(exec, box, firstValidBody, totalBodies, firstBody, lastBody, x, y, z, h, makeConst(input),
                           tmpOrOutput, std::forward<Interaction>(interaction), std::forward<Postamble>(postamble),
-                          neighborData.get(), superclusterInfo, numISuperclusters, activeMasks);
+                          neighborData.get(), superclusterInfo, numISuperclusters, activeMasks, symmetricInteractions);
 
         if constexpr (Config::symmetric)
         {
@@ -355,6 +357,7 @@ struct GpuSuperclusterNbListNeighborhoodBuilder
                 std::move(neighborData),
                 std::move(superclusterInfo),
                 ncmax,
+                tree.symmetric,
                 numBytes};
     }
 };

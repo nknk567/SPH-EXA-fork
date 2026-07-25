@@ -90,6 +90,132 @@ FIND_HALOS_GPU(uint32_t, float);
 FIND_HALOS_GPU(uint64_t, float);
 FIND_HALOS_GPU(uint64_t, double);
 
+template<class Th>
+__global__ void leafExpansionsKernel(
+    const Th* h, const LocalIndex* layout, TreeNodeIndex firstNode, TreeNodeIndex lastNode, Th scale, Th* expansions)
+{
+    TreeNodeIndex leafIdx = blockIdx.x * blockDim.x + threadIdx.x + firstNode;
+    if (leafIdx >= lastNode) { return; }
+
+    Th hMax = 0;
+    for (LocalIndex i = layout[leafIdx]; i < layout[leafIdx + 1]; ++i)
+    {
+        hMax = max(hMax, h[i]);
+    }
+    expansions[leafIdx] = scale * hMax;
+}
+
+template<class Th>
+void leafExpansionsGpu(execution::Gpu exec,
+                       const Th* h,
+                       const LocalIndex* layout,
+                       TreeNodeIndex firstNode,
+                       TreeNodeIndex lastNode,
+                       Th scale,
+                       Th* expansions)
+{
+    constexpr unsigned numThreads = 128;
+    unsigned numBlocks            = iceil(lastNode - firstNode, numThreads);
+    if (numBlocks == 0) { return; }
+    leafExpansionsKernel<<<numBlocks, numThreads, 0, exec>>>(h, layout, firstNode, lastNode, scale, expansions);
+}
+
+template void leafExpansionsGpu(execution::Gpu, const float*, const LocalIndex*, TreeNodeIndex, TreeNodeIndex, float,
+                                float*);
+template void leafExpansionsGpu(execution::Gpu, const double*, const LocalIndex*, TreeNodeIndex, TreeNodeIndex, double,
+                                double*);
+
+template<class Tc, class Th>
+__global__ void
+inflateNodeSizesKernel(const Vec3<Tc>* sizes, const Th* expansions, TreeNodeIndex numNodes, Vec3<Tc>* inflated)
+{
+    TreeNodeIndex i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) { return; }
+    const Tc e  = expansions[i];
+    inflated[i] = sizes[i] + Vec3<Tc>{e, e, e};
+}
+
+template<class Tc, class Th>
+void inflateNodeSizesGpu(
+    execution::Gpu exec, const Vec3<Tc>* sizes, const Th* expansions, TreeNodeIndex numNodes, Vec3<Tc>* inflated)
+{
+    constexpr unsigned numThreads = 128;
+    unsigned numBlocks            = iceil(numNodes, numThreads);
+    if (numBlocks == 0) { return; }
+    inflateNodeSizesKernel<<<numBlocks, numThreads, 0, exec>>>(sizes, expansions, numNodes, inflated);
+}
+
+template void inflateNodeSizesGpu(execution::Gpu, const Vec3<float>*, const float*, TreeNodeIndex, Vec3<float>*);
+template void inflateNodeSizesGpu(execution::Gpu, const Vec3<double>*, const double*, TreeNodeIndex, Vec3<double>*);
+template void inflateNodeSizesGpu(execution::Gpu, const Vec3<double>*, const float*, TreeNodeIndex, Vec3<double>*);
+
+template<class KeyType, class T>
+__global__ void findHalosSymmetricKernel(const KeyType* nodePrefixes,
+                                         const TreeNodeIndex* childOffsets,
+                                         const TreeNodeIndex* parents,
+                                         const Vec3<T>* nodeCenters,
+                                         const Vec3<T>* inflatedNodeSizes,
+                                         const KeyType* leaves,
+                                         const Vec3<T>* searchCenters,
+                                         const Vec3<T>* searchSizes,
+                                         __grid_constant__ const Box<T> box,
+                                         TreeNodeIndex firstNode,
+                                         TreeNodeIndex lastNode,
+                                         uint8_t* collisionFlags)
+{
+    TreeNodeIndex leafIdx = blockIdx.x * blockDim.x + threadIdx.x + firstNode;
+
+    if (leafIdx < lastNode)
+    {
+        Vec3<T> tC         = searchCenters[leafIdx];
+        Vec3<T> tS         = searchSizes[leafIdx];
+        KeyType lowestKey  = leaves[firstNode];
+        KeyType highestKey = leaves[lastNode];
+
+        if (tS == Vec3<T>{0, 0, 0}) { return; }
+
+        /* No containedIn early exit here: the local box being inside the assigned SFC range
+         * does not preclude collisions with remote nodes inflated by their own reach. */
+        findCollisions(nodePrefixes, childOffsets, parents, nodeCenters, inflatedNodeSizes, tC, tS, box, lowestKey,
+                       highestKey, collisionFlags);
+    }
+}
+
+template<class KeyType, class T>
+void findHalosSymmetricGpu(execution::Gpu exec,
+                           const KeyType* prefixes,
+                           const TreeNodeIndex* childOffsets,
+                           const TreeNodeIndex* parents,
+                           const Vec3<T>* nodeCenters,
+                           const Vec3<T>* inflatedNodeSizes,
+                           const KeyType* leaves,
+                           const Vec3<T>* searchCenters,
+                           const Vec3<T>* searchSizes,
+                           const Box<T>& box,
+                           TreeNodeIndex firstNode,
+                           TreeNodeIndex lastNode,
+                           uint8_t* collisionFlags)
+{
+    constexpr unsigned numThreads = 128;
+    unsigned numBlocks            = iceil(lastNode - firstNode, numThreads);
+
+    if (numBlocks == 0) { return; }
+    findHalosSymmetricKernel<<<numBlocks, numThreads, 0, exec>>>(prefixes, childOffsets, parents, nodeCenters,
+                                                                 inflatedNodeSizes, leaves, searchCenters, searchSizes,
+                                                                 box, firstNode, lastNode, collisionFlags);
+}
+
+#define FIND_HALOS_SYMMETRIC_GPU(KeyType, T)                                                                           \
+    template void findHalosSymmetricGpu(execution::Gpu, const KeyType* prefixes, const TreeNodeIndex* childOffsets,    \
+                                        const TreeNodeIndex* parents, const Vec3<T>* nodeCenters,                      \
+                                        const Vec3<T>* inflatedNodeSizes, const KeyType* leaves,                       \
+                                        const Vec3<T>* searchCenters, const Vec3<T>* searchSizes, const Box<T>& box,   \
+                                        TreeNodeIndex firstNode, TreeNodeIndex lastNode, uint8_t* collisionFlags)
+
+FIND_HALOS_SYMMETRIC_GPU(uint32_t, float);
+FIND_HALOS_SYMMETRIC_GPU(uint64_t, float);
+FIND_HALOS_SYMMETRIC_GPU(uint64_t, double);
+
 template<class T, class KeyType>
 __global__ void markMacsGpuKernel(const KeyType* prefixes,
                                   const TreeNodeIndex* childOffsets,

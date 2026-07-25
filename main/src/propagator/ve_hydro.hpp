@@ -137,6 +137,9 @@ public:
              * radius 2h present as halos. */
             domain.setHaloFactor(sph::hNRExtFactor);
         }
+        /* Symmetric pair sets need the remote big-h side of cross-rank pairs present as a halo
+         * even when it is beyond the reach of all local search spheres. */
+        domain.setSymmetricHalos(d.useSymmetricInteractions());
         if (d.g != 0.0)
         {
             domain.syncGrav(get<"keys">(d), get<"x">(d), get<"y">(d), get<"z">(d), get<"h">(d), get<"m">(d),
@@ -154,6 +157,11 @@ public:
          * stay complete for the final h as long as the iterations grow h by less than the
          * extension factor. */
         if (d.hNRIterMax > 0) { d.treeView.searchExtFactor = sph::hNRExtFactor; }
+        /* Symmetric pair processing (within 2 * max(h_i, h_j)): restores the reaction to the
+         * neighbor-kernel term of the pair force, which the plain gather formulation drops for
+         * pairs whose distance exceeds one side's support. Essential for energy conservation
+         * with NR-iterated h (strong h contrasts at density discontinuities). */
+        d.treeView.symmetric = d.useSymmetricInteractions();
     }
 
     void computeForces(DomainType& domain, DataType& simData) override

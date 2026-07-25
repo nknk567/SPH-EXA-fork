@@ -508,7 +508,8 @@ public:
                        std::span<LocalIndex> layout,
                        float searchExtFact,
                        Vector& scratch,
-                       bool accumulate)
+                       bool accumulate,
+                       bool symmetric = false)
     {
         TreeNodeIndex firstNode    = assignment_[myRank_].start();
         TreeNodeIndex lastNode     = assignment_[myRank_].end();
@@ -555,6 +556,91 @@ public:
             findHalos(let.prefixes, let.childOffsets, let.parents, geoCentersAcc_.data(), geoSizesAcc_.data(),
                       leaves_.data(), searchCenters.data(), searchSizes.data(), box_, firstNode, lastNode,
                       macsAcc_.data());
+        }
+
+        if (symmetric)
+        {
+            /* Symmetric halo discovery: additionally mark remote nodes whose OWN interaction
+             * reach extends into the locally assigned domain. This makes the halo set
+             * sufficient for symmetric pair interactions within 2 * max(h_i, h_j): the
+             * reaction to a remote particle's force contribution can only be computed locally
+             * if that particle is present as a halo, even when it lies beyond the reach of all
+             * local search spheres. The per-leaf reach (max of 2h * searchExtFact over the
+             * contained particles) is made globally consistent on the LET through the peer
+             * treelet exchange and max-upsweeps; remote node boxes inflated by their reach are
+             * then tested against the plain local leaf boxes. Nodes outside the peer treelet
+             * regions keep zero expansion: non-peer ranks are assumed unreachable by physical
+             * interaction radii. */
+            auto l2i = leafToInternal(octreeAcc_);
+            if constexpr (execution::HaveGpu<Exec>{})
+            {
+                AccVector<Th> leafExpansion, nodeExpansion;
+                AccVector<Vec3<RealType>> inflatedSizes;
+                reallocateDestructive(leafExpansion, numLeafNodes, allocGrowthRate_);
+                reallocateDestructive(nodeExpansion, let.numNodes, allocGrowthRate_);
+                reallocateDestructive(inflatedSizes, let.numNodes, allocGrowthRate_);
+                fill(exec_, rawPtr(leafExpansion), rawPtr(leafExpansion) + numLeafNodes, Th(0));
+                fill(exec_, rawPtr(nodeExpansion), rawPtr(nodeExpansion) + let.numNodes, Th(0));
+
+                leafExpansionsGpu(exec_, h, layout.data(), firstNode, lastNode, Th(2 * searchExtFact),
+                                  rawPtr(leafExpansion));
+                scatter(exec_, l2i.data(), numLeafNodes, rawPtr(leafExpansion), rawPtr(nodeExpansion));
+                upsweepMaxGpu(exec_, maxTreeLevel<KeyType>{}, rawPtr(octreeAcc_.levelRange),
+                              rawPtr(octreeAcc_.childOffsets), rawPtr(nodeExpansion));
+                peerExchange(std::span<Th>{rawPtr(nodeExpansion), nodeExpansion.size()},
+                             static_cast<int>(P2pTags::focusPeerRadii), scratch);
+                upsweepMaxGpu(exec_, maxTreeLevel<KeyType>{}, rawPtr(octreeAcc_.levelRange),
+                              rawPtr(octreeAcc_.childOffsets), rawPtr(nodeExpansion));
+
+                inflateNodeSizesGpu(exec_, geoSizesAcc_.data(), rawPtr(nodeExpansion), let.numNodes,
+                                    rawPtr(inflatedSizes));
+                //! the own-radius pass is done with searchCenters/searchSizes: reuse them for the plain leaf boxes
+                gather(exec_, let.leafToInternalSpan(), geoCentersAcc_.data(), searchCenters.data());
+                gather(exec_, let.leafToInternalSpan(), geoSizesAcc_.data(), searchSizes.data());
+                findHalosSymmetricGpu(exec_, let.prefixes, let.childOffsets, let.parents, geoCentersAcc_.data(),
+                                      rawPtr(inflatedSizes), leavesAcc_.data(), searchCenters.data(),
+                                      searchSizes.data(), box_, firstNode, lastNode, macsAcc_.data());
+            }
+            else
+            {
+                std::vector<Th> nodeExpansion(let.numNodes, 0);
+#pragma omp parallel for schedule(static)
+                for (std::size_t i = 0; i < numNodesSearch; ++i)
+                {
+                    Th hMax = 0;
+                    for (LocalIndex p = layout[i]; p < layout[i + 1]; ++p)
+                    {
+                        hMax = std::max(hMax, h[p]);
+                    }
+                    nodeExpansion[l2i[firstNode + i]] = Th(2 * searchExtFact) * hMax;
+                }
+                upsweep(octreeAcc_.levelRange, octreeAcc_.childOffsets.data(), nodeExpansion.data(),
+                        MaxCombination<Th>{});
+                peerExchange(std::span<Th>(nodeExpansion), static_cast<int>(P2pTags::focusPeerRadii), scratch);
+                upsweep(octreeAcc_.levelRange, octreeAcc_.childOffsets.data(), nodeExpansion.data(),
+                        MaxCombination<Th>{});
+
+                std::vector<Vec3<RealType>> inflatedSizes(let.numNodes);
+#pragma omp parallel for schedule(static)
+                for (TreeNodeIndex n = 0; n < let.numNodes; ++n)
+                {
+                    const RealType e = nodeExpansion[n];
+                    inflatedSizes[n] = geoSizesAcc_[n] + Vec3<RealType>{e, e, e};
+                }
+
+                const KeyType lowestKey  = leaves_[firstNode];
+                const KeyType highestKey = leaves_[lastNode];
+#pragma omp parallel for
+                for (std::size_t i = 0; i < numNodesSearch; ++i)
+                {
+                    const TreeNodeIndex n = l2i[firstNode + i];
+                    /* no containedIn early exit: the local box being inside the assigned range
+                     * does not preclude collisions with remote nodes inflated by their reach */
+                    findCollisions(let.prefixes, let.childOffsets, let.parents, geoCentersAcc_.data(),
+                                   inflatedSizes.data(), geoCentersAcc_[n], geoSizesAcc_[n], box_, lowestKey,
+                                   highestKey, macsAcc_.data());
+                }
+            }
         }
         reallocate(scratch, origSize, 1.0);
     }

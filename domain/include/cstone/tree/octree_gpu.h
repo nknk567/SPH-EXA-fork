@@ -51,6 +51,14 @@ void upsweepSumGpu(execution::Gpu exec,
                    const TreeNodeIndex* childOffsets,
                    LocalIndex* counts);
 
+//! @brief Upsweep taking the maximum over child nodes, e.g. to compute per-node interaction radii
+template<class T>
+extern void upsweepMaxGpu(execution::Gpu exec,
+                          int numLvl,
+                          const TreeNodeIndex* lvlRange,
+                          const TreeNodeIndex* childOffsets,
+                          T* q);
+
 /*!  @brief locate all nodes between k1 and k2 in nodeKeys and store indices
  * @param[in]  k1        cornerstone leaf sequence start
  * @param[in]  k2        cornerstone leaf sequence end

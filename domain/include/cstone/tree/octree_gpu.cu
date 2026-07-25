@@ -235,6 +235,39 @@ void upsweepSumGpu(execution::Gpu exec,
     }
 }
 
+template<class T>
+__global__ void
+upsweepMaxKernel(TreeNodeIndex firstCell, TreeNodeIndex lastCell, const TreeNodeIndex* childOffsets, T* q)
+{
+    const int cellIdx = blockIdx.x * blockDim.x + threadIdx.x + firstCell;
+    if (cellIdx >= lastCell) return;
+
+    TreeNodeIndex firstChild = childOffsets[cellIdx];
+
+    if (firstChild) { q[cellIdx] = MaxCombination<T>{}(cellIdx, firstChild, q); }
+}
+
+template<class T>
+void upsweepMaxGpu(
+    execution::Gpu exec, int numLevels, const TreeNodeIndex* levelRange, const TreeNodeIndex* childOffsets, T* q)
+{
+    constexpr int numThreads = 128;
+
+    for (int level = numLevels - 1; level >= 0; level--)
+    {
+        int numCellsLevel = levelRange[level + 1] - levelRange[level];
+        int numBlocks     = (numCellsLevel - 1) / numThreads + 1;
+        if (numCellsLevel)
+        {
+            upsweepMaxKernel<<<numBlocks, numThreads, 0, exec>>>(levelRange[level], levelRange[level + 1], childOffsets,
+                                                                 q);
+        }
+    }
+}
+
+template void upsweepMaxGpu(execution::Gpu, int, const TreeNodeIndex*, const TreeNodeIndex*, float*);
+template void upsweepMaxGpu(execution::Gpu, int, const TreeNodeIndex*, const TreeNodeIndex*, double*);
+
 template<class KeyType>
 __global__ void locateNodesKernel(const KeyType* k1,
                                   const KeyType* k2,

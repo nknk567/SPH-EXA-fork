@@ -58,6 +58,51 @@ extern void findHalosGpu(execution::Gpu exec,
                          TreeNodeIndex lastNode,
                          uint8_t* collisionFlags);
 
+/*! @brief per-leaf interaction expansion: max of scale * h over the particles of each leaf
+ *
+ * @param[in]  h           particle smoothing lengths
+ * @param[in]  layout      particle index range per leaf, indexed [firstNode:lastNode+1]
+ * @param[in]  firstNode   first leaf node index
+ * @param[in]  lastNode    last leaf node index
+ * @param[in]  scale       scale factor, e.g. 2 * searchExtFactor for kernel support spheres
+ * @param[out] expansions  per-leaf expansion, accessed [firstNode:lastNode]
+ */
+template<class Th>
+extern void leafExpansionsGpu(execution::Gpu exec,
+                              const Th* h,
+                              const LocalIndex* layout,
+                              TreeNodeIndex firstNode,
+                              TreeNodeIndex lastNode,
+                              Th scale,
+                              Th* expansions);
+
+//! @brief inflated[i] = sizes[i] + expansions[i] in each component, i in [0:numNodes]
+template<class Tc, class Th>
+extern void inflateNodeSizesGpu(
+    execution::Gpu exec, const Vec3<Tc>* sizes, const Th* expansions, TreeNodeIndex numNodes, Vec3<Tc>* inflated);
+
+/*! @brief transposed halo discovery: mark nodes whose own interaction reach extends into the local boxes
+ *
+ * Same as findHalosGpu, but with the roles of the search expansion swapped: @p nodeSizes are
+ * expected to be inflated by each node's own interaction expansion, while the local search
+ * boxes [firstNode:lastNode] are the plain leaf boxes. There is no early exit for boxes
+ * contained in the local key range, since remote nodes reach arbitrarily far inside.
+ */
+template<class KeyType, class T>
+extern void findHalosSymmetricGpu(execution::Gpu exec,
+                                  const KeyType* prefixes,
+                                  const TreeNodeIndex* childOffsets,
+                                  const TreeNodeIndex* parents,
+                                  const Vec3<T>* nodeCenters,
+                                  const Vec3<T>* inflatedNodeSizes,
+                                  const KeyType* leaves,
+                                  const Vec3<T>* searchCenters,
+                                  const Vec3<T>* searchSizes,
+                                  const Box<T>& box,
+                                  TreeNodeIndex firstNode,
+                                  TreeNodeIndex lastNode,
+                                  uint8_t* collisionFlags);
+
 template<class T, class KeyType>
 extern void markMacsGpu(execution::Gpu exec,
                         const KeyType* prefixes,

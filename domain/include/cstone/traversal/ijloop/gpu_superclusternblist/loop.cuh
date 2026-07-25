@@ -310,7 +310,8 @@ __global__ __launch_bounds__(Config::iSize* Config::jSize* NumSuperclustersPerBl
     const std::uint32_t* const __restrict__ neighborData,
     const SuperclusterInfo* const __restrict__ superclusterInfo,
     const unsigned numISuperclusters,
-    const Mask* const __restrict__ activeMasks)
+    const Mask* const __restrict__ activeMasks,
+    const bool symmetricInteractions)
 {
     static_assert(NumSuperclustersPerBlock > 0);
     static_assert(Config::iSize * Config::jSize >= GpuConfig::warpSize);
@@ -385,8 +386,17 @@ __global__ __launch_bounds__(Config::iSize* Config::jSize* NumSuperclustersPerBl
                     bool iClose, jClose;
                     if constexpr (std::is_pointer_v<ThP>)
                     {
-                        iClose = distSq < iRadiusSq;
-                        jClose = Config::symmetric && (distSq < jRadiusSq & jRequired);
+                        /* With symmetric interactions, pairs interact within 2 * max(h_i, h_j):
+                         * each side of the pair force carries the other side's kernel, nonzero
+                         * out to the other side's support radius (the own-kernel terms vanish
+                         * there on their own). Gating each side by its own radius only drops
+                         * the reaction to the neighbor's contribution, breaking momentum and
+                         * energy conservation wherever h varies across a pair. */
+                        const bool iIn    = distSq < iRadiusSq;
+                        const bool jIn    = distSq < jRadiusSq;
+                        const bool pairIn = symmetricInteractions ? (iIn | jIn) : iIn;
+                        iClose            = pairIn;
+                        jClose = Config::symmetric && ((symmetricInteractions ? pairIn : jIn) & jRequired);
                     }
                     else
                     {
@@ -493,7 +503,8 @@ void runIjLoop(const execution::Gpu exec,
                const std::uint32_t* const neighborData,
                const SuperclusterInfo* const superclusterInfo,
                const LocalIndex numISuperclusters,
-               const Mask* const activeMasks)
+               const Mask* const activeMasks,
+               const bool symmetricInteractions)
 {
     constexpr unsigned numSuperclustersPerBlock = 64 / (Config::iSize * Config::jSize);
     const dim3 blockSize                        = {Config::iSize, Config::jSize, numSuperclustersPerBlock};
@@ -503,7 +514,7 @@ void runIjLoop(const execution::Gpu exec,
         runIjLoopKernel<Config, numSuperclustersPerBlock, decltype(usePbc)::value><<<numBlocks, blockSize, 0, exec>>>(
             box, firstValidBody, totalBodies, firstBody, lastBody, x, y, z, h, std::forward<Input>(input),
             std::forward<Output>(output), std::forward<Interaction>(interaction), std::forward<Postamble>(postamble),
-            neighborData, superclusterInfo, numISuperclusters, activeMasks);
+            neighborData, superclusterInfo, numISuperclusters, activeMasks, symmetricInteractions);
         checkGpuErrors(cudaGetLastError());
     };
 
