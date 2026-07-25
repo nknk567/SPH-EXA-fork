@@ -91,8 +91,13 @@ protected:
     void
     jLoop(Input&& input, Output&& output, Interaction&& interaction, Postamble&& postamble, const LocalIndex i) const
     {
-        const auto iData  = loadParticleData(x, y, z, h, std::forward<Input>(input), i);
-        const bool usePbc = requiresPbcHandling(box, iData);
+        const auto iData = loadParticleData(x, y, z, h, std::forward<Input>(input), i);
+        /* The per-particle PBC elision assumes all pairs lie within the owner's search sphere.
+         * Symmetric pairs reach out to the neighbor's support radius instead, so periodic
+         * folding is required whenever the box is periodic at all. */
+        const bool boxPbc = box.boundaryX() == BoundaryType::periodic || box.boundaryY() == BoundaryType::periodic ||
+                            box.boundaryZ() == BoundaryType::periodic;
+        const bool usePbc = tree.symmetric ? boxPbc : requiresPbcHandling(box, iData);
 
         const unsigned nbs = neighborsCount[i - firstBody];
         auto result        = interaction(iData, iData, Vec3<Tc>{0, 0, 0}, Tc(0));

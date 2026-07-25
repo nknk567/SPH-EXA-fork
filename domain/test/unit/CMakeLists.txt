@@ -7,6 +7,7 @@ set(UNIT_TESTS
         focus/octree_focus.cpp
         focus/source_center.cpp
         neighbors/findneighbors.cpp
+        neighbors/ijloop.cpp
         primitives/clz.cpp
         primitives/concat_vector.cpp
         primitives/gather.cpp

@@ -620,26 +620,18 @@ public:
                 upsweep(octreeAcc_.levelRange, octreeAcc_.childOffsets.data(), nodeExpansion.data(),
                         MaxCombination<Th>{});
 
-                std::vector<Vec3<RealType>> inflatedSizes(let.numNodes);
+                //! the own-radius pass is done with searchCenters/searchSizes: reuse them for the plain leaf boxes
 #pragma omp parallel for schedule(static)
-                for (TreeNodeIndex n = 0; n < let.numNodes; ++n)
-                {
-                    const RealType e = nodeExpansion[n];
-                    inflatedSizes[n] = geoSizesAcc_[n] + Vec3<RealType>{e, e, e};
-                }
-
-                const KeyType lowestKey  = leaves_[firstNode];
-                const KeyType highestKey = leaves_[lastNode];
-#pragma omp parallel for
                 for (std::size_t i = 0; i < numNodesSearch; ++i)
                 {
-                    const TreeNodeIndex n = l2i[firstNode + i];
-                    /* no containedIn early exit: the local box being inside the assigned range
-                     * does not preclude collisions with remote nodes inflated by their reach */
-                    findCollisions(let.prefixes, let.childOffsets, let.parents, geoCentersAcc_.data(),
-                                   inflatedSizes.data(), geoCentersAcc_[n], geoSizesAcc_[n], box_, lowestKey,
-                                   highestKey, macsAcc_.data());
+                    const TreeNodeIndex n        = l2i[firstNode + i];
+                    searchCenters[firstNode + i] = geoCentersAcc_[n];
+                    searchSizes[firstNode + i]   = geoSizesAcc_[n];
                 }
+                findHalosSymmetric(let.prefixes, let.childOffsets, let.parents, geoCentersAcc_.data(),
+                                   geoSizesAcc_.data(), nodeExpansion.data(), let.numNodes, leaves_.data(),
+                                   searchCenters.data(), searchSizes.data(), box_, firstNode, lastNode,
+                                   macsAcc_.data());
             }
         }
         reallocate(scratch, origSize, 1.0);

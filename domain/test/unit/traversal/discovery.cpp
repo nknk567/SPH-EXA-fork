@@ -121,3 +121,104 @@ TEST(HaloDiscovery, findHalosFlags)
     findHalosFlags<unsigned>(true);
     findHalosFlags<uint64_t>(true);
 }
+
+/*! @brief transposed halo discovery: nodes are found through their OWN interaction reach
+ *
+ * A remote node with a large interaction reach must be discovered as a halo even when it lies
+ * beyond the reach of every local search sphere — required for symmetric pair interactions
+ * within 2 * max(h_i, h_j). The plain (gather-sense) findHalos with unexpanded local target
+ * boxes finds nothing at all (every target is contained in the local key range), while
+ * findHalosSymmetric flags exactly the nodes whose inflated boxes overlap local leaf boxes.
+ */
+template<class KeyType>
+static void findHalosSymmetricFlags()
+{
+    using T  = double;
+    Box<T> box(0, 1);
+
+    std::vector<KeyType> tree = makeUniformNLevelTree<KeyType>(64, 1);
+    OctreeData<KeyType, execution::Cpu> octree;
+    octree.resize(nNodes(tree));
+    updateInternalTree<KeyType>(tree, octree.data());
+
+    std::vector<Vec3<T>> nodeCenters(octree.numNodes), nodeSizes(octree.numNodes);
+    nodeFpCenters<KeyType>(octree.prefixes, nodeCenters.data(), nodeSizes.data(), box);
+    auto leaf2int = leafToInternal(octree);
+    auto od       = octree.data();
+
+    // local leaves [0:a), plain (unexpanded) local target boxes
+    TreeNodeIndex a = 32;
+    std::vector<Vec3<T>> tC(octree.numLeafNodes), tS(octree.numLeafNodes);
+    for (size_t i = 0; i < size_t(octree.numLeafNodes); ++i)
+    {
+        tC[i] = nodeCenters[leaf2int[i]];
+        tS[i] = nodeSizes[leaf2int[i]];
+    }
+
+    // one remote leaf in the last corner gets a large interaction reach; max-upsweep to internal nodes
+    TreeNodeIndex remoteLeaf = octree.numLeafNodes - 1;
+    std::vector<T> expansions(octree.numNodes, 0);
+    expansions[leaf2int[remoteLeaf]] = 0.6;
+    std::span<const TreeNodeIndex> levelRange{od.levelRange, size_t(maxTreeLevel<KeyType>{}) + 2};
+    upsweep(levelRange, od.childOffsets, expansions.data(), MaxCombination<T>{});
+
+    std::vector<uint8_t> flags(octree.numNodes, 0);
+    findHalosSymmetric(od.prefixes, od.childOffsets, od.parents, nodeCenters.data(), nodeSizes.data(),
+                       expansions.data(), octree.numNodes, tree.data(), tC.data(), tS.data(), box, 0, a, flags.data());
+
+    // all-to-all reference: nodes inflated by their own reach against plain local leaf boxes
+    std::vector<uint8_t> reference(octree.numNodes, 0);
+    for (TreeNodeIndex t = 0; t < a; ++t)
+    {
+        for (TreeNodeIndex n = 0; n < octree.numNodes; ++n)
+        {
+            auto [k1, k2] = decodePlaceholderBit2K(od.prefixes[n]);
+            if (containedIn(k1, k2, tree[0], tree[a])) { continue; }
+            if (nodeSizes[n] == Vec3<T>{0, 0, 0}) { continue; }
+            Vec3<T> inflated = nodeSizes[n] + Vec3<T>{expansions[n], expansions[n], expansions[n]};
+            if (overlap(nodeCenters[n], inflated, tC[t], tS[t], box)) { reference[n] = 1; }
+        }
+    }
+    EXPECT_EQ(flags, reference);
+
+    // the far remote leaf is discovered through its own reach ...
+    EXPECT_EQ(1, flags[leaf2int[remoteLeaf]]);
+
+    // ... while gather-sense discovery with the same plain local boxes cannot see it
+    std::vector<uint8_t> plainFlags(octree.numNodes, 0);
+    findHalos(od.prefixes, od.childOffsets, od.parents, nodeCenters.data(), nodeSizes.data(), tree.data(), tC.data(),
+              tS.data(), box, 0, a, plainFlags.data());
+    EXPECT_EQ(0, plainFlags[leaf2int[remoteLeaf]]);
+
+    // nodes inside the local key range are never flagged
+    for (TreeNodeIndex n = 0; n < octree.numNodes; ++n)
+    {
+        auto [k1, k2] = decodePlaceholderBit2K(od.prefixes[n]);
+        if (containedIn(k1, k2, tree[0], tree[a])) { EXPECT_EQ(0, flags[n]); }
+    }
+
+    // zero reach everywhere reduces to plain box contact, identical to the reference convention
+    std::vector<T> zeroExpansions(octree.numNodes, 0);
+    std::vector<uint8_t> contactFlags(octree.numNodes, 0);
+    findHalosSymmetric(od.prefixes, od.childOffsets, od.parents, nodeCenters.data(), nodeSizes.data(),
+                       zeroExpansions.data(), octree.numNodes, tree.data(), tC.data(), tS.data(), box, 0, a,
+                       contactFlags.data());
+    std::vector<uint8_t> contactReference(octree.numNodes, 0);
+    for (TreeNodeIndex t = 0; t < a; ++t)
+    {
+        for (TreeNodeIndex n = 0; n < octree.numNodes; ++n)
+        {
+            auto [k1, k2] = decodePlaceholderBit2K(od.prefixes[n]);
+            if (containedIn(k1, k2, tree[0], tree[a])) { continue; }
+            if (nodeSizes[n] == Vec3<T>{0, 0, 0}) { continue; }
+            if (overlap(nodeCenters[n], nodeSizes[n], tC[t], tS[t], box)) { contactReference[n] = 1; }
+        }
+    }
+    EXPECT_EQ(contactFlags, contactReference);
+}
+
+TEST(HaloDiscovery, findHalosSymmetric)
+{
+    findHalosSymmetricFlags<unsigned>();
+    findHalosSymmetricFlags<uint64_t>();
+}
