@@ -188,8 +188,8 @@ public:
              * search, and the emergency threshold in updateHIterative caps the 2h count at
              * 0.9 * ngmax. */
             const float    extVol   = std::pow(sph::hNRExtFactor, 3);
-            const unsigned ngmaxMin = std::ceil(1.5f * d.ng0 * extVol / 0.9f);
-//            const unsigned ngmaxMin = std::ceil(4.5f * d.ng0 * extVol / 0.9f);
+//          const unsigned ngmaxMin = std::ceil(1.5f * d.ng0 * extVol / 0.9f);
+            const unsigned ngmaxMin = std::ceil(4.5f * d.ng0 * extVol / 0.9f);
 
             if (d.ngmax < ngmaxMin)
             {
