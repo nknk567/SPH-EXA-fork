@@ -106,10 +106,10 @@ HOST_DEVICE_FUN void updateHIterative(unsigned ng0, unsigned ngmax, const cstone
                                       const Tc* __restrict__ x, const Tc* __restrict__ y, const Tc* __restrict__ z,
                                       T* __restrict__ h, unsigned* __restrict__ nc)
 {
-    constexpr int maxIteration = 10;
-    //    const unsigned ngmin        = ng0 / 4;
-    const unsigned ngmin = 0.8 * ng0;
-    if (ngmax > 1.2 * ng0) { ngmax = 1.2 * ng0; }
+    constexpr int  maxIteration = 10;
+    const unsigned ngmin        = ng0 / 4;
+    //    const unsigned ngmin = 0.8 * ng0;
+    //    if (ngmax > 1.2 * ng0) { ngmax = 1.2 * ng0; }
 
     unsigned ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
 
