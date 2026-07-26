@@ -223,7 +223,9 @@ struct MomentumAndEnergyPostambleWithDt : MomentumAndEnergyPostamble<UseTdpdTrho
         const auto [i, iPos, hi, vxi, vyi, vzi, mi, ci, kxi, alpha_i, xmassi, prhoi, c11i, c12i, c13i, c22i, c23i, c33i,
                     nci, dV11i, dV12i, dV13i, dV22i, dV23i, dV33i, tdpdTrhoi] = iData;
 
-        auto dt = tsKCourant(maxvsignal, hi, ci, Kcour);
+        //! flagged for removal at the next sync; must not constrain the global time step
+        auto dt = nci <= 1 ? decltype(tsKCourant(maxvsignal, hi, ci, Kcour))(INFINITY)
+                           : tsKCourant(maxvsignal, hi, ci, Kcour);
         return std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt);
     }
 };

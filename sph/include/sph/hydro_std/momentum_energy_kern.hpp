@@ -137,7 +137,9 @@ struct MomentumAndEnergyPostambleStdWithDt : MomentumAndEnergyPostambleStd<Tc, T
             MomentumAndEnergyPostambleStd<Tc, Tm1>::operator()(iData, result);
         const auto [i, iPos, hi, mi, roi, nci, vxi, vyi, vzi, pri, ci, c11i, c12i, c13i, c22i, c23i, c33i] = iData;
 
-        auto dt = tsKCourant(maxvsignal, hi, ci, Kcour);
+        //! flagged for removal at the next sync; must not constrain the global time step
+        auto dt = nci <= 1 ? decltype(tsKCourant(maxvsignal, hi, ci, Kcour))(INFINITY)
+                           : tsKCourant(maxvsignal, hi, ci, Kcour);
         return std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt);
     }
 };
