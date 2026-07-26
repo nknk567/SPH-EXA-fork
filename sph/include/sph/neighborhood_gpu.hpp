@@ -64,7 +64,7 @@ struct DeviceNeighborhoodData::Impl
             subgroupNeighborhood.reset();
 
             const unsigned ngmaxBuild = std::max(d.ngmax, d.ngmaxExt);
-            const unsigned ncmax      = ngmaxBuild * 15;
+            const unsigned ncmax      = ngmaxBuild * 10;
 
             std::variant<cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder, ClusteredNeighborhoodBuilder<false>,
                          ClusteredNeighborhoodBuilder<true>>
