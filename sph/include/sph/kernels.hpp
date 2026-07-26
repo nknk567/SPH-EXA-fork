@@ -16,7 +16,7 @@ namespace sph
  * the neighbor-count management, which runs after halo discovery, so that nudged particles stay
  * within the halo margin as well.
  */
-constexpr float hNRExtFactor = 1.1;
+constexpr float hNRExtFactor = 1.05;
 
 /*! @brief NR mode: relative smoothing-length convergence tolerance of the NR iterations
  *
