@@ -97,6 +97,14 @@ public:
     //! @brief default maximum number of neighbors per particle before additional h-adjustment will be triggered
     unsigned ngmax{150};
 
+    /*! @brief neighbor-list build capacity; the list builders use the maximum of this and ngmax
+     *
+     * Raised above ngmax in NR smoothing-length mode to fit the extended-radius neighbor search
+     * (see ve_hydro.hpp), while ngmax itself remains the user-set neighbor-count bound enforced
+     * by the h-update. Runtime state, recomputed every step; not persisted to files.
+     */
+    unsigned ngmaxExt{0};
+
     /*! @brief maximum number of Newton-Raphson iterations per step to converge the smoothing length (0 = disabled)
      *
      * When nonzero, h is iterated until convergence (at most hNRIterMax iterations) to satisfy

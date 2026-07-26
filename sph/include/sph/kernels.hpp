@@ -60,12 +60,12 @@ HOST_DEVICE_FUN T updateH(unsigned ng0, unsigned nc, T h)
  * exceeds the list extension hNRExtFactor, the neighbor list built in between misses pairs
  * inside the final support (observed as a steady energy drift in shocks, where the count at
  * the NR root can reach ~2x ng0).
- * The upper bound is the capacity emergency threshold: it is enforced (not just approached),
- * so count(2h) <= bandMax < ngmax guarantees that the physical 2h neighborhood always fits
- * into the list at build time. The extended capture shell (radius scaled by hNRExtFactor for
- * completeness under the NR iterations) may overflow for counts above
- * ~0.9 * ngmax / hNRExtFactor^3; the list builder resolves that by falling back to the plain
- * 2h search for the affected particles. Shrinking h never invalidates the halos discovered for
+ * The upper bound is the user-set ngmax: it is enforced (not just approached), so
+ * count(2h) <= ngmax. The neighbor lists are built with the larger capacity ngmaxExt
+ * (see ve_hydro.hpp), sized so that both the plain 2h list and the extended capture shell
+ * (radius scaled by hNRExtFactor for completeness under the NR iterations) fit; if the
+ * extended search overflows that capacity, the list builder falls back to the plain 2h
+ * search for the affected particles. Shrinking h never invalidates the halos discovered for
  * the larger h; growing h is capped at hNRExtFactor per step to stay within the halo search
  * margin.
  */
@@ -77,7 +77,7 @@ HOST_DEVICE_FUN void updateHIterativeNR(unsigned ng0, unsigned ngmax, const csto
 {
     constexpr int  maxIteration = 10;
     const unsigned bandMin      = ng0 / 4;
-    const unsigned bandMax      = T(0.9) * ngmax;
+    const unsigned bandMax      = ngmax;
 
     unsigned ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
 
