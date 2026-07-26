@@ -64,7 +64,6 @@ struct DeviceNeighborhoodData::Impl
             subgroupNeighborhood.reset();
 
             const unsigned ngmaxBuild = std::max(d.ngmax, d.ngmaxExt);
-            const unsigned ncmax      = ngmaxBuild * 5;
 
             std::variant<cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder, ClusteredNeighborhoodBuilder<false>,
                          ClusteredNeighborhoodBuilder<true>>
@@ -73,9 +72,9 @@ struct DeviceNeighborhoodData::Impl
             {
 
                 if (subgroups)
-                    builder = ClusteredNeighborhoodBuilder<false>{ncmax};
+                    builder = ClusteredNeighborhoodBuilder<false>{cstone::GpuConfig::warpSize * ngmaxBuild};
                 else
-                    builder = ClusteredNeighborhoodBuilder<true>{ncmax};
+                    builder = ClusteredNeighborhoodBuilder<true>{cstone::GpuConfig::warpSize * ngmaxBuild / 2};
             }
             else { builder = cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder{ngmaxBuild}; }
 
