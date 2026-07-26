@@ -180,24 +180,24 @@ public:
         if (d.hNRIterMax > 0)
         {
             /* The extended-radius neighbor list holds up to hNRExtFactor^3 more entries per
-             * particle than found within 2h. Size ngmax such that the extended list of a typical
-             * particle fits for 2h-counts up to 1.5 * ng0 (with 0.9 headroom); for the higher
-             * counts a strong shock can produce, the list builder falls back to the plain 2h
-             * search, and the emergency threshold in updateHIterative caps the 2h count at
-             * 0.9 * ngmax. */
+             * particle than found within 2h. The list build capacity ngmaxExt is sized such that
+             * the extended list fits for the 2h-counts a strong shock can produce (with 0.9
+             * headroom); beyond that, the list builder falls back to the plain 2h search.
+             * ngmax itself is never modified: it remains the user-set neighbor-count bound that
+             * updateHIterativeNR enforces on the 2h count. */
             const float    extVol   = std::pow(sph::hNRExtFactor, 3);
 //            const unsigned ngmaxMin = std::ceil(1.5f * d.ng0 * extVol / 0.9f);
             const unsigned ngmaxMin = std::ceil(4.5f * d.ng0 * extVol / 0.9f);
 
-            if (d.ngmax < ngmaxMin)
+            if (d.ngmaxExt < ngmaxMin)
             {
                 if (Base::rank_ == 0)
                 {
-                    std::cout << "Raising ngmax from " << d.ngmax << " to " << ngmaxMin
+                    std::cout << "Neighbor-list build capacity set to " << ngmaxMin
                               << " to fit the extended neighbor search of the smoothing-length NR iterations"
-                              << std::endl;
+                              << " (h-update keeps 2h-counts within ngmax = " << d.ngmax << ")" << std::endl;
                 }
-                d.ngmax = ngmaxMin;
+                d.ngmaxExt = ngmaxMin;
             }
         }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <compare>
 #include <stdexcept>
 #include <variant>
@@ -39,10 +40,12 @@ struct NeighborhoodData
                      cstone::ijloop::CpuFullNbListNeighborhoodBuilder>
             builder;
 
+        const unsigned ngmaxBuild = std::max(d.ngmax, d.ngmaxExt);
+
         if (useNeighborLists)
-            builder = cstone::ijloop::CpuFullNbListNeighborhoodBuilder{d.ngmax};
+            builder = cstone::ijloop::CpuFullNbListNeighborhoodBuilder{ngmaxBuild};
         else
-            builder = cstone::ijloop::CpuAlwaysTraverseNeighborhoodBuilder{d.ngmax};
+            builder = cstone::ijloop::CpuAlwaysTraverseNeighborhoodBuilder{ngmaxBuild};
 
         std::visit(
             [&](auto const& nb)
