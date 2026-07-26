@@ -277,6 +277,39 @@ public:
         computeEOS(first, last, d);
         timer.step("EquationOfState");
 
+        {
+            /* Extrema of the VE state over the locally owned particles: pinpoints which quantity
+             * degenerates when the time step collapses (garbage divv -> rho constraint, kx/xm
+             * spikes at vacuum boundaries -> pressure/force spikes, gradh ~ 0 -> prho blow-up). */
+            auto extrema = [first, last](const auto& field)
+            {
+                if constexpr (cstone::execution::HaveGpu<Acc>{})
+                {
+                    return cstone::minMax(cstone::execution::gpuDefaultStream, rawPtr(field) + first,
+                                          rawPtr(field) + last);
+                }
+                else { return cstone::minMax(cstone::execution::cpu, field.data() + first, field.data() + last); }
+            };
+            auto [divvMin, divvMax]   = extrema(get<"divv">(d));
+            auto [gradhMin, gradhMax] = extrema(get<"gradh">(d));
+            auto [kxMin, kxMax]       = extrema(get<"kx">(d));
+            auto [xmMin, xmMax]       = extrema(get<"xm">(d));
+
+            util::array<double, 6> ex{double(std::max(std::abs(divvMin), std::abs(divvMax))),
+                                      -double(gradhMin),
+                                      double(gradhMax),
+                                      -double(kxMin),
+                                      double(kxMax),
+                                      double(xmMax)},
+                exOut;
+            MPI_Allreduce(ex.data(), exOut.data(), ex.size(), MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            if (Base::rank_ == 0)
+            {
+                std::cout << "# ve-state: maxAbsDivv=" << exOut[0] << " gradh=[" << -exOut[1] << "," << exOut[2]
+                          << "] kx=[" << -exOut[3] << "," << exOut[4] << "] maxXm=" << exOut[5] << std::endl;
+            }
+        }
+
         domain.exchangeHalos(get<"c11", "c12", "c13", "c22", "c23", "c33", "divv", "c">(d), get<"ax">(d),
                              get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
