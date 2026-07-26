@@ -189,7 +189,7 @@ public:
              * updateHIterativeNR enforces on the 2h count. */
             const float    extVol   = std::pow(sph::hNRExtFactor, 3);
 //          const unsigned ngmaxMin = std::ceil(1.5f * d.ng0 * extVol / 0.9f);
-            const unsigned ngmaxMin = std::ceil(4.5f * d.ng0 * extVol / 0.9f);
+            const unsigned ngmaxMin = std::ceil(5.f * d.ng0 * extVol / 0.9f);
 
             if (d.ngmaxExt < ngmaxMin)
             {
