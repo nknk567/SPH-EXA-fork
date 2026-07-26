@@ -111,6 +111,8 @@ HOST_DEVICE_FUN void updateHIterative(unsigned ng0, unsigned ngmax, const cstone
     //    const unsigned ngmin = 0.8 * ng0;
     //    if (ngmax > 1.2 * ng0) { ngmax = 1.2 * ng0; }
 
+    const T hEntry = h[i];
+
     unsigned ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
 
     int iteration = 0;
@@ -122,8 +124,16 @@ HOST_DEVICE_FUN void updateHIterative(unsigned ng0, unsigned ngmax, const cstone
 
     if (ngmin > ncSph || (ncSph - 1) > ngmax)
     {
+        /* Non-convergence signal is the neighbor count: nc <= 1 flags the particle for removal
+         * at the next sync (updateSmoothingLength). h is restored to its entry value instead of
+         * being invalidated to infinity: an infinite h drives the particle's density to zero
+         * (VE: xmass to infinity), which neighbors divide by in the IAD and momentum kernels,
+         * poisoning their du and accelerations with inf/NaN during the particle's final step.
+         * The entry h is the accepted value of the previous step, so it is bounded and keeps
+         * the search radii and node rMax upsweeps small, which is what the infinity marker
+         * was introduced for. */
         ncSph = 1;
-        h[i]  = cstone::invalidateH(h[i]);
+        h[i]  = hEntry;
     }
 
     nc[i] = ncSph;
