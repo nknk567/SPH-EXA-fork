@@ -26,6 +26,16 @@
 #include <tuple>
 #include <type_traits>
 
+#ifdef __CUDACC__
+#include <cuda/version>
+#include <cuda/annotated_ptr>
+#if CCCL_VERSION >= 3002000
+#include <cuda/memory>
+#else
+#include <cuda/discard_memory>
+#endif
+#endif
+
 #include "cstone/cuda/memory.cuh"
 #include "cstone/execution.hpp"
 #include "cstone/reducearray.cuh"
@@ -479,6 +489,13 @@ constexpr unsigned buildNbListSharedMemPerSupercluster(const unsigned ncmax)
     return jClustersSize + masksDataSize;
 }
 
+template<class Config>
+constexpr std::size_t scratchSize(const unsigned ncmax)
+{
+    constexpr unsigned alignment = 128 / sizeof(std::uint32_t);
+    return (ncmax + masksSize<Config>(ncmax) + alignment - 1) / alignment * alignment;
+}
+
 /*! main GPU kernel for building the supercluster neighbor list
  *
  * @param[in]    tree                   octree
@@ -499,9 +516,10 @@ constexpr unsigned buildNbListSharedMemPerSupercluster(const unsigned ncmax)
  * @param[in]    neighborDataSize       size of neighborData array to avoid out of bounds accesses
  * @param[inout] superclusterInfo       supercluster info
  * @param[in]    numSuperClusters       number of superclusters
- * @param[in]    globalPool             global memory pool used during tree traversal
- * @param[inout] globalBuildData        global build data used to 'allocate' global memory regions per supercluster in a
- * pre-allocated array
+ * @param[in]    scratch                global scratch buffer to store neighbor indices and interaction bitmasks
+ *                                      temporarily at build time
+ * @param[inout] globalBuildData        global build data used to 'allocate' global memory regions per supercluster
+ *                                      in a pre-allocated array
  */
 template<class Config, unsigned NumSuperclustersPerBlock, bool UsePbc, class Tc, class ThP, class KeyType>
 __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void buildNbListKernel(
@@ -522,7 +540,8 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
     const std::size_t neighborDataSize,
     SuperclusterInfo* const __restrict__ superclusterInfo,
     const unsigned numSuperClusters,
-    GlobalBuildData* __restrict__ globalBuildData)
+    GlobalBuildData* __restrict__ globalBuildData,
+    std::uint32_t* const __restrict__ scratch)
 {
     static_assert(Config::superclusterSize % GpuConfig::warpSize == 0);
     assert(blockDim.x == GpuConfig::warpSize);
@@ -530,11 +549,10 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
     assert(blockDim.z == NumSuperclustersPerBlock);
 
     const unsigned laneIdx = laneIndex();
-
-    util::SharedMemAllocator sharedAllocator(buildNbListSharedMemPerSupercluster<Config, Tc, ThP>(ncmax), threadIdx.z);
-
-    auto jClusters = sharedAllocator.alloc<std::uint32_t[]>(ncmax);
-    auto masks     = sharedAllocator.alloc<std::uint32_t[]>(masksSize<Config>(ncmax));
+    const std::size_t scratchOffset =
+        (std::size_t(blockIdx.x) * NumSuperclustersPerBlock + threadIdx.z) * scratchSize<Config>(ncmax);
+    std::uint32_t* const jClusters = scratch + scratchOffset;
+    std::uint32_t* const masks     = jClusters + ncmax;
 
     const unsigned firstISupercluster = superclusterIndex<Config>(firstBody);
     const unsigned lastISupercluster  = superclusterIndex<Config>(lastBody - 1) + 1;
@@ -552,15 +570,19 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
 
         const unsigned jClusterBytes = collectNeighborJClusters<Config, UsePbc>(
             tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax, firstISupercluster,
-            lastISupercluster, jClusters.get(), masks.get(), info);
+            lastISupercluster, jClusters, masks, info);
 
         maxNeighbors = std::max(info.neighborsCount, maxNeighbors);
 
         if (info.neighborsCount > ncmax && laneIdx == 0) globalBuildData->status = BuildStatus::neighbor_list_overflow;
 
         const bool storeSuccessful = storeNeighborData<Config, NumSuperclustersPerBlock>(
-            jClusters.get(), jClusterBytes, masks.get(), ncmax, neighborData, neighborDataSize,
+            jClusters, jClusterBytes, masks, ncmax, neighborData, neighborDataSize,
             &globalBuildData->neighborDataSize, info);
+
+#ifdef __CUDACC__
+        cuda::discard_memory(jClusters, scratchSize<Config>(std::min(info.neighborsCount, ncmax)) * sizeof(std::uint32_t));
+#endif
 
         if (!storeSuccessful)
         {
@@ -600,17 +622,17 @@ std::size_t buildNbList(const execution::Gpu exec,
     constexpr unsigned numWarpsPerSm            = 40;
     const unsigned numBlocks = std::min(GpuConfig::smCount * (numWarpsPerSm / numSuperclustersPerBlock),
                                         (numISuperclusters + numSuperclustersPerBlock - 1) / numSuperclustersPerBlock);
-    const unsigned sharedMem = numSuperclustersPerBlock * buildNbListSharedMemPerSupercluster<Config, Tc, ThP>(ncmax);
+    auto scratch = util::deviceAlloc<std::uint32_t[]>(exec, std::size_t(numBlocks) * numSuperclustersPerBlock *
+                                                                scratchSize<Config>(ncmax));
 
     checkGpuErrors(cudaMemsetAsync(globalBuildData.get(), 0, sizeof(GlobalBuildData), exec));
 
     auto run = [&](auto usePbc)
     {
-        buildNbListKernel<Config, numSuperclustersPerBlock, decltype(usePbc)::value>
-            <<<numBlocks, blockSize, sharedMem, exec>>>(tree, box, firstValidBody, totalBodies, groups.firstBody,
-                                                        groups.lastBody, x, y, z, h, jClusterBboxes, nodeRMax, ncmax,
-                                                        neighborData, neighborDataVirtualSize, superclusterInfo,
-                                                        numISuperclusters, globalBuildData.get());
+        buildNbListKernel<Config, numSuperclustersPerBlock, decltype(usePbc)::value><<<numBlocks, blockSize, 0, exec>>>(
+            tree, box, firstValidBody, totalBodies, groups.firstBody, groups.lastBody, x, y, z, h, jClusterBboxes,
+            nodeRMax, ncmax, neighborData, neighborDataVirtualSize, superclusterInfo, numISuperclusters,
+            globalBuildData.get(), scratch.get());
         checkGpuErrors(cudaGetLastError());
     };
 
