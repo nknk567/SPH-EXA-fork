@@ -103,9 +103,16 @@ constexpr T ballmassEta(unsigned ng0)
 
 /*! @brief SPH-smoothed volume estimate, used as the volume element weights of the next time-step
  *
- * volstd_i = K/h_i^3 * sum_j V_j^2 * W_ij with V = xm / kx, the SPH interpolation of the converged
- * particle volume, as in SPHYNX (calculate_IAD.f90/update.f90 with volstdprom enabled). Smoothing
- * suppresses particle-scale noise that the raw recursion xm <- xm / kx would amplify.
+ * volstd_i = sum_j V_j^2 W_ij / sum_j V_j W_ij with V = xm / kx: the Shepard-normalized SPH
+ * interpolation of the converged particle volume (SPHYNX volstdprom is the unnormalized
+ * variant). Smoothing suppresses particle-scale noise that the raw recursion xm <- xm / kx
+ * would amplify. The normalization is essential at degenerate neighborhoods: unnormalized,
+ * the interpolation of a particle whose neighbors sit near the kernel edge reduces to its
+ * self-term K w0 V_i^2 / h^3 ~ 0.26 V_i at the NR root — a downward spiral that traps
+ * particles at tiny h and volume with artifact velocity derivatives (observed to bind the rho
+ * time step through single particles). Normalized, the isolated fixed point is exactly V_i
+ * (neutral), edge particles relax toward their neighbors' volumes, and the result is bounded
+ * by the largest neighbor volume, which also removes the vacuum-edge inflation engine.
  */
 template<class T>
 struct VolstdInteraction
@@ -125,7 +132,7 @@ struct VolstdInteraction
 
         T vj = xmassj / kxj;
 
-        return std::make_tuple(vj * vj * w);
+        return std::make_tuple(vj * vj * w, vj * w);
     }
 };
 
@@ -138,12 +145,10 @@ struct VolstdPostamble
     constexpr auto operator()(const ParticleData& iData, const Result& result) const
     {
         const auto [i, iPos, hi, xmassi, kxi] = iData;
-        auto [volstdi]                        = result;
+        auto [num, den]                       = result;
 
-        auto hInv  = T(1) / hi;
-        auto h3Inv = hInv * hInv * hInv;
-
-        volstdi *= K * h3Inv;
+        //! den >= V_i * w(0) > 0 through the self contribution; fall back to the current volume
+        T volstdi = den > T(0) ? num / den : xmassi / kxi;
 
         return std::make_tuple(volstdi);
     }
