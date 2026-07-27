@@ -103,11 +103,11 @@ template void computeVolstd(const GroupView&, sphexa::ParticlesData<cstone::exec
 template<class Tv>
 struct VolstdClamp
 {
-    //! @brief clamp the per-step change of the carried volume, see volstdClampFactor
+    //! @brief clamp the per-step change of the carried volume, see volstdGrow/ShrinkFactor
     HOST_DEVICE_FUN Tv operator()(Tv volstdi, Tv xmOld) const
     {
-        Tv lo = xmOld / Tv(volstdClampFactor);
-        Tv hi = xmOld * Tv(volstdClampFactor);
+        Tv lo = xmOld / Tv(volstdShrinkFactor);
+        Tv hi = xmOld * Tv(volstdGrowFactor);
         return stl::min(stl::max(volstdi, lo), hi);
     }
 };

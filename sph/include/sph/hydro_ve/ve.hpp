@@ -70,9 +70,9 @@ void setVolumeElements(const GroupView& grp, Dataset& d, const Tv* volstd)
 #pragma omp parallel for schedule(static)
         for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
         {
-            //! clamp the per-step change of the carried volume, see volstdClampFactor
-            Tv lo = xm[i] / Tv(volstdClampFactor);
-            Tv hi = xm[i] * Tv(volstdClampFactor);
+            //! clamp the per-step change of the carried volume, see volstdGrow/ShrinkFactor
+            Tv lo = xm[i] / Tv(volstdShrinkFactor);
+            Tv hi = xm[i] * Tv(volstdGrowFactor);
             xm[i] = stl::min(stl::max(volstd[i], lo), hi);
         }
     }

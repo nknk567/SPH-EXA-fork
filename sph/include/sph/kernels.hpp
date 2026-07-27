@@ -25,17 +25,22 @@ constexpr float hNRExtFactor = 1.05;
  */
 constexpr float hNRTol = 1e-4;
 
-/*! @brief NR mode: maximum factor by which a carried volume element may change per step
+/*! @brief NR mode: per-step change limits for a carried volume element (asymmetric)
  *
  * The carried weights are the SPH-smoothed converged volumes (volstd). The smoothing is a
  * volume-weighted interpolation (sum V_j^2 W), which at vacuum boundaries is dominated
- * quadratically by the largest neighbor volume: edge volumes then ratchet up by factors per
+ * quadratically by the largest neighbor volume: edge volumes then ratchet UP by factors per
  * step (observed x4.6 in two steps in TDE debris, driving kx spikes of 10^3 and collapsing
- * the rho time step). Physical volume changes per step are O(|divv| * dt) << 1, so clamping
- * the carried volume to [1/x, x] of its previous value is inert in resolved flow and only
- * limits the unphysical edge ratchet.
+ * the rho time step) — hence the tight growth limit; physical volume growth per step is
+ * O(|divv| * dt) << 1, so it is inert in resolved flow.
+ * DOWNWARD movement is legitimate fast adaptation: diffuse debris compressing into denser
+ * regions correctly shrinks h within a few steps (0.5 * h0 cap), and the carried volume must
+ * follow at a comparable rate or kx = eta * xm / h^3 spikes by the staleness ratio (observed
+ * kx ~ 300 while xm needed ~15 steps to adapt under a symmetric factor-2 clamp) — hence the
+ * looser shrink limit.
  */
-constexpr float volstdClampFactor = 2.0;
+constexpr float volstdGrowFactor   = 2.0;
+constexpr float volstdShrinkFactor = 8.0;
 
 //! @brief compute time-step based on the signal velocity
 template<class T1, class T2, class T3>
