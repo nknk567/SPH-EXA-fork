@@ -46,6 +46,10 @@ extern void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typena
 template<class Dataset, class Tv>
 extern void setVolumeElements(const GroupView&, Dataset& d, const Tv* volstd);
 
+//! @brief diagnostic: number of non-finite values in f[first:last]
+template<class T>
+extern size_t countNonFiniteGpu(const T* f, size_t first, size_t last);
+
 template<class Dataset>
 extern void computeIadDivvCurlvGradh(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 

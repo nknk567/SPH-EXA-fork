@@ -202,6 +202,43 @@ public:
         }
     }
 
+    /*! @brief diagnostic: globally count non-finite du/ax/ay/az entries of the owned particles
+     *
+     * Placed after each force stage (sph momentum, gravity, disk central force), the first tag
+     * with a nonzero count names the stage that produces NaN/inf. Call sites are single lines,
+     * safe to comment out.
+     */
+    void printNonFinite(const char* tag, typename DataType::HydroData& d, size_t first, size_t last)
+    {
+        auto count = [&](const auto& field) -> unsigned long long
+        {
+            if constexpr (cstone::execution::HaveGpu<Acc>{})
+            {
+                return gpu::countNonFiniteGpu(rawPtr(field), first, last);
+            }
+            else
+            {
+                unsigned long long n = 0;
+                const auto*        p = field.data();
+#pragma omp parallel for reduction(+ : n)
+                for (size_t i = first; i < last; ++i)
+                {
+                    n += !std::isfinite(p[i]);
+                }
+                return n;
+            }
+        };
+        util::array<unsigned long long, 4> c{count(get<"du">(d)), count(get<"ax">(d)), count(get<"ay">(d)),
+                                             count(get<"az">(d))},
+            cOut;
+        MPI_Allreduce(c.data(), cOut.data(), c.size(), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (Base::rank_ == 0)
+        {
+            std::cout << "# nonfinite[" << tag << "]: du=" << cOut[0] << " ax=" << cOut[1] << " ay=" << cOut[2]
+                      << " az=" << cOut[3] << std::endl;
+        }
+    }
+
     void computeForces(DomainType& domain, DataType& simData) override
     {
         timer.start();
@@ -342,6 +379,8 @@ public:
         timer.step("MomentumAndEnergy");
         pmReader.step();
 
+        printNonFinite("sph", d, first, last); // NaN-localizer diagnostic, safe to comment out
+
         if (d.g != 0.0)
         {
             auto groups = mHolder_.computeSpatialGroups(d, domain);
@@ -356,6 +395,8 @@ public:
             timer.logStatistics("sumP2P", stats[0] / timer.getLastStepTime());
             timer.logStatistics("sumM2P", stats[2] / timer.getLastStepTime());
         }
+
+        printNonFinite("gravity", d, first, last); // NaN-localizer diagnostic, safe to comment out
     }
 
     void integrate(DomainType& domain, DataType& simData) override

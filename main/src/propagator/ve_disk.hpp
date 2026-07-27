@@ -76,6 +76,8 @@ public:
 
         disk::computeCentralForce(first, last, d, star);
         timer.step("computeCentralForce");
+
+        Base::printNonFinite("disk", d, first, last); // NaN-localizer diagnostic, safe to comment out
     }
 
     void integrate(DomainType& domain, DataType& simData) override
