@@ -125,8 +125,13 @@ struct MomentumAndEnergyInteraction
         T wij          = i == j ? 0 : rv / dist;
         T viscosity_ij = artificial_viscosity(alpha_i, alpha_j, ci, cj, wij);
 
-        // For time-step calculations
-        T vijsignal = i == j ? 0 : T(0.5) * (ci + cj) - T(2) * wij;
+        /* For time-step calculations. Only pairs within the owner's own support may constrain
+         * its Courant time: with symmetric interactions, pairs reaching in from a larger
+         * neighbor (r up to 2*h_j >> 2*h_i) would otherwise pair a velocity difference sampled
+         * at the scale h_j with the owner's small h_i in Kcour * h_i / vsignal, suppressing the
+         * time step by up to h_j/h_i. The reverse direction is handled by the swapped (j,i)
+         * evaluation, gated with h_j (the vsignal slot is deliberately NOT marked symmetric). */
+        T vijsignal = (i == j || r2 > T(4) * hi * hi) ? T(0) : T(0.5) * (ci + cj) - T(2) * wij;
 
         T a_mom, b_mom;
         if (nrMode)
@@ -175,7 +180,7 @@ struct MomentumAndEnergyInteraction
         T    momentum_z = momentum_i * termA3_i + momentum_j * termA3_j + a_visc_z;
 
         return std::make_tuple(a_visc_energy, energy, momentum_x, momentum_y, momentum_z,
-                               cstone::ijloop::symmetric::even(cstone::ijloop::reduction::max(vijsignal)));
+                               cstone::ijloop::reduction::max(vijsignal));
     }
 };
 

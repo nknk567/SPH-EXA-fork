@@ -98,6 +98,39 @@ auto rhoTimestep(size_t first, size_t last, const Dataset& d)
     return d.Krho / std::abs(maxDivv);
 }
 
+/*! @brief diagnostic: print the global minimum of each time-step candidate on rank 0
+ *
+ * @param candidates  local time-step candidates in the order {acc, courant, rho, growth, extra...}
+ * @param hadNan      whether any local candidate was NaN (dropped from the min in computeTimestep)
+ *
+ * Prints one line per step: '# dt: acc=... courant=... rho=... growth=... extraN=... [NAN]'.
+ * Costs one small Allreduce; the call site in computeTimestep is safe to comment out.
+ */
+template<class T, std::size_t N>
+void printTimestepConstraints(const util::array<T, N>& candidates, bool hadNan)
+{
+    util::array<T, N + 1> in, out;
+    for (std::size_t c = 0; c < N; ++c)
+    {
+        in[c] = candidates[c];
+    }
+    in[N] = hadNan ? T(-1) : T(0);
+    MPI_Allreduce(in.data(), out.data(), in.size(), MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
+
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    if (rank == 0)
+    {
+        std::cout << "# dt: acc=" << out[0] << " courant=" << out[1] << " rho=" << out[2] << " growth=" << out[3];
+        for (std::size_t e = 4; e < N; ++e)
+        {
+            std::cout << " extra" << e - 4 << "=" << out[e];
+        }
+        if (out[N] < T(0)) { std::cout << " [NAN]"; }
+        std::cout << std::endl;
+    }
+}
+
 template<class Dataset, class... Ts>
 void computeTimestep(size_t first, size_t last, Dataset& d, Ts... extraTimesteps)
 {
@@ -111,8 +144,8 @@ void computeTimestep(size_t first, size_t last, Dataset& d, Ts... extraTimesteps
 
     /* A NaN candidate (e.g. a NaN Courant time from a single corrupted particle) must not
      * propagate into the global time step: the growth-capped previous step is always finite, so
-     * dropping NaN candidates keeps the run integrating, while the [NAN] tag in the per-step
-     * print below points at the failing constraint. Infinite candidates are normal (inactive
+     * dropping NaN candidates keeps the run integrating, while the [NAN] tag in the diagnostic
+     * print points at the failing constraint. Infinite candidates are normal (inactive
      * constraints) and never win the min. */
     T    minDtLoc = INFINITY;
     bool hadNan   = false;
@@ -126,34 +159,14 @@ void computeTimestep(size_t first, size_t last, Dataset& d, Ts... extraTimesteps
         minDtLoc = std::min(minDtLoc, candidates[c]);
     }
 
-    util::array<T, 4 + numCandidates> varsIn, varsOut;
-    varsIn[0] = minDtLoc;
-    varsIn[1] = 0;
-    varsIn[2] = -T(d.size() - last + first);
-    varsIn[3] = hadNan ? T(-1) : T(0);
-    for (size_t c = 0; c < numCandidates; ++c)
-    {
-        varsIn[4 + c] = candidates[c];
-    }
+    printTimestepConstraints(candidates, hadNan); // time-step diagnostic, safe to comment out
+
+    util::array<T, 3> varsIn{minDtLoc, 0, -T(d.size() - last + first)}, varsOut;
     if constexpr (d.useGpu) { varsIn[1] = -int(d.stackUsedGravity); }
     MPI_Allreduce(varsIn.data(), varsOut.data(), varsIn.size(), MpiType<T>{}, MPI_MIN, MPI_COMM_WORLD);
     T minDtGlobal = varsOut[0];
     if constexpr (d.useGpu) { d.stackUsedGravity = int(-varsOut[1]); }
     d.maxHalos = int(-varsOut[2]);
-
-    int rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    if (rank == 0)
-    {
-        std::cout << "# dt: acc=" << varsOut[4] << " courant=" << varsOut[5] << " rho=" << varsOut[6]
-                  << " growth=" << varsOut[7];
-        for (size_t e = 0; e < sizeof...(Ts); ++e)
-        {
-            std::cout << " extra" << e << "=" << varsOut[8 + e];
-        }
-        if (varsOut[3] < T(0)) { std::cout << " [NAN]"; }
-        std::cout << std::endl;
-    }
 
     d.ttot += minDtGlobal;
 
