@@ -239,6 +239,14 @@ struct VeNRPostamble
          * in the following steps. Downward movement always stays inside the list. */
         hNew = stl::min(hNew, T(hNRExtFactor) * h0i);
 
+        /* Cumulative downward cap per step: where the volume elements are strongly non-uniform
+         * (vacuum boundaries), the constraint can demand h far below the step-start value; the
+         * per-iteration clamp alone still allows 0.5^nrIter within one step. Such a collapse
+         * shrinks the neighborhood to a degenerate set within a single step (exploding kernel
+         * gradients, observed as NaN forces on the second step of TDE restarts), so limit the
+         * approach to the root to a factor 2 per step, mirroring the upward cap. */
+        hNew = stl::max(hNew, T(0.5) * h0i);
+
         return std::make_tuple(kxi, hNew);
     }
 };
