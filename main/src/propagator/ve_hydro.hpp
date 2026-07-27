@@ -493,13 +493,19 @@ public:
         acquire(d, "c11", "c12", "c13");
 
         // third output pass: recover temporary curlv and divv quantities
-        release(d, "prho", "c");
-        acquire(d, "divv", "curlv");
+        /* In NR mode the recovery kernel also writes gradh, whose storage went back to the pool
+         * at the end of the second pass — it must be re-acquired or the write faults (observed
+         * as a segfault/GPU error when requesting divv/curlv with --nrIter). dtCourant is free
+         * here: its scalar reduction already happened in computeForces. Note that a requested
+         * gradh output is still written in the SECOND pass from uninitialized scratch — do not
+         * request gradh in output field lists. */
+        release(d, "prho", "c", "dtCourant");
+        acquire(d, "divv", "curlv", "gradh");
         // partial recovery of cij in range [first:last] without halos, which are not needed for divv and curlv
         if (!indicesDone.empty()) { computeIadDivvCurlvGradh(groups_.view(), d, box); }
         output();
-        release(d, "divv", "curlv");
-        acquire(d, "prho", "c");
+        release(d, "divv", "curlv", "gradh");
+        acquire(d, "prho", "c", "dtCourant");
 
         /* The following data is now lost and no longer available in the integration step
          *  c11, c12, c12: halos invalidated
