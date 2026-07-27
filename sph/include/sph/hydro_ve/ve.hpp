@@ -64,7 +64,18 @@ template<class Dataset, class Tv>
 void setVolumeElements(const GroupView& grp, Dataset& d, const Tv* volstd)
 {
     if constexpr (d.useGpu) { gpu::setVolumeElements(grp, d, volstd); }
-    else { std::copy(volstd + grp.firstBody, volstd + grp.lastBody, d.xm.data() + grp.firstBody); }
+    else
+    {
+        auto* xm = d.xm.data();
+#pragma omp parallel for schedule(static)
+        for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
+        {
+            //! clamp the per-step change of the carried volume, see volstdClampFactor
+            Tv lo = xm[i] / Tv(volstdClampFactor);
+            Tv hi = xm[i] * Tv(volstdClampFactor);
+            xm[i] = stl::min(stl::max(volstd[i], lo), hi);
+        }
+    }
 }
 
 /*! @brief one Newton-Raphson iteration for the smoothing length constraint rho * h^3 = eta * m

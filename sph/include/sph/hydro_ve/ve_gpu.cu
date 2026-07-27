@@ -30,6 +30,7 @@
  */
 
 #include <thrust/execution_policy.h>
+#include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/tuple.h>
 
@@ -99,11 +100,23 @@ void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typename Data
 template void computeVolstd(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
                             const cstone::Box<SphTypes::CoordinateType>&, SphTypes::HydroType*);
 
+template<class Tv>
+struct VolstdClamp
+{
+    //! @brief clamp the per-step change of the carried volume, see volstdClampFactor
+    HOST_DEVICE_FUN Tv operator()(Tv volstdi, Tv xmOld) const
+    {
+        Tv lo = xmOld / Tv(volstdClampFactor);
+        Tv hi = xmOld * Tv(volstdClampFactor);
+        return stl::min(stl::max(volstdi, lo), hi);
+    }
+};
+
 template<class Dataset, class Tv>
 void setVolumeElements(const GroupView& grp, Dataset& d, const Tv* volstd)
 {
-    cstone::memcpyD2DAsync(cstone::execution::gpuDefaultStream, volstd + grp.firstBody, grp.lastBody - grp.firstBody,
-                           rawPtr(d.xm) + grp.firstBody);
+    thrust::transform(thrust::device, volstd + grp.firstBody, volstd + grp.lastBody,
+                      rawPtr(d.xm) + grp.firstBody, rawPtr(d.xm) + grp.firstBody, VolstdClamp<Tv>{});
     checkGpuErrors(cudaDeviceSynchronize());
 }
 
