@@ -208,34 +208,55 @@ public:
      * with a nonzero count names the stage that produces NaN/inf. Call sites are single lines,
      * safe to comment out.
      */
+    template<class FieldVector>
+    unsigned long long nonFiniteCount(const FieldVector& field, size_t first, size_t last)
+    {
+        if constexpr (cstone::execution::HaveGpu<Acc>{})
+        {
+            return gpu::countNonFiniteGpu(rawPtr(field), first, last);
+        }
+        else
+        {
+            unsigned long long n = 0;
+            const auto*        p = field.data();
+#pragma omp parallel for reduction(+ : n)
+            for (size_t i = first; i < last; ++i)
+            {
+                n += !std::isfinite(p[i]);
+            }
+            return n;
+        }
+    }
+
     void printNonFinite(const char* tag, typename DataType::HydroData& d, size_t first, size_t last)
     {
-        auto count = [&](const auto& field) -> unsigned long long
-        {
-            if constexpr (cstone::execution::HaveGpu<Acc>{})
-            {
-                return gpu::countNonFiniteGpu(rawPtr(field), first, last);
-            }
-            else
-            {
-                unsigned long long n = 0;
-                const auto*        p = field.data();
-#pragma omp parallel for reduction(+ : n)
-                for (size_t i = first; i < last; ++i)
-                {
-                    n += !std::isfinite(p[i]);
-                }
-                return n;
-            }
-        };
-        util::array<unsigned long long, 4> c{count(get<"du">(d)), count(get<"ax">(d)), count(get<"ay">(d)),
-                                             count(get<"az">(d))},
+        util::array<unsigned long long, 4> c{nonFiniteCount(get<"du">(d), first, last),
+                                             nonFiniteCount(get<"ax">(d), first, last),
+                                             nonFiniteCount(get<"ay">(d), first, last),
+                                             nonFiniteCount(get<"az">(d), first, last)},
             cOut;
         MPI_Allreduce(c.data(), cOut.data(), c.size(), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if (Base::rank_ == 0)
         {
             std::cout << "# nonfinite[" << tag << "]: du=" << cOut[0] << " ax=" << cOut[1] << " ay=" << cOut[2]
                       << " az=" << cOut[3] << std::endl;
+        }
+    }
+
+    //! @brief diagnostic twin of printNonFinite for the VE intermediate fields (divv/gradh/cij/prho, alpha)
+    void printNonFiniteVe(const char* tag, typename DataType::HydroData& d, size_t first, size_t last)
+    {
+        util::array<unsigned long long, 5> c{nonFiniteCount(get<"divv">(d), first, last),
+                                             nonFiniteCount(get<"gradh">(d), first, last),
+                                             nonFiniteCount(get<"c11">(d), first, last),
+                                             nonFiniteCount(get<"prho">(d), first, last),
+                                             nonFiniteCount(get<"alpha">(d), first, last)},
+            cOut;
+        MPI_Allreduce(c.data(), cOut.data(), c.size(), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (Base::rank_ == 0)
+        {
+            std::cout << "# nonfinite[" << tag << "]: divv=" << cOut[0] << " gradh=" << cOut[1] << " c11=" << cOut[2]
+                      << " prho=" << cOut[3] << " alpha=" << cOut[4] << std::endl;
         }
     }
 
@@ -356,7 +377,8 @@ public:
         computeEOS(first, last, d);
         timer.step("EquationOfState");
 
-        printVeStateExtrema(d, first, last); // VE state diagnostic, safe to comment out
+        printVeStateExtrema(d, first, last);   // VE state diagnostic, safe to comment out
+        printNonFiniteVe("eos", d, first, last); // NaN-localizer diagnostic, safe to comment out
 
         domain.exchangeHalos(get<"c11", "c12", "c13", "c22", "c23", "c33", "divv", "c">(d), get<"ax">(d),
                              get<"keys">(d));
@@ -364,6 +386,8 @@ public:
 
         computeAVswitches(groups_.view(), d, domain.box());
         timer.step("AVswitches");
+
+        printNonFiniteVe("avswitch", d, first, last); // NaN-localizer diagnostic, safe to comment out
 
         if (avClean)
         {
