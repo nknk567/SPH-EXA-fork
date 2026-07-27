@@ -310,12 +310,12 @@ public:
 
         /* With NR iterations, the volume elements are carried over from the smoothed converged
          * volume of the previous step (SPHYNX-style, see computeVolstd) and only initialized from
-         * the standard SPH density on the first step. */
-        /* TEMPORARY DIAGNOSTIC (stage 3, revert after the experiment): compute xm fresh every
-         * step also in NR mode, bypassing the carried (file/volstd) volume elements, to separate
-         * "the CARRIED xm is the poison" from "the weight sums are intrinsically pathological at
-         * vacuum boundaries". Original gate:
-         * if (d.hNRIterMax == 0 || d.iteration == 1) */
+         * the standard SPH density on the first step. Recomputing xm from the CURRENT h every
+         * step (tried as a diagnostic) makes the NR constraint ill-posed for undersampled
+         * particles: with a self-dominated density, xm ~ h^3/(K*w0) and both sides of
+         * kx * h^3 = eta * xm scale with h^3 — the root degenerates and h drifts against the
+         * caps (observed as kx -> eta/(K*w0) spikes and permanent 9-iteration tug-of-war). */
+        if (d.hNRIterMax == 0 || d.iteration == 1)
         {
             computeXMass(groups_.view(), d, domain.box());
             timer.step("XMass");
