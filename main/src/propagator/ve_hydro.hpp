@@ -253,7 +253,11 @@ public:
         /* With NR iterations, the volume elements are carried over from the smoothed converged
          * volume of the previous step (SPHYNX-style, see computeVolstd) and only initialized from
          * the standard SPH density on the first step. */
-        if (d.hNRIterMax == 0 || d.iteration == 1)
+        /* TEMPORARY DIAGNOSTIC (stage 3, revert after the experiment): compute xm fresh every
+         * step also in NR mode, bypassing the carried (file/volstd) volume elements, to separate
+         * "the CARRIED xm is the poison" from "the weight sums are intrinsically pathological at
+         * vacuum boundaries". Original gate:
+         * if (d.hNRIterMax == 0 || d.iteration == 1) */
         {
             computeXMass(groups_.view(), d, domain.box());
             timer.step("XMass");
