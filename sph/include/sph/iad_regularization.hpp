@@ -52,6 +52,13 @@ template<class T>
 HOST_DEVICE_FUN constexpr void regularizeIadMomentMatrix(T& tau11, const T& tau12, const T& tau13, T& tau22,
                                                          const T& tau23, T& tau33, const T conditionQualityTarget)
 {
+    /* A particle without any neighbors (nc <= 1) has an exactly zero moment matrix; the ridge
+     * equation below divides by trAvg powers and would turn it into NaN (0/0 in a and b), which
+     * then poisons the accelerations of every particle that has this one inside its own support
+     * radius (the NaN survives the det > 0 guard because cij = NaN * factor even for factor = 0).
+     * Leave the matrix untouched: det stays 0, the caller's det > 0 gate zeroes the cij cleanly. */
+    if (!(tau11 + tau22 + tau33 > T(0))) { return; }
+
     T trAvg           = (tau11 + tau22 + tau33) / T(3);
     T det             = iadMomentDet(tau11, tau12, tau13, tau22, tau23, tau33);
     T secondInvariant = iadMomentSecondInvariant(tau11, tau12, tau13, tau22, tau23, tau33);
