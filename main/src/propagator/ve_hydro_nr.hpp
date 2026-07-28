@@ -341,7 +341,7 @@ protected:
              * Once the unconverged set is small, full neighbor-list passes over all
              * particles are wasted on it: finish those particles with per-particle
              * octree-traversal updates instead (exact, see computeVeNRTail). */
-            if (numUnconverged * 10 < groups_.view().lastBody - groups_.view().firstBody)
+            if (numUnconverged * 100 < groups_.view().lastBody - groups_.view().firstBody)
             {
                 nrIterations +=
                     computeVeNRTail(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
