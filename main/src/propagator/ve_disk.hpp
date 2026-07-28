@@ -10,7 +10,7 @@
 
 #include "io/arg_parser.hpp"
 #include "ipropagator.hpp"
-#include "ve_hydro.hpp"
+#include "ve_hydro_nr.hpp"
 #include "sph/particles_data.hpp"
 #include "sph/sph.hpp"
 
@@ -27,15 +27,15 @@ using namespace sph;
 
 /*! @brief VE propagator with disk physics around a central star
  *
- * Inherits the full VE force computation, including the Newton-Raphson smoothing-length
- * iterations and symmetric interactions. The energy variable is the internal energy "u"
- * instead of "temp", as required by the disk physics functions.
+ * Inherits the full ve-nr force computation (Newton-Raphson smoothing-length iterations and
+ * symmetric interactions). The energy variable is the internal energy "u" instead of "temp",
+ * as required by the disk physics functions.
  */
 template<bool avClean, class DomainType, class DataType>
-class VeDiskProp : public HydroVeProp<avClean, DomainType, DataType, "u">
+class VeDiskProp : public HydroVeNRProp<avClean, DomainType, DataType, "u">
 {
 protected:
-    using Base = HydroVeProp<avClean, DomainType, DataType, "u">;
+    using Base = HydroVeNRProp<avClean, DomainType, DataType, "u">;
     using Base::groups_;
     using Base::timer;
     using Base::volstd_;
@@ -46,7 +46,7 @@ protected:
 
 public:
     VeDiskProp(std::ostream& output, size_t rank, const InitSettings& settings)
-        : Base(output, rank)
+        : Base(output, rank, settings)
     {
         BuiltinWriter attributeWriter(settings);
         star.loadOrStoreAttributes(&attributeWriter);
@@ -54,6 +54,8 @@ public:
 
     void load(const std::string& initCond, IFileReader* reader) override
     {
+        Base::load(initCond, reader);
+
         const std::string path = removeModifiers(initCond);
         if (std::filesystem::exists(path))
         {
@@ -64,7 +66,11 @@ public:
         }
     }
 
-    void save(IFileWriter* writer) override { star.loadOrStoreAttributes(writer); }
+    void save(IFileWriter* writer) override
+    {
+        Base::save(writer);
+        star.loadOrStoreAttributes(writer);
+    }
 
     void computeForces(DomainType& domain, DataType& simData) override
     {
@@ -93,22 +99,20 @@ public:
         timer.step("Timestep");
 
         computePositions(groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)});
-        /* With Newton-Raphson iterations active, h is converged towards rho * h^3 = eta * m during
-         * the force computation; nudging h towards the neighbor count target here would displace it
-         * from the converged solution every step. Unresolvable particles are still flagged. */
-        bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d, /*adjustH*/ d.hNRIterMax == 0);
+        /* h is converged towards rho * h^3 = eta * m during the force computation; nudging h
+         * towards the neighbor count target here would displace it from the converged solution
+         * every step. Unresolvable particles are still flagged. */
+        bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d, /*adjustH*/ false);
         if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
         {
             throw std::runtime_error("Neighbor search did not converge\n");
         }
 
-        if (d.hNRIterMax > 0)
-        {
-            /* volume elements of the next step, the smoothed converged volume of this step
-             * (SPHYNX-style); placed after the checkpoint output so that restarts see the weights
-             * that belong to the dumped positions */
-            setVolumeElements(groups_.view(), d, cstone::rawPtr(volstd_));
-        }
+        /* volume elements of the next step, the smoothed converged volume of this step
+         * (SPHYNX-style); placed after the checkpoint output so that restarts see the weights
+         * that belong to the dumped positions */
+        setVolumeElements(groups_.view(), d, cstone::rawPtr(volstd_), Base::nrParams_.volstdGrowFactor,
+                          Base::nrParams_.volstdShrinkFactor);
         timer.step("UpdateQuantities");
 
         disk::computeAndExchangeStarPosition(star, d.minDt, d.minDt_m1);

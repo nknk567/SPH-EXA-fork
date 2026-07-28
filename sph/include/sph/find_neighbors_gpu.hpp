@@ -19,6 +19,7 @@ template<class T, class Dataset>
 extern void updateSmoothingLengthIterativeGpu(const cstone::GroupView&, Dataset& d, const cstone::Box<T>& box);
 
 template<class T, class Dataset>
-extern void updateSmoothingLengthIterativeNRGpu(const cstone::GroupView&, Dataset& d, const cstone::Box<T>& box);
+extern void updateSmoothingLengthIterativeNRGpu(const cstone::GroupView&, Dataset& d, const cstone::Box<T>& box,
+                                                float hExtFactor);
 
 }

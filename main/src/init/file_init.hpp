@@ -79,8 +79,8 @@ void restoreDataset(IFileReader* reader, Dataset& d)
                         {
                             std::cout << "\nWARNING: optional field " << key
                                       << " not found in restart file, initializing to zero. It will be recomputed "
-                                         "when running without NR smoothing-length iterations; for --nrIter > 0, "
-                                         "first regenerate the checkpoint with a run without --nrIter."
+                                         "when running without NR smoothing-length iterations; for the ve-nr and "
+                                         "ve-disk propagators, first regenerate the checkpoint with a classical run."
                                       << std::endl;
                         }
                         std::fill(tmp.begin(), tmp.end(), T(0));

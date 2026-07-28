@@ -8,40 +8,6 @@
 namespace sph
 {
 
-/*! @brief NR mode: extension factor for the halo search and the neighbor-list capture radius
- *
- * Halos and neighbor lists are built before the NR iterations move h; extending both search radii
- * by this factor keeps them complete as long as h grows by less than this factor within a step
- * (the interaction kernels always cut at the live 2h). It also caps the per-step growth of h by
- * the neighbor-count management, which runs after halo discovery, so that nudged particles stay
- * within the halo margin as well.
- */
-constexpr float hNRExtFactor = 1.05;
-
-/*! @brief NR mode: relative smoothing-length convergence tolerance of the NR iterations
- *
- * The iterations of a step stop as soon as the largest relative h change of a locally owned
- * particle falls below this value (or when the --nrIter cap is reached).
- */
-constexpr float hNRTol = 1e-4;
-
-/*! @brief NR mode: per-step change limits for a carried volume element (asymmetric)
- *
- * The carried weights are the SPH-smoothed converged volumes (volstd). The smoothing is a
- * volume-weighted interpolation (sum V_j^2 W), which at vacuum boundaries is dominated
- * quadratically by the largest neighbor volume: edge volumes then ratchet UP by factors per
- * step (observed x4.6 in two steps in TDE debris, driving kx spikes of 10^3 and collapsing
- * the rho time step) — hence the tight growth limit; physical volume growth per step is
- * O(|divv| * dt) << 1, so it is inert in resolved flow.
- * DOWNWARD movement is legitimate fast adaptation: diffuse debris compressing into denser
- * regions correctly shrinks h within a few steps (0.5 * h0 cap), and the carried volume must
- * follow at a comparable rate or kx = eta * xm / h^3 spikes by the staleness ratio (observed
- * kx ~ 300 while xm needed ~15 steps to adapt under a symmetric factor-2 clamp) — hence the
- * looser shrink limit.
- */
-constexpr float volstdGrowFactor   = 2.0;
-constexpr float volstdShrinkFactor = 8.0;
-
 //! @brief compute time-step based on the signal velocity
 template<class T1, class T2, class T3>
 HOST_DEVICE_FUN auto tsKCourant(T1 maxvsignal, T2 h, T3 c, float Kcour)
@@ -74,20 +40,20 @@ HOST_DEVICE_FUN T updateH(unsigned ng0, unsigned nc, T h)
  * neighbor count only guards the neighbor-list capacity, so the bounds are wide and this pass
  * must interfere with the converged NR solution as rarely and as gently as possible: any h
  * change here is undone by the NR iterations pulling h back to its root, and if that pull-back
- * exceeds the list extension hNRExtFactor, the neighbor list built in between misses pairs
+ * exceeds the list extension @p hExtFactor, the neighbor list built in between misses pairs
  * inside the final support (observed as a steady energy drift in shocks, where the count at
  * the NR root can reach ~2x ng0).
  * The upper bound is the user-set ngmax: it is enforced (not just approached), so
  * count(2h) <= ngmax. The neighbor lists are built with the larger capacity ngmaxExt
- * (see ve_hydro.hpp), sized so that both the plain 2h list and the extended capture shell
- * (radius scaled by hNRExtFactor for completeness under the NR iterations) fit; if the
+ * (see ve_hydro_nr.hpp), sized so that both the plain 2h list and the extended capture shell
+ * (radius scaled by @p hExtFactor for completeness under the NR iterations) fit; if the
  * extended search overflows that capacity, the list builder falls back to the plain 2h
  * search for the affected particles. Shrinking h never invalidates the halos discovered for
- * the larger h; growing h is capped at hNRExtFactor per step to stay within the halo search
+ * the larger h; growing h is capped at @p hExtFactor per step to stay within the halo search
  * margin.
  */
 template<class Tc, class T, class KeyType>
-HOST_DEVICE_FUN void updateHIterativeNR(unsigned ng0, unsigned ngmax, const cstone::Box<Tc>& box,
+HOST_DEVICE_FUN void updateHIterativeNR(unsigned ng0, unsigned ngmax, float hExtFactor, const cstone::Box<Tc>& box,
                                         const cstone::OctreeNsView<Tc, KeyType>& treeView, cstone::LocalIndex i,
                                         const Tc* __restrict__ x, const Tc* __restrict__ y, const Tc* __restrict__ z,
                                         T* __restrict__ h, unsigned* __restrict__ nc)
@@ -100,7 +66,7 @@ HOST_DEVICE_FUN void updateHIterativeNR(unsigned ng0, unsigned ngmax, const csto
 
     if (ncSph < bandMin)
     {
-        h[i]  = stl::min(T(hNRExtFactor) * h[i], updateH(ng0, ncSph, h[i]));
+        h[i]  = stl::min(T(hExtFactor) * h[i], updateH(ng0, ncSph, h[i]));
         ncSph = 1 + findNeighbors(i, x, y, z, h, treeView, box, ngmax);
     }
     else

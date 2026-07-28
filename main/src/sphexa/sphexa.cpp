@@ -141,8 +141,6 @@ int main(int argc, char** argv)
     if (disableNeighborLists) d.disableNeighborLists();
 
     if (parser.exists("--G")) { d.g = parser.get<double>("--G"); }
-    if (parser.exists("--nrIter")) { d.hNRIterMax = parser.get<unsigned>("--nrIter"); }
-    if (parser.exists("--symInteractions")) { d.symmetricInteractions = parser.get<int>("--symInteractions"); }
     bool  haveGrav = (d.g != 0.0);
     float theta    = parser.get("--theta", haveGrav ? 0.5f : 1.0f);
 
@@ -267,15 +265,8 @@ void printHelp(char* name, int rank)
 
         printf("\t--G NUM \t Gravitational constant [default dependent on test-case selection]\n\n");
 
-        printf("\t--prop STRING \t Choice of SPH propagator [default: modern SPH]. For standard SPH, use \"std\" \n\n");
-
-        printf("\t--nrIter NUM \t Maximum number of Newton-Raphson iterations per step to converge the smoothing\n"
-               "\t\t\t length towards rho * h^3 = 3 * ng0 * m / (32 pi) (formally consistent grad-h terms,\n"
-               "\t\t\t ve propagators only); iterations stop early on convergence [default 0 = disabled]\n\n");
-
-        printf("\t--symInteractions 0/1 \t Process pair interactions symmetrically within 2*max(h_i, h_j), restoring\n"
-               "\t\t\t the reaction to the neighbor-kernel force term where h varies across a pair\n"
-               "\t\t\t [default: enabled iff --nrIter > 0]\n\n");
+        printf("\t--prop STRING \t Choice of SPH propagator [default: modern SPH]. For standard SPH, use \"std\";\n"
+               "\t\t\t \"ve-nr\" adds Newton-Raphson iterated smoothing lengths and symmetric interactions\n\n");
 
         printf("\t-s NUM \t\t int(NUM):  Number of iterations (time-steps) [200],\n\
                 \t real(NUM): Time of simulation (time-model)\n\n");

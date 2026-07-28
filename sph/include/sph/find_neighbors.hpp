@@ -84,9 +84,10 @@ void updateSmoothingLengthIterative(const cstone::GroupView& groups, Dataset& d,
 
 //! @brief neighbor-count capacity guard for Newton-Raphson controlled smoothing lengths, see updateHIterativeNR
 template<class T, class Dataset>
-void updateSmoothingLengthIterativeNR(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box)
+void updateSmoothingLengthIterativeNR(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box,
+                                      float hExtFactor)
 {
-    if constexpr (d.useGpu) { updateSmoothingLengthIterativeNRGpu(groups, d, box); }
+    if constexpr (d.useGpu) { updateSmoothingLengthIterativeNRGpu(groups, d, box, hExtFactor); }
     else
     {
         const auto* x  = d.x.data();
@@ -97,7 +98,7 @@ void updateSmoothingLengthIterativeNR(const cstone::GroupView& groups, Dataset& 
 #pragma omp parallel for
         for (LocalIndex i = groups.firstBody; i < groups.lastBody; ++i)
         {
-            updateHIterativeNR(d.ng0, d.ngmax, box, d.treeView, i, x, y, z, h, nc);
+            updateHIterativeNR(d.ng0, d.ngmax, hExtFactor, box, d.treeView, i, x, y, z, h, nc);
         }
     }
 }

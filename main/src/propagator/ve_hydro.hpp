@@ -66,22 +66,11 @@ protected:
     MHolder_t      mHolder_;
     GroupData<Acc> groups_;
 
-    template<class VType>
-    using AccVector =
-        std::conditional_t<cstone::execution::HaveGpu<Acc>{}, cstone::DeviceVector<VType>, std::vector<VType>>;
-
-    /*! @brief SPH-smoothed converged particle volume, the VE weights xm of the next step (NR mode)
-     *
-     * Computed at force evaluation time, but only assigned to xm in integrate(), i.e. after the
-     * (checkpoint) output, so that restart files contain the weights belonging to the dumped positions.
-     */
-    AccVector<typename DataType::HydroData::HydroType> volstd_;
-
     /*! @brief the list of conserved particles fields with values preserved between iterations
      *
      * x, y, z, h and m are automatically considered conserved and must not be specified in this list
      */
-    /* xm is conserved because with Newton-Raphson smoothing length iterations (hNRIterMax > 0) the
+    /* xm is conserved because with Newton-Raphson smoothing length iterations (ve-nr/ve-disk) the
      * volume elements are carried over from the converged density of the previous step (as in SPHYNX);
      * without NR iterations it is recomputed from scratch every step and could be a dependent field.
      */
@@ -128,18 +117,6 @@ public:
     void sync(DomainType& domain, DataType& simData) override
     {
         auto& d = simData.hydro;
-        if (d.hNRIterMax > 0)
-        {
-            /* After halo discovery, h can still grow before the force kernels run: by up to
-             * hNRExtFactor per step through the neighbor-count management and, in converged NR
-             * tracking, by sub-percent amounts through the NR iterations. Enlarging the halo
-             * search by the same factor keeps all remote particles within the final support
-             * radius 2h present as halos. */
-            domain.setHaloFactor(sph::hNRExtFactor);
-        }
-        /* Symmetric pair sets need the remote big-h side of cross-rank pairs present as a halo
-         * even when it is beyond the reach of all local search spheres. */
-        domain.setSymmetricHalos(d.useSymmetricInteractions());
         if (d.g != 0.0)
         {
             domain.syncGrav(get<"keys">(d), get<"x">(d), get<"y">(d), get<"z">(d), get<"h">(d), get<"m">(d),
@@ -151,17 +128,6 @@ public:
                         std::tuple_cat(std::tie(get<"m">(d)), get<ConservedFields>(d)), get<DependentFields>(d));
         }
         d.treeView = domain.octreeProperties();
-        /* The neighbor list is built right after this sync, but the NR iterations move h before
-         * the force kernels run. The list builders extend the capture radius to
-         * 2h * searchExtFactor (the interaction kernels always cut at the live 2h), so the lists
-         * stay complete for the final h as long as the iterations grow h by less than the
-         * extension factor. */
-        if (d.hNRIterMax > 0) { d.treeView.searchExtFactor = sph::hNRExtFactor; }
-        /* Symmetric pair processing (within 2 * max(h_i, h_j)): restores the reaction to the
-         * neighbor-kernel term of the pair force, which the plain gather formulation drops for
-         * pairs whose distance exceeds one side's support. Essential for energy conservation
-         * with NR-iterated h (strong h contrasts at density discontinuities). */
-        d.treeView.symmetric = d.useSymmetricInteractions();
     }
 
     /*! @brief diagnostic: print global extrema of the VE state over the locally owned particles
@@ -200,35 +166,6 @@ public:
             std::cout << "# ve-state: maxAbsDivv=" << exOut[0] << " gradh=[" << -exOut[1] << "," << exOut[2]
                       << "] kx=[" << -exOut[3] << "," << exOut[4] << "] maxXm=" << exOut[5] << std::endl;
         }
-    }
-
-    /*! @brief diagnostic: print the global number of unconverged particles after each NR pass
-     *
-     * One line per step, e.g. '# hNRUnconverged: 7241511 2833900 9841 312 0': entry k is the
-     * global number of particles whose relative h change in NR pass k+1 was still >= hNRTol;
-     * the switch to the tail iterations is visible as the last percent-scale entry. Costs one
-     * small Allreduce after the iterations finished (the NR loop itself stays
-     * communication-free per rank; ranks that stopped early contribute zeros). The call site
-     * is a single line, safe to comment out.
-     */
-    void printNRUnconverged(const std::vector<size_t>& counts, unsigned hNRIterMax)
-    {
-        std::vector<unsigned long long> c(hNRIterMax, 0), cOut(hNRIterMax, 0);
-        std::copy(counts.begin(), counts.end(), c.begin());
-        MPI_Allreduce(c.data(), cOut.data(), int(hNRIterMax), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        if (Base::rank_ != 0) { return; }
-        //! print up to the last nonzero entry plus the trailing converged zero
-        size_t numEntries = 1;
-        for (size_t k = 0; k < cOut.size(); ++k)
-        {
-            if (cOut[k] > 0) { numEntries = std::min(k + 2, cOut.size()); }
-        }
-        std::cout << "# hNRUnconverged:";
-        for (size_t k = 0; k < numEntries; ++k)
-        {
-            std::cout << " " << cOut[k];
-        }
-        std::cout << std::endl;
     }
 
     /*! @brief diagnostic: globally count non-finite du/ax/ay/az entries of the owned particles
@@ -304,116 +241,44 @@ public:
 
         fillMassHalos(domain.exec(), get<"m">(d), first, last);
 
-        if (d.hNRIterMax > 0)
-        {
-            /* The extended-radius neighbor list holds up to hNRExtFactor^3 more entries per
-             * particle than found within 2h. The list build capacity ngmaxExt is sized such that
-             * the extended list fits for the 2h-counts a strong shock can produce (with 0.9
-             * headroom); beyond that, the list builder falls back to the plain 2h search.
-             * ngmax itself is never modified: it remains the user-set neighbor-count bound that
-             * updateHIterativeNR enforces on the 2h count. */
-            const float    extVol   = std::pow(sph::hNRExtFactor, 3);
-//          const unsigned ngmaxMin = std::ceil(1.5f * d.ng0 * extVol / 0.9f);
-            const unsigned ngmaxMin = std::ceil(5.f * d.ng0 * extVol / 0.9f);
-
-            if (d.ngmaxExt < ngmaxMin)
-            {
-                if (Base::rank_ == 0)
-                {
-                    std::cout << "Neighbor-list build capacity set to " << ngmaxMin
-                              << " to fit the extended neighbor search of the smoothing-length NR iterations"
-                              << " (h-update keeps 2h-counts within ngmax = " << d.ngmax << ")" << std::endl;
-                }
-                d.ngmaxExt = ngmaxMin;
-            }
-        }
-
         computeGroups(first, last, d, domain.box(), groups_);
         timer.step("computeGroups");
-        if (d.hNRIterMax > 0) { updateSmoothingLengthIterativeNR(groups_.view(), d, domain.box()); }
-        else { updateSmoothingLengthIterative(groups_.view(), d, domain.box()); }
+        updateSmoothingLengthIterative(groups_.view(), d, domain.box());
         timer.step("updateSmoothingLengthIterative");
         findNeighborsSfc(groups_.view(), d, domain.box());
         timer.step("FindNeighbors");
         pmReader.step();
 
-        /* With NR iterations, the volume elements are carried over from the smoothed converged
-         * volume of the previous step (SPHYNX-style, see computeVolstd) and only initialized from
-         * the standard SPH density on the first step. Recomputing xm from the CURRENT h every
-         * step (tried as a diagnostic) makes the NR constraint ill-posed for undersampled
-         * particles: with a self-dominated density, xm ~ h^3/(K*w0) and both sides of
-         * kx * h^3 = eta * xm scale with h^3 — the root degenerates and h drifts against the
-         * caps (observed as kx -> eta/(K*w0) spikes and permanent 9-iteration tug-of-war). */
-        if (d.hNRIterMax == 0 || d.iteration == 1)
-        {
-            computeXMass(groups_.view(), d, domain.box());
-            timer.step("XMass");
-        }
+        computeXMass(groups_.view(), d, domain.box());
+        timer.step("XMass");
         domain.exchangeHalos(std::tie(get<"xm">(d)), get<"ax">(d), get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
 
-        if (d.hNRIterMax > 0)
-        {
-            /* Newton-Raphson iterations converging h towards rho * h^3 = ballmassEta(ng0) * m,
-             * such that the grad-h terms are formally consistent with dh/drho = -h / (3 * rho).
-             * The target depends only on the desired neighbor count and the particle mass, i.e.
-             * it is constant in time. The iterations reuse the fixed neighbor list with fixed
-             * volume elements xm and are gather-only, so they require no communication and each
-             * rank may stop as soon as its own particles are converged. Following SPHYNX
-             * (Cabezon & Garcia-Senz).
-             * volstd_ temporarily holds the pre-iteration h, capping the cumulative upward h
-             * movement at the neighbor-list extension; it is reused for the smoothed volume
-             * later in the step. */
-            reallocate(volstd_, d.x.size(), d.getAllocGrowthRate());
-            unsigned            nrIterations = 0;
-            std::vector<size_t> nrUnconverged;
-            while (nrIterations < d.hNRIterMax)
-            {
-                ++nrIterations;
-                size_t numUnconverged = computeVeNR(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
-                                                    /*firstIteration*/ nrIterations == 1);
-                nrUnconverged.push_back(numUnconverged);
-                if (numUnconverged == 0) { break; }
-                /* Measured (TDE debris): ~98% of the particles converge within two passes; the
-                 * rest is a vacuum-edge residual that holds the global chain at 5-9 iterations.
-                 * Once the unconverged set is small, full neighbor-list passes over all
-                 * particles are wasted on it: finish those particles with per-particle
-                 * octree-traversal updates instead (exact, see computeVeNRTail). */
-                if (numUnconverged * 100 < groups_.view().lastBody - groups_.view().firstBody)
-                {
-                    nrIterations += computeVeNRTail(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
-                                                    d.hNRIterMax - nrIterations, nrUnconverged);
-                    break;
-                }
-            }
-            timer.logStatistics("hNRIterations", nrIterations);
-            if (Base::rank_ == 0) { std::cout << "# hNRIterations: " << nrIterations << std::endl; }
-            printNRUnconverged(nrUnconverged, d.hNRIterMax); // NR convergence diagnostic, safe to comment out
-            timer.step("hNewtonRaphson");
-        }
         computeVe(groups_.view(), d, domain.box());
         timer.step("Generalized Volume Elements");
-        if (d.hNRIterMax > 0)
-        {
-            //! h of locally owned particles changed: halos need updating, h_j enters the momentum equation
-            domain.exchangeHalos(std::tuple_cat(std::tie(get<"h">(d)), get<"vx", "vy", "vz", "kx">(d)), get<"ax">(d),
-                                 get<"keys">(d));
-        }
-        else { domain.exchangeHalos(get<"vx", "vy", "vz", "kx">(d), get<"ax">(d), get<"keys">(d)); }
+        domain.exchangeHalos(get<"vx", "vy", "vz", "kx">(d), get<"ax">(d), get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
 
-        if (d.hNRIterMax > 0)
-        {
-            /* Smoothed converged volume, the VE weights of the next step; needs kx halos, computed
-             * before ay/az are released. Assigned to xm in integrate(), after the output. */
-            reallocate(volstd_, d.x.size(), d.getAllocGrowthRate());
-            computeVolstd(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_));
-            timer.step("Volstd");
-        }
+        computeForcesCommon(domain, simData);
+    }
+
+    /*! @brief shared force-computation tail once the volume elements and their halos are final
+     *
+     * IAD/velocity derivatives -> rho time step -> EOS -> AV switches -> momentum/energy ->
+     * gravity, including the diagnostics prints. Used by this propagator and the Newton-Raphson
+     * subclass (ve-nr), whose flows only differ in how h and the volume elements are obtained.
+     * @p nrMode selects the NR-consistent grad-h/momentum formulation; @p gradhMin is the lower
+     * grad-h (Omega) limit applied in NR mode.
+     */
+    void computeForcesCommon(DomainType& domain, DataType& simData, bool nrMode = false, float gradhMin = 0.1f)
+    {
+        auto& d = simData.hydro;
+        size_t first = domain.startIndex();
+        size_t last  = domain.endIndex();
 
         release(d, "ay", "az");
         acquire(d, "divv", "gradh");
-        computeIadDivvCurlvGradh(groups_.view(), d, domain.box());
+        computeIadDivvCurlvGradh(groups_.view(), d, domain.box(), nrMode, gradhMin);
         d.minDtRho = rhoTimestep(first, last, d);
         timer.step("IadVelocityDivCurlGradh");
 
@@ -442,7 +307,7 @@ public:
 
         release(d, "divv", "gradh");
         acquire(d, "ay", "az");
-        computeMomentumEnergy<avClean>(groups_.view(), nullptr, d, domain.box());
+        computeMomentumEnergy<avClean>(groups_.view(), nullptr, d, domain.box(), nrMode);
         timer.step("MomentumAndEnergy");
         pmReader.step();
 
@@ -475,21 +340,10 @@ public:
         computeTimestep(first, last, d);
         timer.step("Timestep");
         computePositions(groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)});
-        /* With Newton-Raphson iterations active, h is converged towards rho * h^3 = eta * m during
-         * the force computation; nudging h towards the neighbor count target here would displace it
-         * from the converged solution every step. Unresolvable particles are still flagged. */
-        bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d, /*adjustH*/ d.hNRIterMax == 0);
+        bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d, /*adjustH*/ true);
         if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
         {
             throw std::runtime_error("Neighbor search did not converge\n");
-        }
-
-        if (d.hNRIterMax > 0)
-        {
-            /* volume elements of the next step, the smoothed converged volume of this step
-             * (SPHYNX-style); placed after the checkpoint output so that restarts see the weights
-             * that belong to the dumped positions */
-            setVolumeElements(groups_.view(), d, cstone::rawPtr(volstd_));
         }
         timer.step("UpdateQuantities");
     }
@@ -536,9 +390,9 @@ public:
         acquire(d, "c11", "c12", "c13");
 
         // third output pass: recover temporary curlv and divv quantities
-        /* In NR mode the recovery kernel also writes gradh, whose storage went back to the pool
-         * at the end of the second pass — it must be re-acquired or the write faults (observed
-         * as a segfault/GPU error when requesting divv/curlv with --nrIter). dtCourant is free
+        /* In NR mode (ve-nr/ve-disk, which inherit this method) the recovery kernel also writes
+         * gradh, whose storage went back to the pool at the end of the second pass — it must be
+         * re-acquired or the write faults (observed as a segfault/GPU error). dtCourant is free
          * here: its scalar reduction already happened in computeForces. Note that a requested
          * gradh output is still written in the SECOND pass from uninitialized scratch — do not
          * request gradh in output field lists. */

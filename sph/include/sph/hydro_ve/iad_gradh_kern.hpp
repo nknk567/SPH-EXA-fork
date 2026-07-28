@@ -90,7 +90,9 @@ struct IADGradhPostamble
     //! @brief kernel lookup table, needed for the self-contribution to grad-h when nrMode is active
     const T* wh = nullptr;
     //! @brief true if h is converged with Newton-Raphson iterations to satisfy rho * h^3 = const
-    bool           nrMode = false;
+    bool nrMode = false;
+    //! @brief lower grad-h (Omega) limit applied in nrMode, see the postamble
+    T              gradhMin{0.1};
     const T        iadConditionQuality{};
     const unsigned iadRegBit;
 
@@ -173,7 +175,7 @@ struct IADGradhPostamble
          * sits near the center or edge of the support (void or clustered-pair configurations).
          * prho ~ 1/Omega in the EOS: floor it to keep the pressure term bounded in such transients.
          * Legitimate values stay well above the floor. */
-        if (nrMode && gradhi < T(0.1)) { gradhi = T(0.1); }
+        if (nrMode && gradhi < gradhMin) { gradhi = gradhMin; }
         return std::make_tuple(c11i, c12i, c13i, c22i, c23i, c33i, gradhi, newId);
     }
 };

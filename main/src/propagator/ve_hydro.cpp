@@ -34,6 +34,7 @@
 #include "propagator.h"
 #include "turb_ve.hpp"
 #include "ve_hydro.hpp"
+#include "ve_hydro_nr.hpp"
 
 #ifdef SPH_EXA_HAVE_DISKS
 #include "ve_disk.hpp"
@@ -48,6 +49,18 @@ PropLib<DomainType, ParticleDataType>::makeHydroVeProp(std::ostream& output, siz
 {
     if (avClean) { return std::make_unique<HydroVeProp<true, DomainType, ParticleDataType>>(output, rank); }
     else { return std::make_unique<HydroVeProp<false, DomainType, ParticleDataType>>(output, rank); }
+}
+
+template<class DomainType, class ParticleDataType>
+std::unique_ptr<Propagator<DomainType, ParticleDataType>>
+PropLib<DomainType, ParticleDataType>::makeHydroVeNRProp(std::ostream& output, size_t rank,
+                                                         const InitSettings& settings, bool avClean)
+{
+    if (avClean)
+    {
+        return std::make_unique<HydroVeNRProp<true, DomainType, ParticleDataType>>(output, rank, settings);
+    }
+    else { return std::make_unique<HydroVeNRProp<false, DomainType, ParticleDataType>>(output, rank, settings); }
 }
 
 template<class DomainType, class ParticleDataType>

@@ -241,7 +241,7 @@ HOST_DEVICE_FUN inline void IAD_gradhJLoop(cstone::LocalIndex i, Tc K, const cst
 {
     IADGradhInteraction      interaction{wh, whd};
     // condition-quality target 0: regularization disabled, reference values below are unregularized
-    IADGradhPostamble<T, Tc> postamble{K, wh, nrMode, T(0), 0u};
+    IADGradhPostamble<T, Tc> postamble{K, wh, nrMode, T(0.1), T(0), 0u};
 
     const auto input  = std::make_tuple(m, xm, kx, nc, static_cast<const uint64_t*>(id));
     const auto output = std::make_tuple(c11, c12, c13, c22, c23, c33, gradh, id);
@@ -497,6 +497,9 @@ TEST_F(SphKernelTests, XMass)
     EXPECT_NEAR(xmass, m[0] / rho0[0], m[0] / rho0[0] * 1.e-7);
 }
 
+//! @brief NR-mode h-cap factor used by these tests (the production value is a ve-nr propagator parameter)
+constexpr float hNRExtFactor = 1.05;
+
 template<size_t stride = 1, class Tc, class T, class Tm>
 HOST_DEVICE_FUN inline std::tuple<T, T> veNRJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box,
                                                   const cstone::LocalIndex* neighbors, unsigned neighborsCount,
@@ -504,7 +507,7 @@ HOST_DEVICE_FUN inline std::tuple<T, T> veNRJLoop(cstone::LocalIndex i, Tc K, co
                                                   const Tm* m, T etaBallmass, const T* wh, const T* whd)
 {
     VeNRInteraction<T>   interaction{wh, whd};
-    VeNRPostamble<T, Tc> postamble{K, etaBallmass};
+    VeNRPostamble<T, Tc> postamble{K, etaBallmass, T(hNRExtFactor)};
 
     // each call passes the current h as the step-start h0, i.e. the upward cap acts per call
     const auto input = std::make_tuple(xm, m, h);

@@ -105,30 +105,6 @@ public:
      */
     unsigned ngmaxExt{0};
 
-    /*! @brief maximum number of Newton-Raphson iterations per step to converge the smoothing length (0 = disabled)
-     *
-     * When nonzero, h is iterated until convergence (at most hNRIterMax iterations) to satisfy
-     * rho * h^3 = 3 * ng0 * m / (32 * pi), a fixed target that only depends on the desired
-     * neighbor count, and the volume elements are carried over from the smoothed converged
-     * volume of the previous step, making the grad-h terms formally consistent.
-     * Following SPHYNX (Cabezon & Garcia-Senz).
-     */
-    unsigned hNRIterMax{0};
-
-    /*! @brief process pair interactions symmetrically, within 2 * max(h_i, h_j)
-     *
-     * Restores the reaction to the neighbor-kernel term of the pair force where h varies
-     * across a pair (essential for energy conservation with NR-iterated smoothing lengths,
-     * which develop strong h contrasts at density discontinuities). -1 = auto: enabled iff
-     * hNRIterMax > 0; 0/1 = forced off/on. Off reproduces the plain gather formulation.
-     */
-    int symmetricInteractions{-1};
-
-    //! @brief resolve the symmetricInteractions attribute (-1 = auto) to the effective setting
-    bool useSymmetricInteractions() const
-    {
-        return symmetricInteractions < 0 ? hNRIterMax > 0 : symmetricInteractions != 0;
-    }
 
     //! @brief whether to remove unconverged particles when the smoothing length update failed
     int removeUnconvergedParticles{false};
@@ -222,8 +198,6 @@ public:
         ar->stepAttribute("numParticlesGlobal", &numParticlesGlobal, 1);
         optionalIO("ng0", &ng0, 1);
         optionalIO("ngmax", &ngmax, 1);
-        optionalIO("hNRIterMax", &hNRIterMax, 1);
-        optionalIO("symmetricInteractions", &symmetricInteractions, 1);
         optionalIO("removeUnconvergedParticles", &removeUnconvergedParticles, 1);
         ar->stepAttribute("time", &ttot, 1);
         ar->stepAttribute("minDt", &minDt, 1);

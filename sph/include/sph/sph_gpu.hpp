@@ -36,34 +36,38 @@ void computeDensity(const GroupView&, Dataset& d, const cstone::Box<typename Dat
 template<class Dataset>
 extern void computeVe(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
-//! @brief returns the number of locally owned particles whose relative h change is >= hNRTol
+//! @brief returns the number of locally owned particles whose relative h change is >= tol
 template<class Dataset, class Tv>
 extern size_t computeVeNR(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* h0,
-                          bool firstIteration);
+                          bool firstIteration, float tol, float hExtFactor);
 
 //! @brief NR iterations over the unconverged residual only, see the dispatcher in hydro_ve/ve.hpp
 template<class Dataset, class Tv>
 extern unsigned computeVeNRTail(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&,
-                                const Tv* h0, unsigned maxPasses, std::vector<size_t>& unconvergedPerPass);
+                                const Tv* h0, unsigned maxPasses, std::vector<size_t>& unconvergedPerPass, float tol,
+                                float hExtFactor);
 
 template<class Dataset, class Tv>
 extern void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* volstd);
 
 template<class Dataset, class Tv>
-extern void setVolumeElements(const GroupView&, Dataset& d, const Tv* volstd);
+extern void setVolumeElements(const GroupView&, Dataset& d, const Tv* volstd, float volstdGrowFactor,
+                              float volstdShrinkFactor);
 
 //! @brief diagnostic: number of non-finite values in f[first:last]
 template<class T>
 extern size_t countNonFiniteGpu(const T* f, size_t first, size_t last);
 
 template<class Dataset>
-extern void computeIadDivvCurlvGradh(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
+extern void computeIadDivvCurlvGradh(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&,
+                                     bool nrMode, float gradhMin);
 
 template<class Dataset>
 extern void computeAVswitches(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
 template<bool avClean, class Dataset>
-extern void computeMomentumEnergy(const GroupView&, float*, Dataset&, const cstone::Box<typename Dataset::RealType>&);
+extern void computeMomentumEnergy(const GroupView&, float*, Dataset&, const cstone::Box<typename Dataset::RealType>&,
+                                  bool nrMode);
 
 template<class Tt, class Tm, class Th>
 extern void computeIdealGasEOS(size_t firstParticle, size_t lastParticle, Tm mui, Tt gamma, const Tt* temp, const Tt* u,

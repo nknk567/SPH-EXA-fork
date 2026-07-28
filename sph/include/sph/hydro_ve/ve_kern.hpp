@@ -201,6 +201,8 @@ struct VeNRPostamble
     Tc K;
     //! @brief coefficient of the fixed constraint target, ballmass_i = ballmassEta(ng0) * m_i
     T etaBallmass;
+    //! @brief cumulative upward h cap per step, matching the neighbor-list capture extension
+    T hExtFactor;
 
     template<class ParticleData, class Result>
     constexpr auto operator()(const ParticleData& iData, const Result& result) const
@@ -238,11 +240,11 @@ struct VeNRPostamble
         hNew   = stl::max(hNew, T(0.5) * hi);
 
         /* The neighbor list of this step was built with the capture radius extended by
-         * hNRExtFactor around the step-start h0. Cumulative upward movement beyond that margin
+         * hExtFactor around the step-start h0. Cumulative upward movement beyond that margin
          * would miss pairs inside the final support (breaking momentum/energy conservation in
          * every fast rarefaction), so cap it and let the affected particles finish converging
          * in the following steps. Downward movement always stays inside the list. */
-        hNew = stl::min(hNew, T(hNRExtFactor) * h0i);
+        hNew = stl::min(hNew, hExtFactor * h0i);
 
         /* Cumulative downward cap per step: where the volume elements are strongly non-uniform
          * (vacuum boundaries), the constraint can demand h far below the step-start value; the
@@ -262,14 +264,14 @@ struct VeNRPostamble
  * @p kx receives the volume element normalization evaluated at the old h. The constraint target
  * ballmassEta(ng0) * m_i depends only on the desired neighbor count and the particle mass.
  * @p h0 is the smoothing length at the start of the step's NR iterations; the cumulative upward
- * movement is capped at hNRExtFactor * h0 to stay within the extended neighbor list.
+ * movement is capped at hExtFactor * h0 to stay within the extended neighbor list.
  */
 template<class Neighbordhood, class Tc, class T, class Tm>
-void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, unsigned ng0, const T* xm, const Tm* m, const T* h0,
-                const T* wh, const T* whd, T* kx, T* hNew)
+void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, unsigned ng0, float hExtFactor, const T* xm, const Tm* m,
+                const T* h0, const T* wh, const T* whd, T* kx, T* hNew)
 {
     neighborhood.ijLoop(std::make_tuple(xm, m, h0), std::make_tuple(kx, hNew), VeNRInteraction<T>{wh, whd},
-                        VeNRPostamble<T, Tc>{K, ballmassEta<T>(ng0)});
+                        VeNRPostamble<T, Tc>{K, ballmassEta<T>(ng0), T(hExtFactor)});
 }
 
 /*! @brief one Newton-Raphson smoothing-length update for a single particle by direct octree traversal
@@ -286,7 +288,7 @@ void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, unsigned ng0, const T* 
  * @return the updated smoothing length of particle @p i (not committed to @p h)
  */
 template<class Tc, class T, class Tm, class KeyType>
-HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, Tc K, T etaBallmass,
+HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, Tc K, T etaBallmass, T hExtFactor,
                                       const cstone::OctreeNsView<Tc, KeyType>& tree, const cstone::Box<Tc>& box,
                                       const Tc* x, const Tc* y, const Tc* z, const T* h, const T* xm, const Tm* m,
                                       const T* h0, const T* wh, const T* whd)
@@ -351,7 +353,7 @@ HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, Tc K, T etaBallmass,
     if (usePbc) { cstone::singleTraversal(tree.childOffsets, tree.parents, overlapsPbc, searchBoxPbc); }
     else { cstone::singleTraversal(tree.childOffsets, tree.parents, overlaps, searchBox); }
 
-    auto [kxi, hNew] = VeNRPostamble<T, Tc>{K, etaBallmass}(iData, std::make_tuple(kxsum, dkxsum));
+    auto [kxi, hNew] = VeNRPostamble<T, Tc>{K, etaBallmass, hExtFactor}(iData, std::make_tuple(kxsum, dkxsum));
     return hNew;
 }
 

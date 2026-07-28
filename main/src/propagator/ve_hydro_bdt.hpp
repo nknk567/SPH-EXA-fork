@@ -233,12 +233,6 @@ public:
         size_t first = domain.startIndex();
         size_t last  = domain.endIndex();
 
-        if (d.hNRIterMax > 0)
-        {
-            throw std::runtime_error("Newton-Raphson smoothing length iterations (--nrIter / hNRIterMax) are not "
-                                     "supported with block time-steps\n");
-        }
-
         fillMassHalos(domain.exec(), get<"m">(d), first, last);
 
         updateSmoothingLengthIterative(activeRungs_, d, domain.box());
