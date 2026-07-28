@@ -282,18 +282,18 @@ void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, unsigned ng0, float hEx
  * neighbor-list passes sweep all particles for the benefit of a residual O(0.01%); the symmetric
  * neighbor list cannot be restricted to a subset because each pair is stored once and scattered
  * to both endpoints. The NR update itself depends only on the particle's own smoothing length
- * and the fixed volume elements xm_j (neither h_j nor any intermediate state of the neighbors),
- * so iterating an arbitrary subset of particles is exact.
+ * @p hi (passed by value, the smoothing-length array is not accessed) and the fixed volume
+ * elements xm_j — neither h_j nor any intermediate state of the neighbors — so iterating an
+ * arbitrary subset of particles, each freely running to its own convergence, is exact.
  *
- * @return the updated smoothing length of particle @p i (not committed to @p h)
+ * @return the updated smoothing length of particle @p i (not committed)
  */
 template<class Tc, class T, class Tm, class KeyType>
-HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, Tc K, T etaBallmass, T hExtFactor,
+HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T etaBallmass, T hExtFactor,
                                       const cstone::OctreeNsView<Tc, KeyType>& tree, const cstone::Box<Tc>& box,
-                                      const Tc* x, const Tc* y, const Tc* z, const T* h, const T* xm, const Tm* m,
+                                      const Tc* x, const Tc* y, const Tc* z, const T* xm, const Tm* m,
                                       const T* h0, const T* wh, const T* whd)
 {
-    const T                hi = h[i];
     const cstone::Vec3<Tc> particle{x[i], y[i], z[i]};
     const auto             iData = std::make_tuple(i, particle, hi, xm[i], m[i], h0[i]);
 
@@ -320,8 +320,7 @@ HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, Tc K, T etaBallmass,
         return util::norm2(cstone::minDistance(particle, centers[idx], sizes[idx])) < cellRadiusSq;
     };
 
-    /* h_j in jData is passed as 0 instead of h[j]: the interaction does not use it, and not
-     * reading it keeps concurrent tail updates of different particles free of data races. */
+    //! h_j in jData is a placeholder: the interaction does not use it (gather in h_i only)
     auto sumBody = [&](cstone::LocalIndex j, Tc d2)
     {
         const auto jData   = std::make_tuple(j, cstone::Vec3<Tc>{x[j], y[j], z[j]}, T(0), xm[j], m[j], h0[j]);

@@ -35,6 +35,7 @@
 #include <thrust/count.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
+#include <thrust/host_vector.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
@@ -113,25 +114,46 @@ struct UnconvergedIndex
     __device__ bool operator()(cstone::LocalIndex i) const { return relDh[i] >= tol; }
 };
 
+/*! @brief fused NR tail: every thread iterates its own particle to convergence
+ *
+ * One launch for the entire tail phase: each thread keeps h in a register, re-traverses only
+ * as long as ITS particle is unconverged (measured average over TDE tails: ~1.01 traversals
+ * per particle), and commits h once. @p bins[k] counts the threads whose convergence iteration
+ * was k (1-based); bins[maxIter + 1] counts those that exhausted the iteration budget. The
+ * per-pass unconverged counts of the former lockstep implementation are recovered on the host
+ * as suffix sums over bins — the trajectories are identical, since an update depends only on
+ * the particle's own h and the frozen volume elements.
+ */
 template<class Tc, class T, class Tm, class KeyType>
 __global__ __launch_bounds__(128) void veNRTailKernel(const cstone::LocalIndex* __restrict__ subset,
                                                       cstone::LocalIndex n, Tc K, T etaBallmass, T hExtFactor, T tol,
-                                                      const cstone::OctreeNsView<Tc, KeyType> tree,
+                                                      unsigned maxIter, const cstone::OctreeNsView<Tc, KeyType> tree,
                                                       const cstone::Box<Tc> box, const Tc* __restrict__ x,
                                                       const Tc* __restrict__ y, const Tc* __restrict__ z,
                                                       T* __restrict__ h, const T* __restrict__ xm,
                                                       const Tm* __restrict__ m, const T* __restrict__ h0,
                                                       const T* __restrict__ wh, const T* __restrict__ whd,
-                                                      unsigned long long* numUnconverged)
+                                                      unsigned long long* __restrict__ bins)
 {
     cstone::LocalIndex tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= n) { return; }
     cstone::LocalIndex i = subset[tid];
 
-    T hi   = h[i];
-    T hNew = veNRTraversalUpdate(i, K, etaBallmass, hExtFactor, tree, box, x, y, z, h, xm, m, h0, wh, whd);
-    h[i]   = hNew;
-    if (std::abs(hNew - hi) / hi >= tol) { atomicAdd(numUnconverged, 1ull); }
+    T        hi    = h[i];
+    unsigned kConv = maxIter + 1;
+    for (unsigned it = 1; it <= maxIter; ++it)
+    {
+        T hNew = veNRTraversalUpdate(i, hi, K, etaBallmass, hExtFactor, tree, box, x, y, z, xm, m, h0, wh, whd);
+        T rel  = std::abs(hNew - hi) / hi;
+        hi     = hNew;
+        if (rel < tol)
+        {
+            kConv = it;
+            break;
+        }
+    }
+    h[i] = hi;
+    atomicAdd(bins + kConv, 1ull);
 }
 
 template<class Dataset, class Tv>
@@ -140,6 +162,7 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<typ
                          float hExtFactor)
 {
     using Th = typename Dataset::HydroType;
+    if (maxPasses == 0) { return 0; }
 
     //! gather the particles left unconverged by the last computeVeNR pass (az scratch)
     thrust::device_vector<cstone::LocalIndex> subset(
@@ -150,23 +173,31 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<typ
                     thrust::counting_iterator<cstone::LocalIndex>(grp.lastBody), subset.begin(),
                     UnconvergedIndex<Th>{rawPtr(d.az), Th(tol)});
 
-    thrust::device_vector<unsigned long long> devCount(1);
+    thrust::device_vector<unsigned long long> devBins(maxPasses + 2, 0ull);
     cstone::LocalIndex                        n         = subset.size();
     unsigned                                  numBlocks = (n + 127) / 128;
 
-    unsigned passes = 0;
-    while (passes < maxPasses)
+    veNRTailKernel<<<numBlocks, 128>>>(thrust::raw_pointer_cast(subset.data()), n, d.K, ballmassEta<Th>(d.ng0),
+                                       Th(hExtFactor), Th(tol), maxPasses, d.treeView, box, rawPtr(d.x), rawPtr(d.y),
+                                       rawPtr(d.z), rawPtr(d.h), rawPtr(d.xm), rawPtr(d.m), h0, rawPtr(d.wh),
+                                       rawPtr(d.whd), thrust::raw_pointer_cast(devBins.data()));
+    checkGpuErrors(cudaDeviceSynchronize());
+    thrust::host_vector<unsigned long long> bins = devBins;
+
+    //! per-pass unconverged counts = suffix sums; passes performed = last needed iteration
+    unsigned passes = maxPasses;
+    while (passes > 1 && bins[passes] == 0 && bins[passes + 1] == 0)
     {
-        ++passes;
-        devCount[0] = 0;
-        veNRTailKernel<<<numBlocks, 128>>>(thrust::raw_pointer_cast(subset.data()), n, d.K, ballmassEta<Th>(d.ng0),
-                                           Th(hExtFactor), Th(tol), d.treeView, box, rawPtr(d.x), rawPtr(d.y),
-                                           rawPtr(d.z), rawPtr(d.h), rawPtr(d.xm), rawPtr(d.m), h0, rawPtr(d.wh),
-                                           rawPtr(d.whd), thrust::raw_pointer_cast(devCount.data()));
-        checkGpuErrors(cudaDeviceSynchronize());
-        size_t numUnconverged = devCount[0];
-        unconvergedPerPass.push_back(numUnconverged);
-        if (numUnconverged == 0) { break; }
+        --passes;
+    }
+    for (unsigned p = 1; p <= passes; ++p)
+    {
+        size_t stillUnconverged = 0;
+        for (unsigned k = p + 1; k <= maxPasses + 1; ++k)
+        {
+            stillUnconverged += bins[k];
+        }
+        unconvergedPerPass.push_back(stillUnconverged);
     }
     return passes;
 }

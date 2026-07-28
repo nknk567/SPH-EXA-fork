@@ -125,13 +125,16 @@ size_t computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box,
  *
  * Extracts the particles whose relative h change of the last computeVeNR pass (az scratch) was
  * still >= @p tol and iterates only those, each by direct octree traversal (veNRTraversalUpdate)
- * instead of full neighbor-list passes over all particles. Exact because the NR update of a
- * particle depends only on its own h and the fixed volume elements; converged particles keep
- * their last h instead of accumulating further sub-tolerance refinements.
+ * instead of full neighbor-list passes over all particles. Fused: every particle runs freely to
+ * its own convergence (h kept local, committed once) instead of lockstep passes over the whole
+ * subset — exact, because the NR update of a particle depends only on its own h and the fixed
+ * volume elements. The per-pass unconverged counts of the lockstep formulation are recovered
+ * as suffix sums over the histogram of convergence iterations. Converged particles keep their
+ * last h instead of accumulating further sub-tolerance refinements.
  *
  * @param maxPasses           remaining iteration budget (hNRIterMax minus the passes already done)
  * @param unconvergedPerPass  appends the local unconverged count after each pass (diagnostic)
- * @return the number of passes performed
+ * @return the number of passes performed (the largest convergence iteration among the subset)
  */
 template<typename Tc, class Dataset, class Tv>
 unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, const Tv* h0,
@@ -144,6 +147,7 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
     else
     {
         using Th = std::decay_t<decltype(d.h[0])>;
+        if (maxPasses == 0) { return 0; }
 
         std::vector<cstone::LocalIndex> subset;
         const Th*                       relDh = d.az.data();
@@ -151,26 +155,56 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
         {
             if (relDh[i] >= Th(tol)) { subset.push_back(i); }
         }
+        if (subset.empty()) { return 0; }
 
-        Th*      h      = d.h.data();
-        unsigned passes = 0;
-        while (passes < maxPasses)
+        Th*                 h = d.h.data();
+        std::vector<size_t> bins(maxPasses + 2, 0);
+#pragma omp parallel
         {
-            ++passes;
-            size_t numUnconverged = 0;
-#pragma omp parallel for schedule(dynamic) reduction(+ : numUnconverged)
+            std::vector<size_t> localBins(maxPasses + 2, 0);
+#pragma omp for schedule(dynamic) nowait
             for (size_t s = 0; s < subset.size(); ++s)
             {
-                cstone::LocalIndex i    = subset[s];
-                Th                 hNew = veNRTraversalUpdate(i, d.K, ballmassEta<Th>(d.ng0), Th(hExtFactor),
-                                                              d.treeView, box, d.x.data(), d.y.data(), d.z.data(), h,
-                                                              d.xm.data(), d.m.data(), h0, d.wh.data(), d.whd.data());
-                Th                 rel  = std::abs(hNew - h[i]) / h[i];
-                h[i]                    = hNew;
-                numUnconverged += rel >= Th(tol);
+                cstone::LocalIndex i     = subset[s];
+                Th                 hi    = h[i];
+                unsigned           kConv = maxPasses + 1;
+                for (unsigned it = 1; it <= maxPasses; ++it)
+                {
+                    Th hNew = veNRTraversalUpdate(i, hi, d.K, ballmassEta<Th>(d.ng0), Th(hExtFactor), d.treeView,
+                                                  box, d.x.data(), d.y.data(), d.z.data(), d.xm.data(), d.m.data(),
+                                                  h0, d.wh.data(), d.whd.data());
+                    Th rel  = std::abs(hNew - hi) / hi;
+                    hi      = hNew;
+                    if (rel < Th(tol))
+                    {
+                        kConv = it;
+                        break;
+                    }
+                }
+                h[i] = hi;
+                ++localBins[kConv];
             }
-            unconvergedPerPass.push_back(numUnconverged);
-            if (numUnconverged == 0) { break; }
+#pragma omp critical
+            for (size_t k = 0; k < bins.size(); ++k)
+            {
+                bins[k] += localBins[k];
+            }
+        }
+
+        //! per-pass unconverged counts = suffix sums; passes performed = last needed iteration
+        unsigned passes = maxPasses;
+        while (passes > 1 && bins[passes] == 0 && bins[passes + 1] == 0)
+        {
+            --passes;
+        }
+        for (unsigned p = 1; p <= passes; ++p)
+        {
+            size_t stillUnconverged = 0;
+            for (unsigned k = p + 1; k <= maxPasses + 1; ++k)
+            {
+                stillUnconverged += bins[k];
+            }
+            unconvergedPerPass.push_back(stillUnconverged);
         }
         return passes;
     }
