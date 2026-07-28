@@ -135,25 +135,44 @@ __global__ __launch_bounds__(128) void veNRTailKernel(const cstone::LocalIndex* 
                                                       const T* __restrict__ wh, const T* __restrict__ whd,
                                                       unsigned long long* __restrict__ bins)
 {
-    cstone::LocalIndex tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= n) { return; }
-    cstone::LocalIndex i = subset[tid];
-
-    T        hi    = h[i];
-    unsigned kConv = maxIter + 1;
-    for (unsigned it = 1; it <= maxIter; ++it)
+    /* block-local histogram: most threads converge at the same iteration, so direct global
+     * atomics on bins would serialize; aggregate per block first (dynamic shared memory,
+     * maxIter + 2 entries), then flush with at most one global atomic per bin per block */
+    extern __shared__ unsigned long long sharedBins[];
+    const unsigned                       numBins = maxIter + 2;
+    for (unsigned k = threadIdx.x; k < numBins; k += blockDim.x)
     {
-        T hNew = veNRTraversalUpdate(i, hi, K, etaBallmass, hExtFactor, tree, box, x, y, z, xm, m, h0, wh, whd);
-        T rel  = std::abs(hNew - hi) / hi;
-        hi     = hNew;
-        if (rel < tol)
-        {
-            kConv = it;
-            break;
-        }
+        sharedBins[k] = 0;
     }
-    h[i] = hi;
-    atomicAdd(bins + kConv, 1ull);
+    __syncthreads();
+
+    cstone::LocalIndex tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < n)
+    {
+        cstone::LocalIndex i = subset[tid];
+
+        T        hi    = h[i];
+        unsigned kConv = maxIter + 1;
+        for (unsigned it = 1; it <= maxIter; ++it)
+        {
+            T hNew = veNRTraversalUpdate(i, hi, K, etaBallmass, hExtFactor, tree, box, x, y, z, xm, m, h0, wh, whd);
+            T rel  = std::abs(hNew - hi) / hi;
+            hi     = hNew;
+            if (rel < tol)
+            {
+                kConv = it;
+                break;
+            }
+        }
+        h[i] = hi;
+        atomicAdd(sharedBins + kConv, 1ull);
+    }
+
+    __syncthreads();
+    for (unsigned k = threadIdx.x; k < numBins; k += blockDim.x)
+    {
+        if (sharedBins[k] > 0) { atomicAdd(bins + k, sharedBins[k]); }
+    }
 }
 
 template<class Dataset, class Tv>
@@ -177,10 +196,11 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<typ
     cstone::LocalIndex                        n         = subset.size();
     unsigned                                  numBlocks = (n + 127) / 128;
 
-    veNRTailKernel<<<numBlocks, 128>>>(thrust::raw_pointer_cast(subset.data()), n, d.K, ballmassEta<Th>(d.ng0),
-                                       Th(hExtFactor), Th(tol), maxPasses, d.treeView, box, rawPtr(d.x), rawPtr(d.y),
-                                       rawPtr(d.z), rawPtr(d.h), rawPtr(d.xm), rawPtr(d.m), h0, rawPtr(d.wh),
-                                       rawPtr(d.whd), thrust::raw_pointer_cast(devBins.data()));
+    size_t sharedBytes = (maxPasses + 2) * sizeof(unsigned long long);
+    veNRTailKernel<<<numBlocks, 128, sharedBytes>>>(
+        thrust::raw_pointer_cast(subset.data()), n, d.K, ballmassEta<Th>(d.ng0), Th(hExtFactor), Th(tol), maxPasses,
+        d.treeView, box, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), rawPtr(d.xm), rawPtr(d.m), h0,
+        rawPtr(d.wh), rawPtr(d.whd), thrust::raw_pointer_cast(devBins.data()));
     checkGpuErrors(cudaDeviceSynchronize());
     thrust::host_vector<unsigned long long> bins = devBins;
 
