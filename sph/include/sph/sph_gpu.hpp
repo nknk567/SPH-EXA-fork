@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "cstone/sfc/box.hpp"
 #include "cstone/traversal/groups.hpp"
 #include "cstone/tree/octree.hpp"
@@ -34,11 +36,15 @@ void computeDensity(const GroupView&, Dataset& d, const cstone::Box<typename Dat
 template<class Dataset>
 extern void computeVe(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
-//! @brief returns the largest relative h change among locally owned particles
+//! @brief returns the number of locally owned particles whose relative h change is >= hNRTol
 template<class Dataset, class Tv>
-extern typename Dataset::HydroType computeVeNR(const GroupView&, Dataset& d,
-                                               const cstone::Box<typename Dataset::RealType>&, Tv* h0,
-                                               bool firstIteration);
+extern size_t computeVeNR(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* h0,
+                          bool firstIteration);
+
+//! @brief NR iterations over the unconverged residual only, see the dispatcher in hydro_ve/ve.hpp
+template<class Dataset, class Tv>
+extern unsigned computeVeNRTail(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&,
+                                const Tv* h0, unsigned maxPasses, std::vector<size_t>& unconvergedPerPass);
 
 template<class Dataset, class Tv>
 extern void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* volstd);

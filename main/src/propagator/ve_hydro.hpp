@@ -202,6 +202,35 @@ public:
         }
     }
 
+    /*! @brief diagnostic: print the global number of unconverged particles after each NR pass
+     *
+     * One line per step, e.g. '# hNRUnconverged: 7241511 2833900 9841 312 0': entry k is the
+     * global number of particles whose relative h change in NR pass k+1 was still >= hNRTol;
+     * the switch to the tail iterations is visible as the last percent-scale entry. Costs one
+     * small Allreduce after the iterations finished (the NR loop itself stays
+     * communication-free per rank; ranks that stopped early contribute zeros). The call site
+     * is a single line, safe to comment out.
+     */
+    void printNRUnconverged(const std::vector<size_t>& counts, unsigned hNRIterMax)
+    {
+        std::vector<unsigned long long> c(hNRIterMax, 0), cOut(hNRIterMax, 0);
+        std::copy(counts.begin(), counts.end(), c.begin());
+        MPI_Allreduce(c.data(), cOut.data(), int(hNRIterMax), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (Base::rank_ != 0) { return; }
+        //! print up to the last nonzero entry plus the trailing converged zero
+        size_t numEntries = 1;
+        for (size_t k = 0; k < cOut.size(); ++k)
+        {
+            if (cOut[k] > 0) { numEntries = std::min(k + 2, cOut.size()); }
+        }
+        std::cout << "# hNRUnconverged:";
+        for (size_t k = 0; k < numEntries; ++k)
+        {
+            std::cout << " " << cOut[k];
+        }
+        std::cout << std::endl;
+    }
+
     /*! @brief diagnostic: globally count non-finite du/ax/ay/az entries of the owned particles
      *
      * Placed after each force stage (sph momentum, gravity, disk central force), the first tag
@@ -336,16 +365,30 @@ public:
              * movement at the neighbor-list extension; it is reused for the smoothed volume
              * later in the step. */
             reallocate(volstd_, d.x.size(), d.getAllocGrowthRate());
-            unsigned nrIterations = 0;
+            unsigned            nrIterations = 0;
+            std::vector<size_t> nrUnconverged;
             while (nrIterations < d.hNRIterMax)
             {
                 ++nrIterations;
-                auto maxRelDh = computeVeNR(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
-                                            /*firstIteration*/ nrIterations == 1);
-                if (maxRelDh < sph::hNRTol) { break; }
+                size_t numUnconverged = computeVeNR(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
+                                                    /*firstIteration*/ nrIterations == 1);
+                nrUnconverged.push_back(numUnconverged);
+                if (numUnconverged == 0) { break; }
+                /* Measured (TDE debris): ~98% of the particles converge within two passes; the
+                 * rest is a vacuum-edge residual that holds the global chain at 5-9 iterations.
+                 * Once the unconverged set is small, full neighbor-list passes over all
+                 * particles are wasted on it: finish those particles with per-particle
+                 * octree-traversal updates instead (exact, see computeVeNRTail). */
+                if (numUnconverged * 100 < groups_.view().lastBody - groups_.view().firstBody)
+                {
+                    nrIterations += computeVeNRTail(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
+                                                    d.hNRIterMax - nrIterations, nrUnconverged);
+                    break;
+                }
             }
             timer.logStatistics("hNRIterations", nrIterations);
             if (Base::rank_ == 0) { std::cout << "# hNRIterations: " << nrIterations << std::endl; }
+            printNRUnconverged(nrUnconverged, d.hNRIterMax); // NR convergence diagnostic, safe to comment out
             timer.step("hNewtonRaphson");
         }
         computeVe(groups_.view(), d, domain.box());

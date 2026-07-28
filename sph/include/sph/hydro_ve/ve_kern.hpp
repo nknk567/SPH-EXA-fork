@@ -272,4 +272,87 @@ void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, unsigned ng0, const T* 
                         VeNRPostamble<T, Tc>{K, ballmassEta<T>(ng0)});
 }
 
+/*! @brief one Newton-Raphson smoothing-length update for a single particle by direct octree traversal
+ *
+ * Functionally equivalent to one veNRIjLoop pass for particle @p i, but finds the neighbors by
+ * traversing the octree (like findNeighbors) instead of consuming the prebuilt neighbor list.
+ * Used for the tail of the NR iterations: once the bulk of the particles is converged, full
+ * neighbor-list passes sweep all particles for the benefit of a residual O(0.01%); the symmetric
+ * neighbor list cannot be restricted to a subset because each pair is stored once and scattered
+ * to both endpoints. The NR update itself depends only on the particle's own smoothing length
+ * and the fixed volume elements xm_j (neither h_j nor any intermediate state of the neighbors),
+ * so iterating an arbitrary subset of particles is exact.
+ *
+ * @return the updated smoothing length of particle @p i (not committed to @p h)
+ */
+template<class Tc, class T, class Tm, class KeyType>
+HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, Tc K, T etaBallmass,
+                                      const cstone::OctreeNsView<Tc, KeyType>& tree, const cstone::Box<Tc>& box,
+                                      const Tc* x, const Tc* y, const Tc* z, const T* h, const T* xm, const Tm* m,
+                                      const T* h0, const T* wh, const T* whd)
+{
+    const T                hi = h[i];
+    const cstone::Vec3<Tc> particle{x[i], y[i], z[i]};
+    const auto             iData = std::make_tuple(i, particle, hi, xm[i], m[i], h0[i]);
+
+    VeNRInteraction<T> interaction{wh, whd};
+    //! self contribution; the leaf sweep below skips i == j
+    auto [kxsum, dkxsum] = interaction(iData, iData, cstone::Vec3<Tc>{0, 0, 0}, T(0));
+
+    const Tc radiusSq     = Tc(4.0) * Tc(hi) * Tc(hi);
+    const Tc cellRadiusSq = radiusSq * tree.searchExtFactor * tree.searchExtFactor;
+
+    auto pbc    = cstone::BoundaryType::periodic;
+    bool anyPbc = box.boundaryX() == pbc || box.boundaryY() == pbc || box.boundaryZ() == pbc;
+    bool usePbc = anyPbc && !cstone::insideBox(particle, {Tc(2) * hi, Tc(2) * hi, Tc(2) * hi}, box);
+
+    auto overlapsPbc = [particle, cellRadiusSq, centers = tree.centers, sizes = tree.sizes,
+                        &box](cstone::TreeNodeIndex idx)
+    {
+        if (sizes[idx][0] == 0 && sizes[idx][1] == 0 && sizes[idx][2] == 0) return false;
+        return util::norm2(cstone::minDistance(particle, centers[idx], sizes[idx], box)) < cellRadiusSq;
+    };
+    auto overlaps = [particle, cellRadiusSq, centers = tree.centers, sizes = tree.sizes](cstone::TreeNodeIndex idx)
+    {
+        if (sizes[idx][0] == 0 && sizes[idx][1] == 0 && sizes[idx][2] == 0) return false;
+        return util::norm2(cstone::minDistance(particle, centers[idx], sizes[idx])) < cellRadiusSq;
+    };
+
+    /* h_j in jData is passed as 0 instead of h[j]: the interaction does not use it, and not
+     * reading it keeps concurrent tail updates of different particles free of data races. */
+    auto sumBody = [&](cstone::LocalIndex j, Tc d2)
+    {
+        const auto jData   = std::make_tuple(j, cstone::Vec3<Tc>{x[j], y[j], z[j]}, T(0), xm[j], m[j], h0[j]);
+        auto [kxc, dkxc]   = interaction(iData, jData, cstone::Vec3<Tc>{0, 0, 0}, T(d2));
+        kxsum += kxc;
+        dkxsum += dkxc;
+    };
+    auto searchBoxPbc = [&](cstone::TreeNodeIndex idx)
+    {
+        cstone::TreeNodeIndex leafIdx = tree.internalToLeaf[idx];
+        for (cstone::LocalIndex j = tree.layout[leafIdx]; j < tree.layout[leafIdx + 1]; ++j)
+        {
+            if (j == i) { continue; }
+            Tc d2 = cstone::distanceSq<true>(x[j], y[j], z[j], particle[0], particle[1], particle[2], box);
+            if (d2 < radiusSq) { sumBody(j, d2); }
+        }
+    };
+    auto searchBox = [&](cstone::TreeNodeIndex idx)
+    {
+        cstone::TreeNodeIndex leafIdx = tree.internalToLeaf[idx];
+        for (cstone::LocalIndex j = tree.layout[leafIdx]; j < tree.layout[leafIdx + 1]; ++j)
+        {
+            if (j == i) { continue; }
+            Tc d2 = cstone::distanceSq<false>(x[j], y[j], z[j], particle[0], particle[1], particle[2], box);
+            if (d2 < radiusSq) { sumBody(j, d2); }
+        }
+    };
+
+    if (usePbc) { cstone::singleTraversal(tree.childOffsets, tree.parents, overlapsPbc, searchBoxPbc); }
+    else { cstone::singleTraversal(tree.childOffsets, tree.parents, overlaps, searchBox); }
+
+    auto [kxi, hNew] = VeNRPostamble<T, Tc>{K, etaBallmass}(iData, std::make_tuple(kxsum, dkxsum));
+    return hNew;
+}
+
 } // namespace sph

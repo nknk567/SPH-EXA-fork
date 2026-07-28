@@ -29,7 +29,13 @@
  * @author Sebastian Keller <sebastian.f.keller@gmail.com>
  */
 
+#include <vector>
+
+#include <thrust/copy.h>
+#include <thrust/count.h>
+#include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
+#include <thrust/iterator/counting_iterator.h>
 #include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/tuple.h>
@@ -65,9 +71,15 @@ struct RelativeHChange
     }
 };
 
+template<class T>
+struct Unconverged
+{
+    __device__ bool operator()(T relDh) const { return relDh >= T(hNRTol); }
+};
+
 template<class Dataset, class Tv>
-typename Dataset::HydroType computeVeNR(const GroupView& grp, Dataset& d,
-                                        const cstone::Box<typename Dataset::RealType>&, Tv* h0, bool firstIteration)
+size_t computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* h0,
+                   bool firstIteration)
 {
     using Th = typename Dataset::HydroType;
     if (firstIteration)
@@ -76,19 +88,89 @@ typename Dataset::HydroType computeVeNR(const GroupView& grp, Dataset& d,
     }
     veNRIjLoop(d.neighborhood, d.K, d.ng0, rawPtr(d.xm), rawPtr(d.m), h0, rawPtr(d.wh), rawPtr(d.whd), rawPtr(d.kx),
                rawPtr(d.ay));
+    //! per-particle relative h change into the az scratch, consumed by computeVeNRTail
     auto begin = thrust::make_zip_iterator(rawPtr(d.ay) + grp.firstBody, rawPtr(d.h) + grp.firstBody);
     auto end   = thrust::make_zip_iterator(rawPtr(d.ay) + grp.lastBody, rawPtr(d.h) + grp.lastBody);
-    Th   maxDh =
-        thrust::transform_reduce(thrust::device, begin, end, RelativeHChange<Th>{}, Th(0), thrust::maximum<Th>{});
+    thrust::transform(thrust::device, begin, end, rawPtr(d.az) + grp.firstBody, RelativeHChange<Th>{});
+    size_t numUnconverged = thrust::count_if(thrust::device, rawPtr(d.az) + grp.firstBody,
+                                             rawPtr(d.az) + grp.lastBody, Unconverged<Th>{});
     // commit the updated smoothing lengths of locally owned particles
     cstone::memcpyD2DAsync(cstone::execution::gpuDefaultStream, rawPtr(d.ay) + grp.firstBody,
                            grp.lastBody - grp.firstBody, rawPtr(d.h) + grp.firstBody);
     checkGpuErrors(cudaDeviceSynchronize());
-    return maxDh;
+    return numUnconverged;
 }
 
-template SphTypes::HydroType computeVeNR(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
-                                         const cstone::Box<SphTypes::CoordinateType>&, SphTypes::HydroType*, bool);
+template size_t computeVeNR(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
+                            const cstone::Box<SphTypes::CoordinateType>&, SphTypes::HydroType*, bool);
+
+template<class Tv>
+struct UnconvergedIndex
+{
+    const Tv* relDh;
+    __device__ bool operator()(cstone::LocalIndex i) const { return relDh[i] >= Tv(hNRTol); }
+};
+
+template<class Tc, class T, class Tm, class KeyType>
+__global__ __launch_bounds__(128) void veNRTailKernel(const cstone::LocalIndex* __restrict__ subset,
+                                                      cstone::LocalIndex n, Tc K, T etaBallmass,
+                                                      const cstone::OctreeNsView<Tc, KeyType> tree,
+                                                      const cstone::Box<Tc> box, const Tc* __restrict__ x,
+                                                      const Tc* __restrict__ y, const Tc* __restrict__ z,
+                                                      T* __restrict__ h, const T* __restrict__ xm,
+                                                      const Tm* __restrict__ m, const T* __restrict__ h0,
+                                                      const T* __restrict__ wh, const T* __restrict__ whd,
+                                                      unsigned long long* numUnconverged)
+{
+    cstone::LocalIndex tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= n) { return; }
+    cstone::LocalIndex i = subset[tid];
+
+    T hi   = h[i];
+    T hNew = veNRTraversalUpdate(i, K, etaBallmass, tree, box, x, y, z, h, xm, m, h0, wh, whd);
+    h[i]   = hNew;
+    if (std::abs(hNew - hi) / hi >= T(hNRTol)) { atomicAdd(numUnconverged, 1ull); }
+}
+
+template<class Dataset, class Tv>
+unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>& box,
+                         const Tv* h0, unsigned maxPasses, std::vector<size_t>& unconvergedPerPass)
+{
+    using Th = typename Dataset::HydroType;
+
+    //! gather the particles left unconverged by the last computeVeNR pass (az scratch)
+    thrust::device_vector<cstone::LocalIndex> subset(
+        thrust::count_if(thrust::device, rawPtr(d.az) + grp.firstBody, rawPtr(d.az) + grp.lastBody,
+                         Unconverged<Th>{}));
+    if (subset.empty()) { return 0; }
+    thrust::copy_if(thrust::device, thrust::counting_iterator<cstone::LocalIndex>(grp.firstBody),
+                    thrust::counting_iterator<cstone::LocalIndex>(grp.lastBody), subset.begin(),
+                    UnconvergedIndex<Th>{rawPtr(d.az)});
+
+    thrust::device_vector<unsigned long long> devCount(1);
+    cstone::LocalIndex                        n         = subset.size();
+    unsigned                                  numBlocks = (n + 127) / 128;
+
+    unsigned passes = 0;
+    while (passes < maxPasses)
+    {
+        ++passes;
+        devCount[0] = 0;
+        veNRTailKernel<<<numBlocks, 128>>>(thrust::raw_pointer_cast(subset.data()), n, d.K, ballmassEta<Th>(d.ng0),
+                                           d.treeView, box, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h),
+                                           rawPtr(d.xm), rawPtr(d.m), h0, rawPtr(d.wh), rawPtr(d.whd),
+                                           thrust::raw_pointer_cast(devCount.data()));
+        checkGpuErrors(cudaDeviceSynchronize());
+        size_t numUnconverged = devCount[0];
+        unconvergedPerPass.push_back(numUnconverged);
+        if (numUnconverged == 0) { break; }
+    }
+    return passes;
+}
+
+template unsigned computeVeNRTail(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
+                                  const cstone::Box<SphTypes::CoordinateType>&, const SphTypes::HydroType*, unsigned,
+                                  std::vector<size_t>&);
 
 template<class Dataset, class Tv>
 void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* volstd)
