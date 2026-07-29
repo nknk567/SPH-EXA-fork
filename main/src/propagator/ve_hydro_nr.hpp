@@ -300,8 +300,8 @@ public:
 
         Base::computeForcesCommon(domain, simData, /*nrMode*/ true, nrParams_.gradhMin);
 
-        printVeStateExtrema(d, first, last); // VE state diagnostic, safe to comment out
-        printNonFiniteVe(d, first, last);    // NaN monitor, safe to comment out
+//        printVeStateExtrema(d, first, last); // VE state diagnostic, safe to comment out
+//        printNonFiniteVe(d, first, last);    // NaN monitor, safe to comment out
     }
 
     void integrate(DomainType& domain, DataType& simData) override
@@ -402,8 +402,8 @@ protected:
         if (Base::rank_ == 0) { std::cout << "# hNRIterations: " << nrIterations << std::endl; }
         printNRUnconverged(nrUnconverged, nrParams_.hNRIterMax); // NR convergence diagnostic, safe to comment out
         //! cap statistics, safe to comment out; volstd_ still holds the step-start h here
-        printNRCapped(capIterUp, capIterDown,
-                      countHWallPinned(groups_.view(), d, cstone::rawPtr(volstd_), nrParams_.hNRExtFactor));
+//        printNRCapped(capIterUp, capIterDown,
+//                      countHWallPinned(groups_.view(), d, cstone::rawPtr(volstd_), nrParams_.hNRExtFactor));
         timer.step("hNewtonRaphson");
     }
 
