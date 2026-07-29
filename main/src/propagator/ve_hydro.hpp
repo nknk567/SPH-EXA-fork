@@ -70,18 +70,19 @@ protected:
      *
      * x, y, z, h and m are automatically considered conserved and must not be specified in this list
      */
-    /* xm is conserved because with Newton-Raphson smoothing length iterations (ve-nr/ve-disk) the
-     * volume elements are carried over from the converged density of the previous step (as in SPHYNX);
-     * without NR iterations it is recomputed from scratch every step and could be a dependent field.
-     */
-    using ConservedFields_ = FieldList<"vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id", "xm">;
+    using ConservedFields_ = FieldList<"vx", "vy", "vz", "x_m1", "y_m1", "z_m1", "du_m1", "alpha", "id">;
 
     //! @brief the energy variable is selectable per instantiation: "temp" (default) or "u"
     using ConservedFields = decltype(FieldList<TempField>{} + ConservedFields_{});
 
-    //! @brief list of dependent fields, these may be used as scratch space during domain sync
-    using DependentFields_ = FieldList<"ax", "ay", "az", "prho", "c", "du", "c11", "c12", "c13", "c22", "c23", "c33",
-                                       "kx", "nc", "dtCourant">;
+    //! @brief dependent fields shared with the NR propagator, may be used as scratch during domain sync
+    using DependentFieldsCommon_ = FieldList<"ax", "ay", "az", "prho", "c", "du", "c11", "c12", "c13", "c22", "c23",
+                                             "c33", "kx", "nc", "dtCourant">;
+
+    /* xm is recomputed from the standard SPH density every step here, hence dependent; the NR
+     * propagator (ve-nr/ve-disk) instead carries the volume elements between steps (SPHYNX) and
+     * re-declares xm as a conserved field. */
+    using DependentFields_ = decltype(DependentFieldsCommon_{} + FieldList<"xm">{});
 
     //! @brief velocity gradient fields will only be allocated when avClean is true
     using GradVFields = FieldList<"dV11", "dV12", "dV13", "dV22", "dV23", "dV33">;
@@ -130,101 +131,6 @@ public:
         d.treeView = domain.octreeProperties();
     }
 
-    /*! @brief diagnostic: print global extrema of the VE state over the locally owned particles
-     *
-     * Pinpoints which quantity degenerates when the time step collapses: garbage divv -> rho
-     * constraint, kx/xm spikes at vacuum boundaries -> pressure/force spikes, gradh ~ 0 -> prho
-     * blow-up. Prints one line per step: '# ve-state: maxAbsDivv=... gradh=[..] kx=[..] maxXm=...'.
-     * Costs four minMax reductions and one small Allreduce; the call site is safe to comment out.
-     */
-    void printVeStateExtrema(typename DataType::HydroData& d, size_t first, size_t last)
-    {
-        auto extrema = [first, last](const auto& field)
-        {
-            if constexpr (cstone::execution::HaveGpu<Acc>{})
-            {
-                return cstone::minMax(cstone::execution::gpuDefaultStream, rawPtr(field) + first,
-                                      rawPtr(field) + last);
-            }
-            else { return cstone::minMax(cstone::execution::cpu, field.data() + first, field.data() + last); }
-        };
-        auto [divvMin, divvMax]   = extrema(get<"divv">(d));
-        auto [gradhMin, gradhMax] = extrema(get<"gradh">(d));
-        auto [kxMin, kxMax]       = extrema(get<"kx">(d));
-        auto [xmMin, xmMax]       = extrema(get<"xm">(d));
-
-        util::array<double, 6> ex{double(std::max(std::abs(divvMin), std::abs(divvMax))),
-                                  -double(gradhMin),
-                                  double(gradhMax),
-                                  -double(kxMin),
-                                  double(kxMax),
-                                  double(xmMax)},
-            exOut;
-        MPI_Allreduce(ex.data(), exOut.data(), ex.size(), MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-        if (Base::rank_ == 0)
-        {
-            std::cout << "# ve-state: maxAbsDivv=" << exOut[0] << " gradh=[" << -exOut[1] << "," << exOut[2]
-                      << "] kx=[" << -exOut[3] << "," << exOut[4] << "] maxXm=" << exOut[5] << std::endl;
-        }
-    }
-
-    /*! @brief diagnostic: globally count non-finite du/ax/ay/az entries of the owned particles
-     *
-     * Placed after each force stage (sph momentum, gravity, disk central force), the first tag
-     * with a nonzero count names the stage that produces NaN/inf. Call sites are single lines,
-     * safe to comment out.
-     */
-    template<class FieldVector>
-    unsigned long long nonFiniteCount(const FieldVector& field, size_t first, size_t last)
-    {
-        if constexpr (cstone::execution::HaveGpu<Acc>{})
-        {
-            return gpu::countNonFiniteGpu(rawPtr(field), first, last);
-        }
-        else
-        {
-            unsigned long long n = 0;
-            const auto*        p = field.data();
-#pragma omp parallel for reduction(+ : n)
-            for (size_t i = first; i < last; ++i)
-            {
-                n += !std::isfinite(p[i]);
-            }
-            return n;
-        }
-    }
-
-    void printNonFinite(const char* tag, typename DataType::HydroData& d, size_t first, size_t last)
-    {
-        util::array<unsigned long long, 4> c{nonFiniteCount(get<"du">(d), first, last),
-                                             nonFiniteCount(get<"ax">(d), first, last),
-                                             nonFiniteCount(get<"ay">(d), first, last),
-                                             nonFiniteCount(get<"az">(d), first, last)},
-            cOut;
-        MPI_Allreduce(c.data(), cOut.data(), c.size(), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        if (Base::rank_ == 0)
-        {
-            std::cout << "# nonfinite[" << tag << "]: du=" << cOut[0] << " ax=" << cOut[1] << " ay=" << cOut[2]
-                      << " az=" << cOut[3] << std::endl;
-        }
-    }
-
-    //! @brief diagnostic twin of printNonFinite for the VE intermediate fields (divv/gradh/cij/prho, alpha)
-    void printNonFiniteVe(const char* tag, typename DataType::HydroData& d, size_t first, size_t last)
-    {
-        util::array<unsigned long long, 5> c{nonFiniteCount(get<"divv">(d), first, last),
-                                             nonFiniteCount(get<"gradh">(d), first, last),
-                                             nonFiniteCount(get<"c11">(d), first, last),
-                                             nonFiniteCount(get<"prho">(d), first, last),
-                                             nonFiniteCount(get<"alpha">(d), first, last)},
-            cOut;
-        MPI_Allreduce(c.data(), cOut.data(), c.size(), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        if (Base::rank_ == 0)
-        {
-            std::cout << "# nonfinite[" << tag << "]: divv=" << cOut[0] << " gradh=" << cOut[1] << " c11=" << cOut[2]
-                      << " prho=" << cOut[3] << " alpha=" << cOut[4] << std::endl;
-        }
-    }
 
     void computeForces(DomainType& domain, DataType& simData) override
     {
@@ -285,17 +191,12 @@ public:
         computeEOS(first, last, d);
         timer.step("EquationOfState");
 
-        printVeStateExtrema(d, first, last);   // VE state diagnostic, safe to comment out
-        printNonFiniteVe("eos", d, first, last); // NaN-localizer diagnostic, safe to comment out
-
         domain.exchangeHalos(get<"c11", "c12", "c13", "c22", "c23", "c33", "divv", "c">(d), get<"ax">(d),
                              get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
 
         computeAVswitches(groups_.view(), d, domain.box());
         timer.step("AVswitches");
-
-        printNonFiniteVe("avswitch", d, first, last); // NaN-localizer diagnostic, safe to comment out
 
         if (avClean)
         {
@@ -310,8 +211,6 @@ public:
         computeMomentumEnergy<avClean>(groups_.view(), nullptr, d, domain.box(), nrMode);
         timer.step("MomentumAndEnergy");
         pmReader.step();
-
-        printNonFinite("sph", d, first, last); // NaN-localizer diagnostic, safe to comment out
 
         if (d.g != 0.0)
         {
@@ -328,7 +227,6 @@ public:
             timer.logStatistics("sumM2P", stats[2] / timer.getLastStepTime());
         }
 
-        printNonFinite("gravity", d, first, last); // NaN-localizer diagnostic, safe to comment out
     }
 
     void integrate(DomainType& domain, DataType& simData) override

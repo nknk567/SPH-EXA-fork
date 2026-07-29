@@ -40,9 +40,15 @@ protected:
     using Base::timer;
 
     using typename Base::Acc;
-    using typename Base::ConservedFields;
-    using typename Base::DependentFields;
     using T = typename DataType::RealType;
+
+    /*! @brief NR field lists: the volume elements are carried between steps (SPHYNX volstd),
+     * so xm is CONSERVED here, unlike the classical base where it is a dependent field. */
+    using ConservedFields = decltype(typename Base::ConservedFields{} + FieldList<"xm">{});
+    using DependentFields =
+        std::conditional_t<avClean,
+                           decltype(typename Base::DependentFieldsCommon_{} + typename Base::GradVFields{}),
+                           typename Base::DependentFieldsCommon_>;
 
     //! @brief runtime parameters of the NR scheme, persisted as checkpoint attributes
     struct NRParams
@@ -182,6 +188,23 @@ public:
 
     void save(IFileWriter* writer) override { nrParams_.loadOrStoreAttributes(writer); }
 
+    std::vector<std::string> conservedFields() const override
+    {
+        std::vector<std::string> ret{"x", "y", "z", "h", "m"};
+        for_each_tuple([&ret](auto f) { ret.push_back(f.value); }, make_tuple(ConservedFields{}));
+        return ret;
+    }
+
+    void activateFields(DataType& simData) override
+    {
+        auto& d = simData.hydro;
+        //! @brief Fields accessed in domain sync (x,y,z,h,m,keys) are not part of extensible lists.
+        d.setConserved("x", "y", "z", "h", "m");
+        d.setDependent("keys");
+        std::apply([&d](auto... f) { d.setConserved(f.value...); }, make_tuple(ConservedFields{}));
+        std::apply([&d](auto... f) { d.setDependent(f.value...); }, make_tuple(DependentFields{}));
+    }
+
     void sync(DomainType& domain, DataType& simData) override
     {
         auto& d = simData.hydro;
@@ -276,6 +299,9 @@ public:
         }
 
         Base::computeForcesCommon(domain, simData, /*nrMode*/ true, nrParams_.gradhMin);
+
+        printVeStateExtrema(d, first, last); // VE state diagnostic, safe to comment out
+        printNonFiniteVe(d, first, last);    // NaN monitor, safe to comment out
     }
 
     void integrate(DomainType& domain, DataType& simData) override
@@ -401,6 +427,57 @@ protected:
         }
     }
 
+    /*! @brief diagnostic: print global extrema of the VE state over the locally owned particles
+     *
+     * Runs after computeForcesCommon, where divv/gradh storage is already released: the divv
+     * extremum is recovered exactly as Krho / minDtRho — this is max(divv), the quantity that
+     * actually binds the rho time step (rhoTimestep reduces the signed maximum). One line per
+     * step; the call site is safe to comment out.
+     */
+    void printVeStateExtrema(typename DataType::HydroData& d, size_t first, size_t last)
+    {
+        auto extrema = [first, last](const auto& field)
+        {
+            if constexpr (cstone::execution::HaveGpu<Acc>{})
+            {
+                return cstone::minMax(cstone::execution::gpuDefaultStream, rawPtr(field) + first,
+                                      rawPtr(field) + last);
+            }
+            else { return cstone::minMax(cstone::execution::cpu, field.data() + first, field.data() + last); }
+        };
+        auto [kxMin, kxMax] = extrema(get<"kx">(d));
+        auto [xmMin, xmMax] = extrema(get<"xm">(d));
+
+        double maxDivv = d.minDtRho > 0 && std::isfinite(d.minDtRho) ? d.Krho / d.minDtRho : 0.0;
+        util::array<double, 4> ex{maxDivv, -double(kxMin), double(kxMax), double(xmMax)}, exOut;
+        MPI_Allreduce(ex.data(), exOut.data(), ex.size(), MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        if (Base::rank_ == 0)
+        {
+            std::cout << "# ve-state: maxDivv=" << exOut[0] << " kx=[" << -exOut[1] << "," << exOut[2]
+                      << "] maxXm=" << exOut[3] << std::endl;
+        }
+    }
+
+    /*! @brief diagnostic: globally count non-finite entries of the VE intermediate fields
+     *
+     * Runs after computeForcesCommon (divv/gradh already released, hence not covered here;
+     * the du/ax counters of printNonFinite run per stage in the tail). A nonzero count names
+     * the field that degenerated. Single call site, safe to comment out.
+     */
+    void printNonFiniteVe(typename DataType::HydroData& d, size_t first, size_t last)
+    {
+        util::array<unsigned long long, 3> c{nonFiniteCount(get<"c11">(d), first, last),
+                                             nonFiniteCount(get<"prho">(d), first, last),
+                                             nonFiniteCount(get<"alpha">(d), first, last)},
+            cOut;
+        MPI_Allreduce(c.data(), cOut.data(), c.size(), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (Base::rank_ == 0)
+        {
+            std::cout << "# nonfinite[ve]: c11=" << cOut[0] << " prho=" << cOut[1] << " alpha=" << cOut[2]
+                      << std::endl;
+        }
+    }
+
     /*! @brief diagnostic: print the global number of unconverged particles after each NR pass
      *
      * One line per step, e.g. '# hNRUnconverged: 7241511 2833900 9841 312 0': entry k is the
@@ -428,6 +505,47 @@ protected:
             std::cout << " " << cOut[k];
         }
         std::cout << std::endl;
+    }
+
+    /*! @brief diagnostic: globally count non-finite du/ax/ay/az entries of the owned particles
+     *
+     * Placed after each force stage (sph momentum, gravity, disk central force), the first tag
+     * with a nonzero count names the stage that produces NaN/inf. Call sites are single lines,
+     * safe to comment out.
+     */
+    template<class FieldVector>
+    unsigned long long nonFiniteCount(const FieldVector& field, size_t first, size_t last)
+    {
+        if constexpr (cstone::execution::HaveGpu<Acc>{})
+        {
+            return gpu::countNonFiniteGpu(rawPtr(field), first, last);
+        }
+        else
+        {
+            unsigned long long n = 0;
+            const auto*        p = field.data();
+#pragma omp parallel for reduction(+ : n)
+            for (size_t i = first; i < last; ++i)
+            {
+                n += !std::isfinite(p[i]);
+            }
+            return n;
+        }
+    }
+
+    void printNonFinite(const char* tag, typename DataType::HydroData& d, size_t first, size_t last)
+    {
+        util::array<unsigned long long, 4> c{nonFiniteCount(get<"du">(d), first, last),
+                                             nonFiniteCount(get<"ax">(d), first, last),
+                                             nonFiniteCount(get<"ay">(d), first, last),
+                                             nonFiniteCount(get<"az">(d), first, last)},
+            cOut;
+        MPI_Allreduce(c.data(), cOut.data(), c.size(), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (Base::rank_ == 0)
+        {
+            std::cout << "# nonfinite[" << tag << "]: du=" << cOut[0] << " ax=" << cOut[1] << " ay=" << cOut[2]
+                      << " az=" << cOut[3] << std::endl;
+        }
     }
 };
 
