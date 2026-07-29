@@ -84,6 +84,17 @@ protected:
         float volstdGrowFactor{2.0f};
         float volstdShrinkFactor{8.0f};
 
+        /*! @brief volume-element source: 0 = carried smoothed volume, 1 = m/rho0 every step
+         *
+         * 0 (SPHYNX volstd): the weights are the smoothed converged volumes of the previous
+         * step, frozen during the step. 1 (classical SPH-EXA VE definition): xm = m/rho0 is
+         * recomputed from the step-start h every step. Known risk of mode 1 under NR: for
+         * self-dominated (isolated) particles xm ~ h^3 at the step-start h, so the root has no
+         * restoring force ACROSS steps and drifts against the caps; the neighbor-count guard
+         * and the per-step walls must contain it.
+         */
+        unsigned xmSource{0};
+
         template<class Archive>
         void loadOrStoreAttributes(Archive* ar)
         {
@@ -111,6 +122,7 @@ protected:
             optionalIO("gradhMin", &gradhMin, 1);
             optionalIO("volstdGrowFactor", &volstdGrowFactor, 1);
             optionalIO("volstdShrinkFactor", &volstdShrinkFactor, 1);
+            optionalIO("xmSource", &xmSource, 1);
         }
     };
 
@@ -236,7 +248,7 @@ public:
          * particles: with a self-dominated density, xm ~ h^3/(K*w0) and both sides of
          * kx * h^3 = eta * xm scale with h^3 — the root degenerates and h drifts against the
          * caps (observed as kx -> eta/(K*w0) spikes and permanent 9-iteration tug-of-war). */
-        if (d.iteration == 1)
+        if (nrParams_.xmSource != 0 || d.iteration == 1)
         {
             computeXMass(groups_.view(), d, domain.box());
             timer.step("XMass");
@@ -253,11 +265,15 @@ public:
                              get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
 
-        /* Smoothed converged volume, the VE weights of the next step; needs kx halos, computed
-         * before ay/az are released. Assigned to xm in integrate(), after the output. */
-        reallocateDestructive(volstd_, d.x.size(), d.getAllocGrowthRate());
-        computeVolstd(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_));
-        timer.step("Volstd");
+        if (nrParams_.xmSource == 0)
+        {
+            /* Smoothed converged volume, the VE weights of the next step; needs kx halos,
+             * computed before ay/az are released. Assigned to xm in integrate(), after the
+             * output. */
+            reallocateDestructive(volstd_, d.x.size(), d.getAllocGrowthRate());
+            computeVolstd(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_));
+            timer.step("Volstd");
+        }
 
         Base::computeForcesCommon(domain, simData, /*nrMode*/ true, nrParams_.gradhMin);
     }
@@ -280,11 +296,14 @@ public:
             throw std::runtime_error("Neighbor search did not converge\n");
         }
 
-        /* volume elements of the next step, the smoothed converged volume of this step
-         * (SPHYNX-style); placed after the checkpoint output so that restarts see the weights
-         * that belong to the dumped positions */
-        setVolumeElements(groups_.view(), d, cstone::rawPtr(volstd_), nrParams_.volstdGrowFactor,
-                          nrParams_.volstdShrinkFactor);
+        if (nrParams_.xmSource == 0)
+        {
+            /* volume elements of the next step, the smoothed converged volume of this step
+             * (SPHYNX-style); placed after the checkpoint output so that restarts see the
+             * weights that belong to the dumped positions */
+            setVolumeElements(groups_.view(), d, cstone::rawPtr(volstd_), nrParams_.volstdGrowFactor,
+                              nrParams_.volstdShrinkFactor);
+        }
         timer.step("UpdateQuantities");
     }
 
@@ -328,32 +347,58 @@ protected:
         reallocateDestructive(volstd_, d.x.size(), d.getAllocGrowthRate());
         unsigned            nrIterations = 0;
         std::vector<size_t> nrUnconverged;
+        size_t              capIterUp = 0, capIterDown = 0;
         while (nrIterations < nrParams_.hNRIterMax)
         {
             ++nrIterations;
-            size_t numUnconverged =
+            NRPassStats stats =
                 computeVeNR(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
                             /*firstIteration*/ nrIterations == 1, nrParams_.hNRTol, nrParams_.hNRExtFactor);
-            nrUnconverged.push_back(numUnconverged);
-            if (numUnconverged == 0) { break; }
+            nrUnconverged.push_back(stats.numUnconverged);
+            capIterUp += stats.numCapUp;
+            capIterDown += stats.numCapDown;
+            if (stats.numUnconverged == 0) { break; }
             /* Measured (TDE debris): ~98% of the particles converge within two passes; the
              * rest is a vacuum-edge residual that holds the global chain at 5-9 iterations.
              * Once the unconverged set is small, full neighbor-list passes over all
              * particles are wasted on it: finish those particles with per-particle
              * octree-traversal updates instead (exact, see computeVeNRTail). */
-            if (numUnconverged * 100 < groups_.view().lastBody - groups_.view().firstBody)
+            if (stats.numUnconverged * 100 < groups_.view().lastBody - groups_.view().firstBody)
             {
                 nrIterations +=
                     computeVeNRTail(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
                                     nrParams_.hNRIterMax - nrIterations, nrUnconverged, nrParams_.hNRTol,
-                                    nrParams_.hNRExtFactor);
+                                    nrParams_.hNRExtFactor, capIterUp, capIterDown);
                 break;
             }
         }
         timer.logStatistics("hNRIterations", nrIterations);
         if (Base::rank_ == 0) { std::cout << "# hNRIterations: " << nrIterations << std::endl; }
         printNRUnconverged(nrUnconverged, nrParams_.hNRIterMax); // NR convergence diagnostic, safe to comment out
+        //! cap statistics, safe to comment out; volstd_ still holds the step-start h here
+        printNRCapped(capIterUp, capIterDown,
+                      countHWallPinned(groups_.view(), d, cstone::rawPtr(volstd_), nrParams_.hNRExtFactor));
         timer.step("hNewtonRaphson");
+    }
+
+    /*! @brief diagnostic: print how often the NR iterations ran into the h step-limit walls
+     *
+     * One line per step: iterUp/iterDown = per-iteration 1.1x / 0.5x clamp events summed over
+     * all passes; endUp/endDown = particles whose FINAL h is pinned at the cumulative walls
+     * hNRExtFactor * h0 / 0.5 * h0. Wall-pinned particles are frozen OFF their NR root but
+     * count as converged (relDh = 0 at the wall) — this line and the h-residual check of
+     * verify_nr.py are the complementary views. Costs one small Allreduce; the call site is
+     * a single line, safe to comment out.
+     */
+    void printNRCapped(size_t iterUp, size_t iterDown, std::pair<size_t, size_t> endWalls)
+    {
+        unsigned long long c[4] = {iterUp, iterDown, endWalls.first, endWalls.second}, cOut[4];
+        MPI_Allreduce(c, cOut, 4, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (Base::rank_ == 0)
+        {
+            std::cout << "# hNRCapped: iterUp=" << cOut[0] << " iterDown=" << cOut[1] << " endUp=" << cOut[2]
+                      << " endDown=" << cOut[3] << std::endl;
+        }
     }
 
     /*! @brief diagnostic: print the global number of unconverged particles after each NR pass

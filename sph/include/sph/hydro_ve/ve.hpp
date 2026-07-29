@@ -90,12 +90,12 @@ void setVolumeElements(const GroupView& grp, Dataset& d, const Tv* volstd, float
  * @p firstIteration is set); the cumulative upward h movement is capped at hNRExtFactor * h0 so
  * that the neighbor lists built before the iterations remain complete for the final h.
  *
- * @return the number of locally owned particles with a relative h change >= @p tol; zero means
- *         the iterations are converged
+ * @return pass statistics: the number of locally owned particles with a relative h change
+ *         >= @p tol (zero means the iterations are converged) and the per-iteration clamp hits
  */
 template<typename Tc, class Dataset, class Tv>
-size_t computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, Tv* h0, bool firstIteration,
-                   float tol, float hExtFactor)
+NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, Tv* h0, bool firstIteration,
+                        float tol, float hExtFactor)
 {
     if constexpr (d.useGpu) { return gpu::computeVeNR(grp, d, box, h0, firstIteration, tol, hExtFactor); }
     else
@@ -108,16 +108,44 @@ size_t computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box,
         const Th* hNew         = d.ay.data();
         Th*       h            = d.h.data();
         Th*       relDh        = d.az.data();
-        size_t    numUnconverged = 0;
-#pragma omp parallel for schedule(static) reduction(+ : numUnconverged)
+        size_t    numUnconverged = 0, capUp = 0, capDown = 0;
+#pragma omp parallel for schedule(static) reduction(+ : numUnconverged, capUp, capDown)
         for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
         {
             Th rel   = std::abs(hNew[i] - h[i]) / h[i];
+            //! bitwise comparison against the clamp values the postamble computes from the same inputs
+            capUp += hNew[i] == Th(1.1) * h[i];
+            capDown += hNew[i] == Th(0.5) * h[i];
             relDh[i] = rel;
             h[i]     = hNew[i];
             numUnconverged += rel >= Th(tol);
         }
-        return numUnconverged;
+        return {numUnconverged, capUp, capDown};
+    }
+}
+
+/*! @brief count particles whose final h ended the NR iterations pinned at the cumulative walls
+ *
+ * @return {at hExtFactor * h0 (upper wall), at 0.5 * h0 (lower wall)}; these particles are
+ *         frozen OFF their NR root (relDh = 0 at the wall counts as converged), so they do not
+ *         appear in the unconverged statistics — this is the complementary view.
+ */
+template<class Dataset, class Tv>
+std::pair<size_t, size_t> countHWallPinned(const GroupView& grp, Dataset& d, const Tv* h0, float hExtFactor)
+{
+    if constexpr (d.useGpu) { return gpu::countHWallPinned(grp, d, h0, hExtFactor); }
+    else
+    {
+        using Th        = std::decay_t<decltype(d.h[0])>;
+        const Th* h     = d.h.data();
+        size_t    up    = 0, down = 0;
+#pragma omp parallel for schedule(static) reduction(+ : up, down)
+        for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
+        {
+            up += h[i] == Th(hExtFactor) * h0[i];
+            down += h[i] == Th(0.5) * h0[i];
+        }
+        return {up, down};
     }
 }
 
@@ -138,11 +166,12 @@ size_t computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box,
  */
 template<typename Tc, class Dataset, class Tv>
 unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, const Tv* h0,
-                         unsigned maxPasses, std::vector<size_t>& unconvergedPerPass, float tol, float hExtFactor)
+                         unsigned maxPasses, std::vector<size_t>& unconvergedPerPass, float tol, float hExtFactor,
+                         size_t& capUp, size_t& capDown)
 {
     if constexpr (d.useGpu)
     {
-        return gpu::computeVeNRTail(grp, d, box, h0, maxPasses, unconvergedPerPass, tol, hExtFactor);
+        return gpu::computeVeNRTail(grp, d, box, h0, maxPasses, unconvergedPerPass, tol, hExtFactor, capUp, capDown);
     }
     else
     {
@@ -159,7 +188,8 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
 
         Th*                 h = d.h.data();
         std::vector<size_t> bins(maxPasses + 2, 0);
-#pragma omp parallel
+        size_t              tailCapUp = 0, tailCapDown = 0;
+#pragma omp parallel reduction(+ : tailCapUp, tailCapDown)
         {
             std::vector<size_t> localBins(maxPasses + 2, 0);
 #pragma omp for schedule(dynamic) nowait
@@ -173,6 +203,8 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
                     Th hNew = veNRTraversalUpdate(i, hi, d.K, ballmassEta<Th>(d.ng0), Th(hExtFactor), d.treeView,
                                                   box, d.x.data(), d.y.data(), d.z.data(), d.xm.data(), d.m.data(),
                                                   h0, d.wh.data(), d.whd.data());
+                    tailCapUp += hNew == Th(1.1) * hi;
+                    tailCapDown += hNew == Th(0.5) * hi;
                     Th rel  = std::abs(hNew - hi) / hi;
                     hi      = hNew;
                     if (rel < Th(tol))
@@ -190,6 +222,8 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
                 bins[k] += localBins[k];
             }
         }
+        capUp += tailCapUp;
+        capDown += tailCapDown;
 
         //! per-pass unconverged counts = suffix sums; passes performed = last needed iteration
         unsigned passes = maxPasses;

@@ -8,6 +8,16 @@
 namespace sph
 {
 
+//! @brief per-pass statistics of one smoothing-length NR iteration (see computeVeNR)
+struct NRPassStats
+{
+    //! @brief particles whose relative h change was >= the tolerance
+    size_t numUnconverged;
+    //! @brief particles clamped by the per-iteration up (1.1x) / down (0.5x) step limits
+    size_t numCapUp;
+    size_t numCapDown;
+};
+
 //! @brief compute time-step based on the signal velocity
 template<class T1, class T2, class T3>
 HOST_DEVICE_FUN auto tsKCourant(T1 maxvsignal, T2 h, T3 c, float Kcour)

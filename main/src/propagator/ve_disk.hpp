@@ -108,11 +108,14 @@ public:
             throw std::runtime_error("Neighbor search did not converge\n");
         }
 
-        /* volume elements of the next step, the smoothed converged volume of this step
-         * (SPHYNX-style); placed after the checkpoint output so that restarts see the weights
-         * that belong to the dumped positions */
-        setVolumeElements(groups_.view(), d, cstone::rawPtr(volstd_), Base::nrParams_.volstdGrowFactor,
-                          Base::nrParams_.volstdShrinkFactor);
+        if (Base::nrParams_.xmSource == 0)
+        {
+            /* volume elements of the next step, the smoothed converged volume of this step
+             * (SPHYNX-style); placed after the checkpoint output so that restarts see the
+             * weights that belong to the dumped positions */
+            setVolumeElements(groups_.view(), d, cstone::rawPtr(volstd_), Base::nrParams_.volstdGrowFactor,
+                              Base::nrParams_.volstdShrinkFactor);
+        }
         timer.step("UpdateQuantities");
 
         disk::computeAndExchangeStarPosition(star, d.minDt, d.minDt_m1);
