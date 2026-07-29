@@ -207,7 +207,8 @@ struct CpuFullNbListNeighborhoodBuilder
                  * search radius is only present in i's list. Append the reverse entry so that
                  * j receives the reaction to the neighbor-kernel term. Readers use the
                  * pre-augmentation counts, appends go through atomic cursors, so the pass is
-                 * race-free; the appended entries are in nondeterministic order. */
+                 * race-free; the appended entries land in thread-timing order and are sorted
+                 * afterwards (see below) to keep the runs reproducible. */
                 auto originalCount = std::make_unique_for_overwrite<LocalIndex[]>(numBodies);
                 std::copy(nbList.neighborsCount.get(), nbList.neighborsCount.get() + numBodies, originalCount.get());
 
@@ -267,6 +268,13 @@ struct CpuFullNbListNeighborhoodBuilder
                 {
                     maxAugmented             = std::max(maxAugmented, unsigned(nbList.neighborsCount[i]));
                     nbList.neighborsCount[i] = std::min(nbList.neighborsCount[i], ngmax);
+                    /* The atomic append cursors fill the transposed segment in thread-timing
+                     * order, which would make the floating-point summation order of every
+                     * interaction loop — and thus the entire run — irreproducible at the ULP
+                     * level. Sort the appended segment (the base segment is already in
+                     * deterministic traversal order). */
+                    std::sort(&nbList.neighbors[std::size_t(i) * ngmax + originalCount[i]],
+                              &nbList.neighbors[std::size_t(i) * ngmax + nbList.neighborsCount[i]]);
                 }
             }
         }
