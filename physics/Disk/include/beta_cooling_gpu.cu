@@ -41,6 +41,7 @@ void betaCoolingGPU(size_t first, size_t last, const Treal* x, const Treal* y, c
     cstone::LocalIndex numParticles = last - first;
     unsigned           numThreads   = 256;
     unsigned           numBlocks    = (numParticles + numThreads - 1) / numThreads;
+    if (numBlocks == 0) { return; }
 
     betaCoolingGPUKernel<<<numBlocks, numThreads>>>(first, last, x, y, z, u, rho, du, g, star.m, star.position,
                                                     star.beta, star.u_floor, star.cooling_rho_limit);

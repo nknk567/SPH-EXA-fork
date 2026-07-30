@@ -83,6 +83,7 @@ void computeAccretionConditionGPU(size_t first, size_t last, const Treal* x, con
 
     star.accreted_local = {};
     star.removed_local  = {};
+    if (numParticles == 0) { return; }
 
     RemovalStatistics *accreted_device, *removed_device;
     checkGpuErrors(cudaMalloc(reinterpret_cast<void**>(&accreted_device), sizeof *accreted_device));

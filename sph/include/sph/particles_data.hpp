@@ -440,6 +440,7 @@ template<class Vector, cstone::execution::Policy Exec>
 void fillMassHalos(Exec exec, Vector& m, std::size_t first, std::size_t last)
 {
     using T = std::decay_t<Vector>::value_type;
+    if (last <= first) { return; }
     T mass;
     if constexpr (cstone::IsDeviceVector<Vector>{})
     {
