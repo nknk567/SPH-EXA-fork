@@ -76,6 +76,7 @@ template<class Dataset>
 auto rhoTimestep(size_t first, size_t last, const Dataset& d)
 {
     using T = std::decay_t<decltype(*d.divv.data())>;
+    if (last <= first) { return typename Dataset::RealType(INFINITY); }
 
     T maxDivv = -INFINITY;
     if constexpr (d.useGpu)
