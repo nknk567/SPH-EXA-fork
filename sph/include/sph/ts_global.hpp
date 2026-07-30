@@ -79,24 +79,28 @@ auto rhoTimestep(size_t first, size_t last, const Dataset& d)
     if (last <= first) { return typename Dataset::RealType(INFINITY); }
 
     T maxDivv = -INFINITY;
+    T minDivv = INFINITY;
     if constexpr (d.useGpu)
     {
         if (d.divv.empty()) { throw std::runtime_error("Divv needs to be available in rhoTimestep\n"); }
         auto minmax =
             cstone::minMax(cstone::execution::gpuDefaultStream, rawPtr(d.divv) + first, rawPtr(d.divv) + last);
+        minDivv = std::get<0>(minmax);
         maxDivv = std::get<1>(minmax);
     }
     else
     {
         if (d.divv.empty()) { throw std::runtime_error("Divv needs to be available in rhoTimestep\n"); }
 
-#pragma omp parallel for reduction(max : maxDivv)
+#pragma omp parallel for reduction(max : maxDivv) reduction(min : minDivv)
         for (size_t i = first; i < last; ++i)
         {
             maxDivv = std::max(d.divv[i], maxDivv);
+            minDivv = std::min(d.divv[i], minDivv);
         }
     }
-    return d.Krho / std::abs(maxDivv);
+    //    return d.Krho / std::abs(maxDivv);
+    return d.Krho / std::max(std::abs(minDivv), std::abs(maxDivv));
 }
 
 /*! @brief diagnostic: print the global minimum of each time-step candidate on rank 0
@@ -139,9 +143,9 @@ void computeTimestep(size_t first, size_t last, Dataset& d, Ts... extraTimesteps
 
     T minDtAcc = (d.g != 0.0) ? accelerationTimestep(first, last, d) : INFINITY;
 
-    constexpr size_t numCandidates = 4 + sizeof...(Ts);
-    util::array<T, numCandidates> candidates{minDtAcc, T(d.minDtCourant), T(d.minDtRho),
-                                             T(d.maxDtIncrease * d.minDt), T(extraTimesteps)...};
+    constexpr size_t              numCandidates = 4 + sizeof...(Ts);
+    util::array<T, numCandidates> candidates{minDtAcc, T(d.minDtCourant), T(d.minDtRho), T(d.maxDtIncrease * d.minDt),
+                                             T(extraTimesteps)...};
 
     /* A NaN candidate (e.g. a NaN Courant time from a single corrupted particle) must not
      * propagate into the global time step: the growth-capped previous step is always finite, so
