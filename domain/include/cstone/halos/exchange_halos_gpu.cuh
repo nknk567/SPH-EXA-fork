@@ -53,9 +53,9 @@ void haloExchangeGpu(int epoch,
     const size_t oldSendSize = reallocateBytes(
         sendScratchBuffer, computeTotalSendBytes<alignment>(outgoingHalos, -1, 0, arrays...), allocGrowthRate);
 
-    size_t numRanges = maxNumRanges(outgoingHalos);
-    IndexType* d_range;
-    checkGpuErrors(cudaMallocAsync((void**)&d_range, 2 * numRanges * sizeof(IndexType), exec));
+    size_t numRanges   = maxNumRanges(outgoingHalos);
+    IndexType* d_range = nullptr;
+    if (numRanges > 0) { checkGpuErrors(cudaMallocAsync((void**)&d_range, 2 * numRanges * sizeof(IndexType), exec)); }
     IndexType* d_rangeScan = d_range + numRanges;
 
     auto* sendPtr = reinterpret_cast<TransferType*>(rawPtr(sendScratchBuffer));
@@ -111,7 +111,7 @@ void haloExchangeGpu(int epoch,
 
     if (not sendRequests.empty()) { MPI_Waitall(int(sendRequests.size()), sendRequests.data(), MPI_STATUSES_IGNORE); }
 
-    checkGpuErrors(cudaFreeAsync(d_range, exec));
+    if (d_range != nullptr) { checkGpuErrors(cudaFreeAsync(d_range, exec)); }
     reallocate(sendScratchBuffer, oldSendSize, 1.0);
     reallocate(receiveScratchBuffer, oldRecvSize, 1.0);
 
