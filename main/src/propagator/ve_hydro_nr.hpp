@@ -258,7 +258,7 @@ public:
 
         computeGroups(first, last, d, domain.box(), groups_);
         timer.step("computeGroups");
-        updateSmoothingLengthIterativeNR(groups_.view(), d, domain.box(), nrParams_.hNRExtFactor);
+        updateSmoothingLengthIterative(groups_.view(), d, domain.box());//, nrParams_.hNRExtFactor);
         timer.step("updateSmoothingLengthIterative");
         findNeighborsSfc(groups_.view(), d, domain.box());
         timer.step("FindNeighbors");
