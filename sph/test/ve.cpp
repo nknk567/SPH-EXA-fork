@@ -310,9 +310,10 @@ momentumAndEnergyJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box, c
                        const T* c11, const T* c12, const T* c13, const T* c22, const T* c23, const T* c33,
                        const T Atmin, const T Atmax, const T ramp, const T* wh, const T* kx, const T* xm,
                        const T* alpha, const T* dV11, const T* dV12, const T* dV13, const T* dV22, const T* dV23,
-                       const T* dV33, T* grad_P_x, T* grad_P_y, T* grad_P_z, Tm1* du, T* maxvsignal)
+                       const T* dV33, T* grad_P_x, T* grad_P_y, T* grad_P_z, Tm1* du, T* maxvsignal,
+                       bool nrMode = false, T etaCritNR = 0)
 {
-    MomentumAndEnergyInteraction<avClean, T> interaction{wh, Atmin, Atmax, ramp};
+    MomentumAndEnergyInteraction<avClean, T> interaction{wh, Atmin, Atmax, ramp, nrMode, etaCritNR};
 
     if constexpr (!avClean) dV11 = dV12 = dV13 = dV22 = dV23 = dV33 = vx;
     const auto input =
@@ -407,6 +408,49 @@ TEST_F(SphKernelTests, MomentumEnergy)
         EXPECT_EQ(du, 0.0);
         EXPECT_EQ(maxvsignal, 0.0);
     }
+}
+
+/*! @brief with NR-iterated h, the avClean eta_crit is the constant implied by rho * h^3 = ballmassEta(ng0) * m,
+ * not a function of the live neighbor count (a stale capacity guard in NR mode, and a pairwise-asymmetric
+ * input that breaks the antisymmetry of the AV force). The forces must therefore be invariant under any
+ * change of nc > 1.
+ */
+TEST_F(SphKernelTests, MomentumEnergyAvCleanNRIndependentOfNc)
+{
+    std::vector<T> dV11(npart), dV12(npart), dV13(npart), dV22(npart), dV23(npart), dV33(npart);
+    symmetrizeGradV<T>({dvxdx.data(), dvxdy.data(), dvxdz.data(), dvydx.data(), dvydy.data(), dvydz.data(),
+                        dvzdx.data(), dvzdy.data(), dvzdz.data()},
+                       {dV11.data(), dV12.data(), dV13.data(), dV22.data(), dV23.data(), dV33.data()}, npart);
+
+    const unsigned ng0       = 100;
+    const T        etaCritNR = std::cbrt(T(1) / ballmassEta<T>(ng0));
+
+    auto run = [&](unsigned nc0, bool nrMode)
+    {
+        std::vector<unsigned> nc(x.size(), neighborsCount + 1);
+        nc[0] = nc0;
+        std::array<T, 5> r{-1, -1, -1, -1, -1}; // grad_Px, grad_Py, grad_Pz, du, maxvsignal
+        momentumAndEnergyJLoop<true>(0, K, box(), neighbors.data(), neighborsCount, nc.data(), x.data(), y.data(),
+                                     z.data(), vx.data(), vy.data(), vz.data(), h.data(), m.data(), prho.data(),
+                                     (const T*)nullptr, c.data(), c11.data(), c12.data(), c13.data(), c22.data(),
+                                     c23.data(), c33.data(), Atmin, Atmax, ramp, wh.data(), kx.data(), xm.data(),
+                                     alpha.data(), dV11.data(), dV12.data(), dV13.data(), dV22.data(), dV23.data(),
+                                     dV33.data(), &r[0], &r[1], &r[2], &r[3], &r[4], nrMode, etaCritNR);
+        return r;
+    };
+
+    // in NR mode, results are bitwise independent of the live neighbor count
+    auto nrUniform = run(neighborsCount + 1, true);
+    auto nrShock   = run(2, true); // eta_crit(nc=2) = 2.55 would put every pair inside the ramp
+    for (size_t k = 0; k < nrUniform.size(); ++k)
+    {
+        EXPECT_EQ(nrUniform[k], nrShock[k]);
+    }
+
+    // teeth: outside NR mode the same nc contrast must change the forces through the dmy3 ramp
+    auto stdUniform = run(neighborsCount + 1, false);
+    auto stdShock   = run(2, false);
+    EXPECT_NE(stdUniform[3], stdShock[3]);
 }
 
 template<size_t stride = 1, class Tc, class T>
