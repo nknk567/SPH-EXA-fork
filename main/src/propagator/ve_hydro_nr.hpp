@@ -43,8 +43,10 @@ protected:
     using T = typename DataType::RealType;
 
     /*! @brief NR field lists: the volume elements are carried between steps (SPHYNX volstd),
-     * so xm is CONSERVED here, unlike the classical base where it is a dependent field. */
-    using ConservedFields = decltype(typename Base::ConservedFields{} + FieldList<"xm">{});
+     * so xm is CONSERVED here, unlike the classical base where it is a dependent field.
+     * ballmass is the per-particle NR constraint target rho * h^3 = ballmass, carried between
+     * steps (frozen when particleBallmass = 1, refilled nominal every step otherwise). */
+    using ConservedFields = decltype(typename Base::ConservedFields{} + FieldList<"xm", "ballmass">{});
     using DependentFields =
         std::conditional_t<avClean,
                            decltype(typename Base::DependentFieldsCommon_{} + typename Base::GradVFields{}),
@@ -101,6 +103,17 @@ protected:
          */
         unsigned xmSource{0};
 
+        /*! @brief NR constraint target source: 0 = fixed nominal target, 1 = per-particle target
+         *
+         * 0: ballmass is refilled with ballmassEta(ng0) * m every step — the fixed global
+         * constraint (legacy behavior). 1 (SPHYNX findneighbors.f90): the per-particle field is
+         * frozen between steps; whenever the neighbor-count guard has to correct h (extremely
+         * few or too many neighbors), the particle's target is re-seeded to rho * h^3 at the
+         * corrected h in the first NR iteration, so the correction sticks instead of the NR
+         * pull-back re-creating the undersampled state and its spurious interactions.
+         */
+        unsigned particleBallmass{0};
+
         template<class Archive>
         void loadOrStoreAttributes(Archive* ar)
         {
@@ -129,6 +142,7 @@ protected:
             optionalIO("volstdGrowFactor", &volstdGrowFactor, 1);
             optionalIO("volstdShrinkFactor", &volstdShrinkFactor, 1);
             optionalIO("xmSource", &xmSource, 1);
+            optionalIO("particleBallmass", &particleBallmass, 1);
         }
     };
 
@@ -258,7 +272,16 @@ public:
 
         computeGroups(first, last, d, domain.box(), groups_);
         timer.step("computeGroups");
-        updateSmoothingLengthIterative(groups_.view(), d, domain.box());//, nrParams_.hNRExtFactor);
+        /* The NR constraint target: nominal ballmassEta(ng0) * m every step in the fixed-target
+         * mode; in the per-particle mode only seeded on the first step of a fresh run and frozen
+         * afterwards (restarts from checkpoints without the field are zero-filled, which the NR
+         * postamble treats as the recompute signal and re-seeds from rho * h^3 — the SPHYNX
+         * warm-up equivalent). */
+        if (nrParams_.particleBallmass == 0 || d.iteration == 1) { fillNominalBallmass(groups_.view(), d); }
+        /* With per-particle targets, the guard flags every h correction for a target recompute
+         * in the first NR iteration (negative ballmass sentinel, see updateHIterative). */
+        updateSmoothingLengthIterative(groups_.view(), d, domain.box(),
+                                       nrParams_.particleBallmass ? cstone::rawPtr(get<"ballmass">(d)) : nullptr);
         timer.step("updateSmoothingLengthIterative");
         findNeighborsSfc(groups_.view(), d, domain.box());
         timer.step("FindNeighbors");
@@ -353,12 +376,12 @@ protected:
         }
     }
 
-    /*! @brief converge the smoothing lengths to the volume-element consistency rho * h^3 = eta * m
+    /*! @brief converge the smoothing lengths to the volume-element consistency rho * h^3 = ballmass
      *
-     * Newton-Raphson iterations converging h towards rho * h^3 = ballmassEta(ng0) * m,
+     * Newton-Raphson iterations converging h towards the per-particle target
+     * rho * h^3 = ballmass (nominally ballmassEta(ng0) * m, see the particleBallmass parameter),
      * such that the grad-h terms are formally consistent with dh/drho = -h / (3 * rho).
-     * The target depends only on the desired neighbor count and the particle mass, i.e.
-     * it is constant in time. The iterations reuse the fixed neighbor list with fixed
+     * The iterations reuse the fixed neighbor list with fixed
      * volume elements xm and are gather-only, so they require no communication and each
      * rank may stop as soon as its own particles are converged. Following SPHYNX
      * (Cabezon & Garcia-Senz).

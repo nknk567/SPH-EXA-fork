@@ -63,6 +63,25 @@ void computeVe(const GroupView&, Dataset& d, const cstone::Box<typename Dataset:
 template void computeVe(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
                         const cstone::Box<SphTypes::CoordinateType>&);
 
+template<class Tm, class T>
+struct NominalBallmass
+{
+    T eta;
+    __device__ T operator()(Tm mi) const { return eta * T(mi); }
+};
+
+template<class Dataset>
+void fillNominalBallmass(const GroupView& grp, Dataset& d)
+{
+    using Th = typename Dataset::HydroType;
+    using Tm = typename Dataset::Tmass;
+    thrust::transform(thrust::device, rawPtr(d.m) + grp.firstBody, rawPtr(d.m) + grp.lastBody,
+                      rawPtr(d.ballmass) + grp.firstBody, NominalBallmass<Tm, Th>{ballmassEta<Th>(d.ng0)});
+    checkGpuErrors(cudaDeviceSynchronize());
+}
+
+template void fillNominalBallmass(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d);
+
 template<class T>
 struct RelativeHChange
 {
@@ -99,8 +118,8 @@ NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<type
     {
         cstone::memcpyD2DAsync(cstone::execution::gpuDefaultStream, rawPtr(d.h), d.x.size(), h0);
     }
-    veNRIjLoop(d.neighborhood, d.K, d.ng0, hExtFactor, rawPtr(d.xm), rawPtr(d.m), h0, rawPtr(d.wh), rawPtr(d.whd),
-               rawPtr(d.kx), rawPtr(d.ay));
+    veNRIjLoop(d.neighborhood, d.K, hExtFactor, rawPtr(d.xm), rawPtr(d.m), h0, rawPtr(d.ballmass), rawPtr(d.wh),
+               rawPtr(d.whd), rawPtr(d.kx), rawPtr(d.ay));
     //! per-particle relative h change into the az scratch, consumed by computeVeNRTail
     auto begin = thrust::make_zip_iterator(rawPtr(d.ay) + grp.firstBody, rawPtr(d.h) + grp.firstBody);
     auto end   = thrust::make_zip_iterator(rawPtr(d.ay) + grp.lastBody, rawPtr(d.h) + grp.lastBody);
@@ -155,7 +174,8 @@ struct UnconvergedIndex
  */
 template<class Tc, class T, class Tm, class KeyType>
 __global__ __launch_bounds__(128) void veNRTailKernel(const cstone::LocalIndex* __restrict__ subset,
-                                                      cstone::LocalIndex n, Tc K, T etaBallmass, T hExtFactor, T tol,
+                                                      cstone::LocalIndex n, Tc K, T* __restrict__ ballmass,
+                                                      T hExtFactor, T tol,
                                                       unsigned maxIter, const cstone::OctreeNsView<Tc, KeyType> tree,
                                                       const cstone::Box<Tc> box, const Tc* __restrict__ x,
                                                       const Tc* __restrict__ y, const Tc* __restrict__ z,
@@ -187,7 +207,7 @@ __global__ __launch_bounds__(128) void veNRTailKernel(const cstone::LocalIndex* 
         unsigned long long capU = 0, capD = 0;
         for (unsigned it = 1; it <= maxIter; ++it)
         {
-            T hNew = veNRTraversalUpdate(i, hi, K, etaBallmass, hExtFactor, tree, box, x, y, z, xm, m, h0, wh, whd);
+            T hNew = veNRTraversalUpdate(i, hi, K, ballmass, hExtFactor, tree, box, x, y, z, xm, m, h0, wh, whd);
             capU += hNew == T(1.1) * hi;
             capD += hNew == T(0.5) * hi;
             T rel  = std::abs(hNew - hi) / hi;
@@ -234,7 +254,7 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<typ
 
     size_t sharedBytes = (maxPasses + 4) * sizeof(unsigned long long);
     veNRTailKernel<<<numBlocks, 128, sharedBytes>>>(
-        thrust::raw_pointer_cast(subset.data()), n, d.K, ballmassEta<Th>(d.ng0), Th(hExtFactor), Th(tol), maxPasses,
+        thrust::raw_pointer_cast(subset.data()), n, d.K, rawPtr(d.ballmass), Th(hExtFactor), Th(tol), maxPasses,
         d.treeView, box, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), rawPtr(d.xm), rawPtr(d.m), h0,
         rawPtr(d.wh), rawPtr(d.whd), thrust::raw_pointer_cast(devBins.data()));
     checkGpuErrors(cudaDeviceSynchronize());

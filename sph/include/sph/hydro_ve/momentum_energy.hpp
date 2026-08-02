@@ -49,7 +49,7 @@ void computeMomentumEnergy(const GroupView& groups, float* groupDt, Dataset& d, 
             d.c.data(), d.kx.data(), d.alpha.data(), d.xm.data(), d.prho.data(), d.c11.data(), d.c12.data(),
             d.c13.data(), d.c22.data(), d.c23.data(), d.c33.data(), d.nc.data(), d.dV11.data(), d.dV12.data(),
             d.dV13.data(), d.dV22.data(), d.dV23.data(), d.dV33.data(), d.tdpdTrho.data(), d.wh.data(), d.du.data(),
-            d.ax.data(), d.ay.data(), d.az.data(), d.dtCourant.data(), d.ng0, nrMode);
+            d.ax.data(), d.ay.data(), d.az.data(), d.dtCourant.data(), nrMode);
 
         auto minDt = std::numeric_limits<typename Dataset::HydroType>::infinity();
 #pragma omp parallel for reduction(min : minDt)

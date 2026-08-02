@@ -34,7 +34,6 @@
 #include "cstone/cuda/annotation.hpp"
 #include "cstone/traversal/ijloop/ijloop.hpp"
 
-#include "sph/hydro_ve/ve_kern.hpp"
 #include "sph/kernels.hpp"
 #include "sph/table_lookup.hpp"
 
@@ -68,17 +67,8 @@ struct MomentumAndEnergyInteraction
 {
     const T* wh;
     T        Atmin, Atmax, ramp;
-    //! @brief true if h is converged with Newton-Raphson iterations to satisfy rho * h^3 = const
+    //! @brief true if h is converged with Newton-Raphson iterations to satisfy rho * h^3 = ballmass
     bool nrMode = false;
-    /*! @brief avClean eta_crit in NR mode
-     *
-     * The constraint rho * h^3 = ballmassEta(ng0) * m fixes the local particle spacing to
-     * Delta = (m/rho)^(1/3) = h * cbrt(32 pi / (3 ng0)), so eta_crit = Delta / h is an exact,
-     * particle-independent constant. The live neighbor count nc must NOT be used here in NR
-     * mode: it is only a stale capacity guard (measured at the pre-NR h, band [ng0/4, ngmax]),
-     * and an nc-derived eta_crit differs between the two gather directions of a pair, making
-     * viscosity_ij != viscosity_ji — a pairwise conservation violation of the AV channel. */
-    T etaCritNR = T(0);
 
     template<class ParticleData, class Tc>
     constexpr auto operator()(const ParticleData& iData, const ParticleData& jData, cstone::Vec3<Tc> const& r_ij,
@@ -126,7 +116,22 @@ struct MomentumAndEnergyInteraction
         T rv = rx * vx_ij + ry * vy_ij + rz * vz_ij;
         if constexpr (AvClean)
         {
-            T eta_crit = nrMode ? etaCritNR : std::cbrt(T(32) * M_PI / T(3) / T(nci));
+            /* eta_crit estimates the local particle spacing in units of h, Delta / h =
+             * (m / (rho * h^3))^(1/3) = (xm / (kx * h^3))^(1/3); the nc-based expression is the
+             * same quantity estimated from the neighbor count within 2h. In NR mode the live nc
+             * is only a stale capacity guard (measured at the pre-NR h, band [ng0/4, ngmax]), so
+             * use the converged density state instead. eta_crit must be identical for the two
+             * gather directions of a pair, otherwise viscosity_ij != viscosity_ji — a pairwise
+             * conservation violation of the AV channel; max() is symmetric and lets the more
+             * poorly resolved side of the pair trigger the full-AV safety ramp. */
+            T eta_crit;
+            if (nrMode)
+            {
+                T etaCriti = std::cbrt(xmassi / (kxi * hi * hi * hi));
+                T etaCritj = std::cbrt(xmassj / (kxj * hj * hj * hj));
+                eta_crit   = stl::max(etaCriti, etaCritj);
+            }
+            else { eta_crit = std::cbrt(T(32) * M_PI / T(3) / T(nci)); }
             rv += avRvCorrection({rx, ry, rz}, stl::min(v1, v2), eta_crit, {dV11i, dV12i, dV13i, dV22i, dV23i, dV33i},
                                  {dV11j, dV12j, dV13j, dV22j, dV23j, dV33j});
         }
@@ -250,24 +255,21 @@ void momentumAndEnergyIjLoop(Neighborhood const& neighborhood, Tc K, Tc Kcour, T
                              const T* xm, const T* prho, const T* c11, const T* c12, const T* c13, const T* c22,
                              const T* c23, const T* c33, const unsigned* nc, const T* dV11, const T* dV12,
                              const T* dV13, const T* dV22, const T* dV23, const T* dV33, const T* tdpdTrho, const T* wh,
-                             Tm1* du, T* grad_P_x, T* grad_P_y, T* grad_P_z, T* dt, unsigned ng0, bool nrMode)
+                             Tm1* du, T* grad_P_x, T* grad_P_y, T* grad_P_z, T* dt, bool nrMode)
 {
     if constexpr (!AvClean) dV11 = dV12 = dV13 = dV22 = dV23 = dV33 = vx;
     const auto input =
         std::make_tuple(vx, vy, vz, m, c, kx, alpha, xm, prho, c11, c12, c13, c22, c23, c33, nc, dV11, dV12, dV13, dV22,
                         dV23, dV33, tdpdTrho ? tdpdTrho : vx /* pass random derefable array if tdpdTrho is null */);
-    const auto output    = std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt);
-    const T    etaCritNR = std::cbrt(T(1) / ballmassEta<T>(ng0));
+    const auto output = std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt);
     if (tdpdTrho)
     {
-        neighborhood.ijLoop(input, output,
-                            MomentumAndEnergyInteraction<AvClean, T>{wh, Atmin, Atmax, ramp, nrMode, etaCritNR},
+        neighborhood.ijLoop(input, output, MomentumAndEnergyInteraction<AvClean, T>{wh, Atmin, Atmax, ramp, nrMode},
                             MomentumAndEnergyPostambleWithDt<true, T, Tc>{K, Kcour});
     }
     else
     {
-        neighborhood.ijLoop(input, output,
-                            MomentumAndEnergyInteraction<AvClean, T>{wh, Atmin, Atmax, ramp, nrMode, etaCritNR},
+        neighborhood.ijLoop(input, output, MomentumAndEnergyInteraction<AvClean, T>{wh, Atmin, Atmax, ramp, nrMode},
                             MomentumAndEnergyPostambleWithDt<false, T, Tc>{K, Kcour});
     }
 }

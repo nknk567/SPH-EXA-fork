@@ -63,10 +63,12 @@ bool updateSmoothingLength(const GroupView& grp, Dataset& d, bool adjustH = true
     }
 }
 
+//! @brief @p ballmass non-null: flag guard-corrected particles for an NR target recompute, see updateHIterative
 template<class T, class Dataset>
-void updateSmoothingLengthIterative(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box)
+void updateSmoothingLengthIterative(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box,
+                                    typename Dataset::HydroType* ballmass = nullptr)
 {
-    if constexpr (d.useGpu) { updateSmoothingLengthIterativeGpu(groups, d, box); }
+    if constexpr (d.useGpu) { updateSmoothingLengthIterativeGpu(groups, d, box, ballmass); }
     else
     {
         const auto* x  = d.x.data();
@@ -77,7 +79,7 @@ void updateSmoothingLengthIterative(const cstone::GroupView& groups, Dataset& d,
 #pragma omp parallel for
         for (LocalIndex i = groups.firstBody; i < groups.lastBody; ++i)
         {
-            updateHIterative(d.ng0, d.ngmax, box, d.treeView, i, x, y, z, h, nc);
+            updateHIterative(d.ng0, d.ngmax, box, d.treeView, i, x, y, z, h, nc, ballmass);
         }
     }
 }

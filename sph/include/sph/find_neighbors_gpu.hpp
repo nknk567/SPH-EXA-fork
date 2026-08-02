@@ -16,7 +16,8 @@ extern bool updateSmoothingLengthGpu(const cstone::GroupView&, unsigned ng0, con
                                      bool adjustH);
 
 template<class T, class Dataset>
-extern void updateSmoothingLengthIterativeGpu(const cstone::GroupView&, Dataset& d, const cstone::Box<T>& box);
+extern void updateSmoothingLengthIterativeGpu(const cstone::GroupView&, Dataset& d, const cstone::Box<T>& box,
+                                              typename Dataset::HydroType* ballmass);
 
 template<class T, class Dataset>
 extern void updateSmoothingLengthIterativeNRGpu(const cstone::GroupView&, Dataset& d, const cstone::Box<T>& box,

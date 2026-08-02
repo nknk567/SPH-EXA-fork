@@ -262,6 +262,7 @@ public:
     FieldVector<HydroType> xm;                                 // Volume element definition
     FieldVector<HydroType> kx;                                 // Volume element normalization
     FieldVector<HydroType> gradh;                              // grad(h) term
+    FieldVector<HydroType> ballmass;                           // NR h-target rho * h^3 = ballmass, nominal ballmassEta(ng0) * m
     FieldVector<KeyType>   keys;                               // Particle space-filling-curve keys
     FieldVector<unsigned>  nc;                                 // number of neighbors of each particle
     FieldVector<HydroType> dV11, dV12, dV13, dV22, dV23, dV33; // Velocity gradient components
@@ -287,7 +288,7 @@ public:
         "p",     "prho", "tdpdTrho", "h",     "m",     "c",     "ugrav", "ax",   "ay", "az",   "du",
         "du_m1", "c11",  "c12",      "c13",   "c22",   "c23",   "c33",   "mue",  "mui", "temp", "cv",
         "xm",    "kx",   "divv",     "curlv", "alpha", "gradh", "keys",  "nc",   "dV11", "dV12", "dV13",
-        "dV22",  "dV23", "dV33",     "rung",  "id",    "dtCourant"};
+        "dV22",  "dV23", "dV33",     "rung",  "id",    "dtCourant", "ballmass"};
 
     //! @brief dataset prefix to be prepended to fieldNames for structured output
     static const inline std::string prefix{};
@@ -297,7 +298,7 @@ public:
      * These are zero-initialized with a warning instead of failing the restart; they are
      * recomputed on the first step after the restart.
      */
-    inline static constexpr std::array optionalRestartFields{"xm"};
+    inline static constexpr std::array optionalRestartFields{"xm", "ballmass"};
 
     /*! @brief return a tuple of field references
      *
@@ -307,7 +308,7 @@ public:
     {
         auto ret = std::tie(x, y, z, x_m1, y_m1, z_m1, vx, vy, vz, rho, u, p, prho, tdpdTrho, h, m, c, ugrav, ax, ay,
                             az, du, du_m1, c11, c12, c13, c22, c23, c33, mue, mui, temp, cv, xm, kx, divv, curlv, alpha,
-                            gradh, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant);
+                            gradh, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant, ballmass);
 
 #if defined(__clang__) || __GNUC__ > 11
         static_assert(std::tuple_size_v<decltype(ret)> == fieldNames.size());

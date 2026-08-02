@@ -199,8 +199,16 @@ template<class T, class Tc>
 struct VeNRPostamble
 {
     Tc K;
-    //! @brief coefficient of the fixed constraint target, ballmass_i = ballmassEta(ng0) * m_i
-    T etaBallmass;
+    /*! @brief per-particle constraint target, rho_i * h_i^3 = ballmass[i]
+     *
+     * Nominally ballmassEta(ng0) * m_i (see the propagator's fill). A non-positive entry is
+     * the recompute signal set by the neighbor-count guard (updateHIterative) after it had
+     * to move h, or the zero-fill of a restart from a checkpoint without the field: the
+     * target is then re-seeded to rho * h^3 at the corrected h (SPHYNX findneighbors.f90,
+     * ballmass = promro * h^3), so the correction sticks instead of being pulled back.
+     * Written only for the owned particle i of the postamble: race-free.
+     */
+    T* ballmass;
     //! @brief cumulative upward h cap per step, matching the neighbor-list capture extension
     T hExtFactor;
 
@@ -210,13 +218,19 @@ struct VeNRPostamble
         const auto [i, iPos, hi, xmassi, mi, h0i] = iData;
         auto [kxi, dkxi]                          = result;
 
-        const T ballmassi = etaBallmass * mi;
-
         auto hInv  = T(1) / hi;
         auto h3Inv = hInv * hInv * hInv;
 
         kxi *= K * h3Inv;
         T dkxdh = -K * h3Inv * hInv * dkxi;
+
+        T ballmassi = ballmass[i];
+        if (!(ballmassi > T(0)))
+        {
+            //! recompute signal: seed the target with the density at the current (corrected) h
+            ballmassi   = kxi * mi / xmassi / h3Inv;
+            ballmass[i] = ballmassi;
+        }
 
         // Newton-Raphson step for g(h) = ballmass / h^3 - rho(h), rho = kx * m / xm
         T g  = ballmassi * h3Inv - kxi * mi / xmassi;
@@ -262,16 +276,17 @@ struct VeNRPostamble
  *
  * The updated smoothing length is stored in @p hNew (may not alias h: h_j is read concurrently),
  * @p kx receives the volume element normalization evaluated at the old h. The constraint target
- * ballmassEta(ng0) * m_i depends only on the desired neighbor count and the particle mass.
+ * is the per-particle @p ballmass field, nominally ballmassEta(ng0) * m_i; non-positive entries
+ * are recompute signals resolved (and written back) by the postamble, see VeNRPostamble.
  * @p h0 is the smoothing length at the start of the step's NR iterations; the cumulative upward
  * movement is capped at hExtFactor * h0 to stay within the extended neighbor list.
  */
 template<class Neighbordhood, class Tc, class T, class Tm>
-void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, unsigned ng0, float hExtFactor, const T* xm, const Tm* m,
-                const T* h0, const T* wh, const T* whd, T* kx, T* hNew)
+void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, float hExtFactor, const T* xm, const Tm* m, const T* h0,
+                T* ballmass, const T* wh, const T* whd, T* kx, T* hNew)
 {
     neighborhood.ijLoop(std::make_tuple(xm, m, h0), std::make_tuple(kx, hNew), VeNRInteraction<T>{wh, whd},
-                        VeNRPostamble<T, Tc>{K, ballmassEta<T>(ng0), T(hExtFactor)});
+                        VeNRPostamble<T, Tc>{K, ballmass, T(hExtFactor)});
 }
 
 /*! @brief one Newton-Raphson smoothing-length update for a single particle by direct octree traversal
@@ -289,7 +304,7 @@ void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, unsigned ng0, float hEx
  * @return the updated smoothing length of particle @p i (not committed)
  */
 template<class Tc, class T, class Tm, class KeyType>
-HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T etaBallmass, T hExtFactor,
+HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T* ballmass, T hExtFactor,
                                       const cstone::OctreeNsView<Tc, KeyType>& tree, const cstone::Box<Tc>& box,
                                       const Tc* x, const Tc* y, const Tc* z, const T* xm, const Tm* m,
                                       const T* h0, const T* wh, const T* whd)
@@ -352,7 +367,7 @@ HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T etaBal
     if (usePbc) { cstone::singleTraversal(tree.childOffsets, tree.parents, overlapsPbc, searchBoxPbc); }
     else { cstone::singleTraversal(tree.childOffsets, tree.parents, overlaps, searchBox); }
 
-    auto [kxi, hNew] = VeNRPostamble<T, Tc>{K, etaBallmass, hExtFactor}(iData, std::make_tuple(kxsum, dkxsum));
+    auto [kxi, hNew] = VeNRPostamble<T, Tc>{K, ballmass, hExtFactor}(iData, std::make_tuple(kxsum, dkxsum));
     return hNew;
 }
 

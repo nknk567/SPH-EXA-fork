@@ -80,12 +80,35 @@ void setVolumeElements(const GroupView& grp, Dataset& d, const Tv* volstd, float
     }
 }
 
-/*! @brief one Newton-Raphson iteration for the smoothing length constraint rho * h^3 = eta * m
+/*! @brief fill the NR constraint target with its nominal value ballmassEta(ng0) * m
+ *
+ * Every step when the per-particle ballmass mode is off (fixed global target, legacy behavior),
+ * only on the first step of a fresh run when it is on (afterwards the field is frozen and only
+ * rewritten through the recompute signal of the neighbor-count guard, see VeNRPostamble).
+ */
+template<class Dataset>
+void fillNominalBallmass(const GroupView& grp, Dataset& d)
+{
+    if constexpr (d.useGpu) { gpu::fillNominalBallmass(grp, d); }
+    else
+    {
+        using Th       = std::decay_t<decltype(d.ballmass[0])>;
+        auto*       bm = d.ballmass.data();
+        const auto* m  = d.m.data();
+#pragma omp parallel for schedule(static)
+        for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
+        {
+            bm[i] = ballmassEta<Th>(d.ng0) * Th(m[i]);
+        }
+    }
+}
+
+/*! @brief one Newton-Raphson iteration for the smoothing length constraint rho * h^3 = ballmass
  *
  * Iterates over the fixed neighbor list with fixed volume elements xm and updates h of locally
  * owned particles in place. Uses the ay field as scratch space for the updated smoothing length
  * and the az field for the relative h change per particle (consumed by computeVeNRTail).
- * The constraint target eta = ballmassEta(ng0) depends only on the desired neighbor count.
+ * The constraint target is the per-particle ballmass field, nominally ballmassEta(ng0) * m.
  * @p h0 holds the smoothing lengths at the start of the step's NR iterations (filled here when
  * @p firstIteration is set); the cumulative upward h movement is capped at hNRExtFactor * h0 so
  * that the neighbor lists built before the iterations remain complete for the final h.
@@ -101,8 +124,8 @@ NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>&
     else
     {
         if (firstIteration) { std::copy(d.h.data(), d.h.data() + d.x.size(), h0); }
-        veNRIjLoop(d.neighborhood, d.K, d.ng0, hExtFactor, d.xm.data(), d.m.data(), h0, d.wh.data(), d.whd.data(),
-                   d.kx.data(), d.ay.data());
+        veNRIjLoop(d.neighborhood, d.K, hExtFactor, d.xm.data(), d.m.data(), h0, d.ballmass.data(), d.wh.data(),
+                   d.whd.data(), d.kx.data(), d.ay.data());
 
         using Th               = std::decay_t<decltype(d.h[0])>;
         const Th* hNew         = d.ay.data();
@@ -200,7 +223,7 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
                 unsigned           kConv = maxPasses + 1;
                 for (unsigned it = 1; it <= maxPasses; ++it)
                 {
-                    Th hNew = veNRTraversalUpdate(i, hi, d.K, ballmassEta<Th>(d.ng0), Th(hExtFactor), d.treeView,
+                    Th hNew = veNRTraversalUpdate(i, hi, d.K, d.ballmass.data(), Th(hExtFactor), d.treeView,
                                                   box, d.x.data(), d.y.data(), d.z.data(), d.xm.data(), d.m.data(),
                                                   h0, d.wh.data(), d.whd.data());
                     tailCapUp += hNew == Th(1.1) * hi;

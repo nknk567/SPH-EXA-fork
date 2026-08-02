@@ -37,6 +37,10 @@ void computeDensity(const GroupView&, Dataset& d, const cstone::Box<typename Dat
 template<class Dataset>
 extern void computeVe(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
+//! @brief fill the NR constraint target with its nominal value ballmassEta(ng0) * m
+template<class Dataset>
+extern void fillNominalBallmass(const GroupView&, Dataset& d);
+
 //! @brief one NR pass; returns the unconverged count and per-iteration clamp hits
 template<class Dataset, class Tv>
 extern NRPassStats computeVeNR(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* h0,

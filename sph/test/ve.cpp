@@ -311,9 +311,9 @@ momentumAndEnergyJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box, c
                        const T Atmin, const T Atmax, const T ramp, const T* wh, const T* kx, const T* xm,
                        const T* alpha, const T* dV11, const T* dV12, const T* dV13, const T* dV22, const T* dV23,
                        const T* dV33, T* grad_P_x, T* grad_P_y, T* grad_P_z, Tm1* du, T* maxvsignal,
-                       bool nrMode = false, T etaCritNR = 0)
+                       bool nrMode = false)
 {
-    MomentumAndEnergyInteraction<avClean, T> interaction{wh, Atmin, Atmax, ramp, nrMode, etaCritNR};
+    MomentumAndEnergyInteraction<avClean, T> interaction{wh, Atmin, Atmax, ramp, nrMode};
 
     if constexpr (!avClean) dV11 = dV12 = dV13 = dV22 = dV23 = dV33 = vx;
     const auto input =
@@ -410,10 +410,10 @@ TEST_F(SphKernelTests, MomentumEnergy)
     }
 }
 
-/*! @brief with NR-iterated h, the avClean eta_crit is the constant implied by rho * h^3 = ballmassEta(ng0) * m,
- * not a function of the live neighbor count (a stale capacity guard in NR mode, and a pairwise-asymmetric
- * input that breaks the antisymmetry of the AV force). The forces must therefore be invariant under any
- * change of nc > 1.
+/*! @brief with NR-iterated h, the avClean eta_crit is derived from the converged density state,
+ * eta_crit = max_ab (xm / (kx * h^3))^(1/3), not from the live neighbor count (a stale capacity
+ * guard in NR mode, and a pairwise-asymmetric input that breaks the antisymmetry of the AV force).
+ * The forces must therefore be invariant under any change of nc > 1.
  */
 TEST_F(SphKernelTests, MomentumEnergyAvCleanNRIndependentOfNc)
 {
@@ -421,9 +421,6 @@ TEST_F(SphKernelTests, MomentumEnergyAvCleanNRIndependentOfNc)
     symmetrizeGradV<T>({dvxdx.data(), dvxdy.data(), dvxdz.data(), dvydx.data(), dvydy.data(), dvydz.data(),
                         dvzdx.data(), dvzdy.data(), dvzdz.data()},
                        {dV11.data(), dV12.data(), dV13.data(), dV22.data(), dV23.data(), dV33.data()}, npart);
-
-    const unsigned ng0       = 100;
-    const T        etaCritNR = std::cbrt(T(1) / ballmassEta<T>(ng0));
 
     auto run = [&](unsigned nc0, bool nrMode)
     {
@@ -435,7 +432,7 @@ TEST_F(SphKernelTests, MomentumEnergyAvCleanNRIndependentOfNc)
                                      (const T*)nullptr, c.data(), c11.data(), c12.data(), c13.data(), c22.data(),
                                      c23.data(), c33.data(), Atmin, Atmax, ramp, wh.data(), kx.data(), xm.data(),
                                      alpha.data(), dV11.data(), dV12.data(), dV13.data(), dV22.data(), dV23.data(),
-                                     dV33.data(), &r[0], &r[1], &r[2], &r[3], &r[4], nrMode, etaCritNR);
+                                     dV33.data(), &r[0], &r[1], &r[2], &r[3], &r[4], nrMode);
         return r;
     };
 
@@ -548,10 +545,10 @@ template<size_t stride = 1, class Tc, class T, class Tm>
 HOST_DEVICE_FUN inline std::tuple<T, T> veNRJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box,
                                                   const cstone::LocalIndex* neighbors, unsigned neighborsCount,
                                                   const Tc* x, const Tc* y, const Tc* z, const T* h, const T* xm,
-                                                  const Tm* m, T etaBallmass, const T* wh, const T* whd)
+                                                  const Tm* m, T* ballmass, const T* wh, const T* whd)
 {
     VeNRInteraction<T>   interaction{wh, whd};
-    VeNRPostamble<T, Tc> postamble{K, etaBallmass, T(hNRExtFactor)};
+    VeNRPostamble<T, Tc> postamble{K, ballmass, T(hNRExtFactor)};
 
     // each call passes the current h as the step-start h0, i.e. the upward cap acts per call
     const auto input = std::make_tuple(xm, m, h);
@@ -586,12 +583,14 @@ HOST_DEVICE_FUN inline std::tuple<T, T> veNRJLoop(cstone::LocalIndex i, Tc K, co
 TEST_F(SphKernelTests, VeSmoothingLengthNewtonRaphson)
 {
     cstone::LocalIndex i   = 0;
-    T                  eta = 0;
+    T                  eta = 1;
+    std::vector<T>     ballmass(x.size(), T(1));
 
     auto callNR = [&]()
     {
+        ballmass[i] = eta * m[i];
         return veNRJLoop(i, K, box(), neighbors.data(), neighborsCount, x.data(), y.data(), z.data(), h.data(),
-                         xm.data(), m.data(), eta, wh.data(), whd.data());
+                         xm.data(), m.data(), ballmass.data(), wh.data(), whd.data());
     };
 
     // the kx output does not depend on the ballmass target and matches the plain Ve kernel
@@ -631,12 +630,47 @@ TEST_F(SphKernelTests, VeSmoothingLengthNewtonRaphson)
     h[i] = h0;
 }
 
+/*! @brief a non-positive ballmass is the recompute signal set by the neighbor-count guard:
+ * the NR pass re-seeds it to rho * h^3 at the current (corrected) h, the residual becomes zero
+ * and h stays put instead of being pulled back to a stale target. Positive targets are frozen.
+ */
+TEST_F(SphKernelTests, VeNRBallmassRecomputeSignal)
+{
+    cstone::LocalIndex i = 0;
+    std::vector<T>     ballmass(x.size(), T(1));
+
+    auto callNR = [&]()
+    {
+        return veNRJLoop(i, K, box(), neighbors.data(), neighborsCount, x.data(), y.data(), z.data(), h.data(),
+                         xm.data(), m.data(), ballmass.data(), wh.data(), whd.data());
+    };
+
+    for (T sentinel : {T(0), T(-2.5)})
+    {
+        ballmass[i]      = sentinel;
+        auto [kxi, hNew] = callNR();
+
+        // re-seeded to rho * h^3 with the density summed at the current h
+        T rhoi = kxi * m[i] / xm[i];
+        T hi   = h[i];
+        EXPECT_NEAR(ballmass[i], rhoi * hi * hi * hi, 1e-10 * ballmass[i]);
+        // the re-seeded constraint is satisfied: the Newton step leaves h at the corrected value
+        EXPECT_NEAR(hNew, hi, 1e-10 * hi);
+    }
+
+    // a positive target is never rewritten
+    ballmass[i] = T(3.14);
+    callNR();
+    EXPECT_EQ(ballmass[i], T(3.14));
+}
+
 //! @brief the NR-mode grad-h term must be the derivative of the density that the NR iteration converges
 TEST_F(SphKernelTests, VeNRGradhConsistency)
 {
     cstone::LocalIndex    i = 0;
     std::vector<unsigned> nc(x.size(), neighborsCount + 1);
     std::vector<T>        iad(6);
+    std::vector<T>        ballmass(x.size(), T(1));
 
     // rho(h_i) with fixed volume elements xm, evaluated through the NR kernel sums (includes self)
     auto rhoOf = [&](T hi)
@@ -644,7 +678,7 @@ TEST_F(SphKernelTests, VeNRGradhConsistency)
         T hSave = h[i];
         h[i]    = hi;
         T kxi   = std::get<0>(veNRJLoop(i, K, box(), neighbors.data(), neighborsCount, x.data(), y.data(), z.data(),
-                                        h.data(), xm.data(), m.data(), T(1), wh.data(), whd.data()));
+                                        h.data(), xm.data(), m.data(), ballmass.data(), wh.data(), whd.data()));
         h[i]    = hSave;
         return kxi * m[i] / xm[i];
     };
