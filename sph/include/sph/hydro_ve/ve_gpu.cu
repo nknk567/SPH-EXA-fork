@@ -337,6 +337,23 @@ size_t countNonFiniteGpu(const T* f, size_t first, size_t last)
 template size_t countNonFiniteGpu(const float*, size_t, size_t);
 template size_t countNonFiniteGpu(const double*, size_t, size_t);
 
+template<class T>
+struct Negative
+{
+    HOST_DEVICE_FUN size_t operator()(T v) const { return v < T(0); }
+};
+
+template<class T>
+size_t countNegativeGpu(const T* f, size_t first, size_t last)
+{
+    if (last <= first) { return 0; }
+    return thrust::transform_reduce(thrust::device, f + first, f + last, Negative<T>{}, size_t(0),
+                                    thrust::plus<size_t>{});
+}
+
+template size_t countNegativeGpu(const float*, size_t, size_t);
+template size_t countNegativeGpu(const double*, size_t, size_t);
+
 
 } // namespace gpu
 } // namespace sph

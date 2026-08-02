@@ -393,6 +393,12 @@ protected:
     {
         auto& d = simData.hydro;
 
+        //! guard-flagged targets (negative sentinels) are consumed by the first NR pass: count them now
+        size_t numBallmassAdjusted =
+            nrParams_.particleBallmass
+                ? ballmassAdjustedCount(d, groups_.view().firstBody, groups_.view().lastBody)
+                : 0;
+
         reallocateDestructive(volstd_, d.x.size(), d.getAllocGrowthRate());
         unsigned            nrIterations = 0;
         std::vector<size_t> nrUnconverged;
@@ -423,7 +429,8 @@ protected:
         }
         timer.logStatistics("hNRIterations", nrIterations);
         if (Base::rank_ == 0) { std::cout << "# hNRIterations: " << nrIterations << std::endl; }
-        printNRUnconverged(nrUnconverged, nrParams_.hNRIterMax); // NR convergence diagnostic, safe to comment out
+        // NR convergence diagnostic, safe to comment out
+        printNRUnconverged(nrUnconverged, nrParams_.hNRIterMax, numBallmassAdjusted);
         //! cap statistics, safe to comment out; volstd_ still holds the step-start h here
 //        printNRCapped(capIterUp, capIterDown,
 //                      countHWallPinned(groups_.view(), d, cstone::rawPtr(volstd_), nrParams_.hNRExtFactor));
@@ -505,28 +512,33 @@ protected:
      *
      * One line per step, e.g. '# hNRUnconverged: 7241511 2833900 9841 312 0': entry k is the
      * global number of particles whose relative h change in NR pass k+1 was still >= hNRTol;
-     * the switch to the tail iterations is visible as the last percent-scale entry. Costs one
+     * the switch to the tail iterations is visible as the last percent-scale entry. With
+     * particleBallmass = 1 the line gains a labeled suffix 'ballmassAdjusted: N', the global
+     * number of particles whose constraint target was flagged for a recompute by the
+     * neighbor-count guard this step (the count rides along in the same Allreduce). Costs one
      * small Allreduce after the iterations finished (the NR loop itself stays
      * communication-free per rank; ranks that stopped early contribute zeros). The call site
      * is a single line, safe to comment out.
      */
-    void printNRUnconverged(const std::vector<size_t>& counts, unsigned hNRIterMax)
+    void printNRUnconverged(const std::vector<size_t>& counts, unsigned hNRIterMax, size_t numBallmassAdjusted)
     {
-        std::vector<unsigned long long> c(hNRIterMax, 0), cOut(hNRIterMax, 0);
+        std::vector<unsigned long long> c(hNRIterMax + 1, 0), cOut(hNRIterMax + 1, 0);
         std::copy(counts.begin(), counts.end(), c.begin());
-        MPI_Allreduce(c.data(), cOut.data(), int(hNRIterMax), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        c[hNRIterMax] = numBallmassAdjusted;
+        MPI_Allreduce(c.data(), cOut.data(), int(hNRIterMax + 1), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if (Base::rank_ != 0) { return; }
         //! print up to the last nonzero entry plus the trailing converged zero
-        size_t numEntries = 1;
-        for (size_t k = 0; k < cOut.size(); ++k)
+        size_t numEntries = hNRIterMax == 0 ? 0 : 1;
+        for (size_t k = 0; k < size_t(hNRIterMax); ++k)
         {
-            if (cOut[k] > 0) { numEntries = std::min(k + 2, cOut.size()); }
+            if (cOut[k] > 0) { numEntries = std::min(k + 2, size_t(hNRIterMax)); }
         }
         std::cout << "# hNRUnconverged:";
         for (size_t k = 0; k < numEntries; ++k)
         {
             std::cout << " " << cOut[k];
         }
+        if (nrParams_.particleBallmass) { std::cout << "  ballmassAdjusted: " << cOut[hNRIterMax]; }
         std::cout << std::endl;
     }
 
@@ -536,6 +548,27 @@ protected:
      * with a nonzero count names the stage that produces NaN/inf. Call sites are single lines,
      * safe to comment out.
      */
+    //! @brief number of locally owned particles whose ballmass carries the guard's recompute sentinel
+    size_t ballmassAdjustedCount(typename DataType::HydroData& d, size_t first, size_t last)
+    {
+        const auto& field = get<"ballmass">(d);
+        if constexpr (cstone::execution::HaveGpu<Acc>{})
+        {
+            return sph::gpu::countNegativeGpu(rawPtr(field), first, last);
+        }
+        else
+        {
+            size_t      n = 0;
+            const auto* p = field.data();
+#pragma omp parallel for reduction(+ : n)
+            for (size_t i = first; i < last; ++i)
+            {
+                n += p[i] < 0;
+            }
+            return n;
+        }
+    }
+
     template<class FieldVector>
     unsigned long long nonFiniteCount(const FieldVector& field, size_t first, size_t last)
     {
