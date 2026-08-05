@@ -166,7 +166,11 @@ void volstdIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const T*
  * Computes the sums needed to solve rho_i(h_i) * h_i^3 = ballmass_i for h_i with the generalized
  * volume elements xm_j held fixed, following SPHYNX (calculate_density.f90/calculate_hNR.f90).
  * Both sums depend only on h_i and xm_j, i.e. iterating requires neither neighbor-list rebuilds
- * nor halo exchanges.
+ * nor halo exchanges. The neighbor count inside the live support 2h rides along as a third sum
+ * (self included, matching the 1 + findNeighbors convention of the neighbor-count guard); it is
+ * carried as the arithmetic type T so that the result tuple stays uniform (GPU warp-reduction
+ * fast path). On the symmetric GPU j-side the interaction is re-evaluated with swapped roles, so
+ * the predicate counts against h_j there automatically.
  */
 template<class T>
 struct VeNRInteraction
@@ -190,8 +194,10 @@ struct VeNRInteraction
         T kxi = w * xmassj;
         //! contribution to dkx_i/dh_i, missing factor -K/h^4 is applied in the postamble
         T dkxi = (T(3) * w + vloc * dw) * xmassj;
+        //! symmetric pairs are processed out to 2 * max(h_i, h_j): count only inside own support
+        T cnti = T(r2 < T(4) * hi * hi);
 
-        return std::make_tuple(kxi, dkxi);
+        return std::make_tuple(kxi, dkxi, cnti);
     }
 };
 
@@ -202,21 +208,40 @@ struct VeNRPostamble
     /*! @brief per-particle constraint target, rho_i * h_i^3 = ballmass[i]
      *
      * Nominally ballmassEta(ng0) * m_i (see the propagator's fill). A non-positive entry is
-     * the recompute signal set by the neighbor-count guard (updateHIterative) after it had
-     * to move h, or the zero-fill of a restart from a checkpoint without the field: the
-     * target is then re-seeded to rho * h^3 at the corrected h (SPHYNX findneighbors.f90,
-     * ballmass = promro * h^3), so the correction sticks instead of being pulled back.
+     * the recompute signal: set by the neighbor-count band check below when a converging point
+     * fell outside the band, or the zero-fill of a restart from a checkpoint without the field.
+     * The target is then re-seeded to rho * h^3 at the current h (SPHYNX findneighbors.f90,
+     * ballmass = promro * h^3). The signal is durable across steps: a zero left over when the
+     * step's iterations end is consumed by the unconditional full sweep of the next step's
+     * first NR pass, at that step's post-guard h; nothing outside the NR passes reads the field.
      * Written only for the owned particle i of the postamble: race-free.
      */
     T* ballmass;
     //! @brief cumulative upward h cap per step, matching the neighbor-list capture extension
     T hExtFactor;
+    //! @brief relative h change below which the iteration counts as converged (hNRTol)
+    T tol;
+    /*! @brief neighbor-count band for the convergence check, [bandMin, bandMax]
+     *
+     * When a particle converges (relative h change < tol) but its neighbor count at the
+     * converging point lies outside the band, h is reset to the step-start value h0 (the
+     * neighbor-count guard's output, in band by construction) and the target is flagged for
+     * a re-seed there (ballmass = 0). Wall-pinned particles sit at the cumulative caps with
+     * a zero h change, so they are checked at the wall: by monotonicity of the count along
+     * the remaining travel direction, an out-of-band wall count implies an out-of-band root.
+     * In-band wall-pinned particles are left alone — they are legitimately migrating to a
+     * new h over several steps at the per-step rate the caps allow. The check is skipped on
+     * the pass that consumes a recompute signal (the target was not positive on entry), so
+     * the decision is made at most once per step even where h0's own count is out of band.
+     * Disabled band (bandMin = 0, bandMax = huge): plain NR without the check.
+     */
+    T bandMin, bandMax;
 
     template<class ParticleData, class Result>
     constexpr auto operator()(const ParticleData& iData, const Result& result) const
     {
         const auto [i, iPos, hi, xmassi, mi, h0i] = iData;
-        auto [kxi, dkxi]                          = result;
+        auto [kxi, dkxi, cnti]                    = result;
 
         auto hInv  = T(1) / hi;
         auto h3Inv = hInv * hInv * hInv;
@@ -224,10 +249,11 @@ struct VeNRPostamble
         kxi *= K * h3Inv;
         T dkxdh = -K * h3Inv * hInv * dkxi;
 
-        T ballmassi = ballmass[i];
-        if (!(ballmassi > T(0)))
+        T          ballmassi         = ballmass[i];
+        const bool targetWasPositive = ballmassi > T(0);
+        if (!targetWasPositive)
         {
-            //! recompute signal: seed the target with the density at the current (corrected) h
+            //! recompute signal: seed the target with the density at the current h
             ballmassi   = kxi * mi / xmassi / h3Inv;
             ballmass[i] = ballmassi;
         }
@@ -268,25 +294,36 @@ struct VeNRPostamble
          * approach to the root to a factor 2 per step, mirroring the upward cap. */
         hNew = stl::max(hNew, T(0.5) * h0i);
 
-        return std::make_tuple(kxi, hNew);
+        /* Neighbor-count band check at the converging point, see the bandMin/bandMax doc.
+         * Gated on convergence, so cnti (summed at hi ~ hNew) is the count at the converging
+         * point; a reset makes the particle unconverged when h0 is more than tol away, so a
+         * following pass or tail iteration re-seeds the target at h0 within this step. */
+        if (targetWasPositive && std::abs(hNew - hi) < tol * hi && (cnti < bandMin || cnti - T(1) > bandMax))
+        {
+            hNew        = h0i;
+            ballmass[i] = T(0);
+        }
+
+        return std::make_tuple(kxi, hNew, cnti);
     }
 };
 
 /*! @brief one Newton-Raphson iteration of the smoothing length
  *
  * The updated smoothing length is stored in @p hNew (may not alias h: h_j is read concurrently),
- * @p kx receives the volume element normalization evaluated at the old h. The constraint target
- * is the per-particle @p ballmass field, nominally ballmassEta(ng0) * m_i; non-positive entries
- * are recompute signals resolved (and written back) by the postamble, see VeNRPostamble.
+ * @p kx receives the volume element normalization evaluated at the old h, @p cnt the neighbor
+ * count inside 2h (self included) that the convergence-point band check tested. The constraint
+ * target is the per-particle @p ballmass field, nominally ballmassEta(ng0) * m_i; non-positive
+ * entries are recompute signals resolved (and written back) by the postamble, see VeNRPostamble.
  * @p h0 is the smoothing length at the start of the step's NR iterations; the cumulative upward
  * movement is capped at hExtFactor * h0 to stay within the extended neighbor list.
  */
 template<class Neighbordhood, class Tc, class T, class Tm>
-void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, float hExtFactor, const T* xm, const Tm* m, const T* h0,
-                T* ballmass, const T* wh, const T* whd, T* kx, T* hNew)
+void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, float hExtFactor, float tol, float bandMin, float bandMax,
+                const T* xm, const Tm* m, const T* h0, T* ballmass, const T* wh, const T* whd, T* kx, T* hNew, T* cnt)
 {
-    neighborhood.ijLoop(std::make_tuple(xm, m, h0), std::make_tuple(kx, hNew), VeNRInteraction<T>{wh, whd},
-                        VeNRPostamble<T, Tc>{K, ballmass, T(hExtFactor)});
+    neighborhood.ijLoop(std::make_tuple(xm, m, h0), std::make_tuple(kx, hNew, cnt), VeNRInteraction<T>{wh, whd},
+                        VeNRPostamble<T, Tc>{K, ballmass, T(hExtFactor), T(tol), T(bandMin), T(bandMax)});
 }
 
 /*! @brief one Newton-Raphson smoothing-length update for a single particle by direct octree traversal
@@ -301,20 +338,21 @@ void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, float hExtFactor, const
  * elements xm_j — neither h_j nor any intermediate state of the neighbors — so iterating an
  * arbitrary subset of particles, each freely running to its own convergence, is exact.
  *
- * @return the updated smoothing length of particle @p i (not committed)
+ * @return the updated smoothing length of particle @p i (not committed); @p cnt[i] receives the
+ *         neighbor count inside 2h (self included) that the convergence-point band check tested
  */
 template<class Tc, class T, class Tm, class KeyType>
-HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T* ballmass, T hExtFactor,
-                                      const cstone::OctreeNsView<Tc, KeyType>& tree, const cstone::Box<Tc>& box,
-                                      const Tc* x, const Tc* y, const Tc* z, const T* xm, const Tm* m,
-                                      const T* h0, const T* wh, const T* whd)
+HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T* ballmass, T hExtFactor, T tol, T bandMin,
+                                      T bandMax, const cstone::OctreeNsView<Tc, KeyType>& tree,
+                                      const cstone::Box<Tc>& box, const Tc* x, const Tc* y, const Tc* z, const T* xm,
+                                      const Tm* m, const T* h0, const T* wh, const T* whd, T* cnt)
 {
     const cstone::Vec3<Tc> particle{x[i], y[i], z[i]};
     const auto             iData = std::make_tuple(i, particle, hi, xm[i], m[i], h0[i]);
 
     VeNRInteraction<T> interaction{wh, whd};
     //! self contribution; the leaf sweep below skips i == j
-    auto [kxsum, dkxsum] = interaction(iData, iData, cstone::Vec3<Tc>{0, 0, 0}, T(0));
+    auto [kxsum, dkxsum, cntsum] = interaction(iData, iData, cstone::Vec3<Tc>{0, 0, 0}, T(0));
 
     const Tc radiusSq     = Tc(4.0) * Tc(hi) * Tc(hi);
     const Tc cellRadiusSq = radiusSq * tree.searchExtFactor * tree.searchExtFactor;
@@ -338,10 +376,11 @@ HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T* ballm
     //! h_j in jData is a placeholder: the interaction does not use it (gather in h_i only)
     auto sumBody = [&](cstone::LocalIndex j, Tc d2)
     {
-        const auto jData   = std::make_tuple(j, cstone::Vec3<Tc>{x[j], y[j], z[j]}, T(0), xm[j], m[j], h0[j]);
-        auto [kxc, dkxc]   = interaction(iData, jData, cstone::Vec3<Tc>{0, 0, 0}, T(d2));
+        const auto jData       = std::make_tuple(j, cstone::Vec3<Tc>{x[j], y[j], z[j]}, T(0), xm[j], m[j], h0[j]);
+        auto [kxc, dkxc, cntc] = interaction(iData, jData, cstone::Vec3<Tc>{0, 0, 0}, T(d2));
         kxsum += kxc;
         dkxsum += dkxc;
+        cntsum += cntc;
     };
     auto searchBoxPbc = [&](cstone::TreeNodeIndex idx)
     {
@@ -367,7 +406,9 @@ HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T* ballm
     if (usePbc) { cstone::singleTraversal(tree.childOffsets, tree.parents, overlapsPbc, searchBoxPbc); }
     else { cstone::singleTraversal(tree.childOffsets, tree.parents, overlaps, searchBox); }
 
-    auto [kxi, hNew] = VeNRPostamble<T, Tc>{K, ballmass, hExtFactor}(iData, std::make_tuple(kxsum, dkxsum));
+    auto [kxi, hNew, cnti] = VeNRPostamble<T, Tc>{K, ballmass, hExtFactor, tol, bandMin, bandMax}(
+        iData, std::make_tuple(kxsum, dkxsum, cntsum));
+    cnt[i] = cnti;
     return hNew;
 }
 

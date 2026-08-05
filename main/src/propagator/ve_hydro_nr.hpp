@@ -7,6 +7,7 @@
 #pragma once
 
 #include <filesystem>
+#include <limits>
 
 #include "io/arg_parser.hpp"
 #include "ve_hydro.hpp"
@@ -106,11 +107,12 @@ protected:
         /*! @brief NR constraint target source: 0 = fixed nominal target, 1 = per-particle target
          *
          * 0: ballmass is refilled with ballmassEta(ng0) * m every step — the fixed global
-         * constraint (legacy behavior). 1 (SPHYNX findneighbors.f90): the per-particle field is
-         * frozen between steps; whenever the neighbor-count guard has to correct h (extremely
-         * few or too many neighbors), the particle's target is re-seeded to rho * h^3 at the
-         * corrected h in the first NR iteration, so the correction sticks instead of the NR
-         * pull-back re-creating the undersampled state and its spurious interactions.
+         * constraint (legacy behavior). 1 (after SPHYNX findneighbors.f90): the per-particle
+         * field is frozen between steps and only rebased when the NR CONVERGING POINT has a
+         * neighbor count outside the guard band [ng0/4, ngmax]: h is then reset to the
+         * neighbor-count guard's (in-band) output and the target re-seeded to rho * h^3 there,
+         * so out-of-band roots are eliminated while transient guard corrections — whose root
+         * was fine all along — leave the target untouched. See the band check in VeNRPostamble.
          */
         unsigned particleBallmass{0};
 
@@ -260,7 +262,6 @@ public:
         pmReader.start();
         sync(domain, simData);
         timer.step("domain::sync");
-        //zeroKeys();
 
         Base::logDomainStats(domain, simData);
 
@@ -278,14 +279,14 @@ public:
         timer.step("computeGroups");
         /* The NR constraint target: nominal ballmassEta(ng0) * m every step in the fixed-target
          * mode; in the per-particle mode only seeded on the first step of a fresh run and frozen
-         * afterwards (restarts from checkpoints without the field are zero-filled, which the NR
-         * postamble treats as the recompute signal and re-seeds from rho * h^3 — the SPHYNX
-         * warm-up equivalent). */
+         * afterwards. Non-positive entries (restarts from checkpoints without the field are
+         * zero-filled — the SPHYNX warm-up equivalent — and the convergence-point band check
+         * leaves zeros for the resets of the previous step's final pass) are recompute signals
+         * consumed by the first NR pass, which re-seeds them from rho * h^3 at the current h. */
         if (nrParams_.particleBallmass == 0 || d.iteration == 1) { fillNominalBallmass(groups_.view(), d); }
-        /* With per-particle targets, the guard flags every h correction for a target recompute
-         * in the first NR iteration (negative ballmass sentinel, see updateHIterative). */
-        updateSmoothingLengthIterative(groups_.view(), d, domain.box(),
-                                       nrParams_.particleBallmass ? cstone::rawPtr(get<"ballmass">(d)) : nullptr);
+        /* Neighbor-count guard: pulls h into the band; whether a correction sticks (target
+         * rebase) is decided at the NR converging point, see the band check in VeNRPostamble. */
+        updateSmoothingLengthIterative(groups_.view(), d, domain.box());
         timer.step("updateSmoothingLengthIterative");
         findNeighborsSfc(groups_.view(), d, domain.box());
         timer.step("FindNeighbors");
@@ -397,11 +398,12 @@ protected:
     {
         auto& d = simData.hydro;
 
-        //! guard-flagged targets (negative sentinels) are consumed by the first NR pass: count them now
-        size_t numBallmassAdjusted =
-            nrParams_.particleBallmass
-                ? ballmassAdjustedCount(d, groups_.view().firstBody, groups_.view().lastBody)
-                : 0;
+        /* Neighbor-count band of the convergence-point check (see VeNRPostamble): matches the
+         * guard band of updateHIterative. Disabled (never fires) in the fixed-target mode. */
+        const float bandMin = nrParams_.particleBallmass ? float(d.ng0 / 4) : 0.0f;
+        const float bandMax = nrParams_.particleBallmass ? float(d.ngmax) : std::numeric_limits<float>::max();
+        //! targets rebased this step because the NR converging point was outside the band
+        size_t numBallmassAdjusted = 0;
 
         reallocateDestructive(volstd_, d.x.size(), d.getAllocGrowthRate());
         unsigned            nrIterations = 0;
@@ -410,12 +412,13 @@ protected:
         while (nrIterations < nrParams_.hNRIterMax)
         {
             ++nrIterations;
-            NRPassStats stats =
-                computeVeNR(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
-                            /*firstIteration*/ nrIterations == 1, nrParams_.hNRTol, nrParams_.hNRExtFactor);
+            NRPassStats stats = computeVeNR(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
+                                            /*firstIteration*/ nrIterations == 1, nrParams_.hNRTol,
+                                            nrParams_.hNRExtFactor, bandMin, bandMax);
             nrUnconverged.push_back(stats.numUnconverged);
             capIterUp += stats.numCapUp;
             capIterDown += stats.numCapDown;
+            numBallmassAdjusted += stats.numReset;
             if (stats.numUnconverged == 0) { break; }
             /* Measured (TDE debris): ~98% of the particles converge within two passes; the
              * rest is a vacuum-edge residual that holds the global chain at 5-9 iterations.
@@ -424,10 +427,10 @@ protected:
              * octree-traversal updates instead (exact, see computeVeNRTail). */
             if (stats.numUnconverged * 100 < groups_.view().lastBody - groups_.view().firstBody)
             {
-                nrIterations +=
-                    computeVeNRTail(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
-                                    nrParams_.hNRIterMax - nrIterations, nrUnconverged, nrParams_.hNRTol,
-                                    nrParams_.hNRExtFactor, capIterUp, capIterDown);
+                nrIterations += computeVeNRTail(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
+                                                nrParams_.hNRIterMax - nrIterations, nrUnconverged, nrParams_.hNRTol,
+                                                nrParams_.hNRExtFactor, bandMin, bandMax, capIterUp, capIterDown,
+                                                numBallmassAdjusted);
                 break;
             }
         }
@@ -518,11 +521,12 @@ protected:
      * global number of particles whose relative h change in NR pass k+1 was still >= hNRTol;
      * the switch to the tail iterations is visible as the last percent-scale entry. With
      * particleBallmass = 1 the line gains a labeled suffix 'ballmassAdjusted: N', the global
-     * number of particles whose constraint target was flagged for a recompute by the
-     * neighbor-count guard this step (the count rides along in the same Allreduce). Costs one
-     * small Allreduce after the iterations finished (the NR loop itself stays
-     * communication-free per rank; ranks that stopped early contribute zeros). The call site
-     * is a single line, safe to comment out.
+     * number of particles whose constraint target was rebased this step because the NR
+     * converging point had a neighbor count outside the guard band (see the band check in
+     * VeNRPostamble; the count rides along in the same Allreduce). Costs one small Allreduce
+     * after the iterations finished (the NR loop itself stays communication-free per rank;
+     * ranks that stopped early contribute zeros). The call site is a single line, safe to
+     * comment out.
      */
     void printNRUnconverged(const std::vector<size_t>& counts, unsigned hNRIterMax, size_t numBallmassAdjusted)
     {
@@ -552,27 +556,6 @@ protected:
      * with a nonzero count names the stage that produces NaN/inf. Call sites are single lines,
      * safe to comment out.
      */
-    //! @brief number of locally owned particles whose ballmass carries the guard's recompute sentinel
-    size_t ballmassAdjustedCount(typename DataType::HydroData& d, size_t first, size_t last)
-    {
-        const auto& field = get<"ballmass">(d);
-        if constexpr (cstone::execution::HaveGpu<Acc>{})
-        {
-            return sph::gpu::countNegativeGpu(rawPtr(field), first, last);
-        }
-        else
-        {
-            size_t      n = 0;
-            const auto* p = field.data();
-#pragma omp parallel for reduction(+ : n)
-            for (size_t i = first; i < last; ++i)
-            {
-                n += p[i] < 0;
-            }
-            return n;
-        }
-    }
-
     template<class FieldVector>
     unsigned long long nonFiniteCount(const FieldVector& field, size_t first, size_t last)
     {

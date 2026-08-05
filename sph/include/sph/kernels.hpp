@@ -16,6 +16,14 @@ struct NRPassStats
     //! @brief particles clamped by the per-iteration up (1.1x) / down (0.5x) step limits
     size_t numCapUp;
     size_t numCapDown;
+    /*! @brief particles reset by the convergence-point neighbor-count band check this pass
+     *
+     * Counted as ballmass == 0 after the pass: recompute signals entering a pass are consumed
+     * by its re-seed branch before the band check can fire again (see VeNRPostamble), so
+     * post-pass zeros are exactly the resets decided in this pass — each reset is counted once,
+     * in the step that decided it.
+     */
+    size_t numReset;
 };
 
 //! @brief compute time-step based on the signal velocity
@@ -95,18 +103,17 @@ HOST_DEVICE_FUN void updateHIterativeNR(unsigned ng0, unsigned ngmax, float hExt
 
 /*! @brief iterative neighbor-count guard for the smoothing length
  *
- * If @p ballmass is non-null (per-particle NR constraint targets, see VeNRPostamble), any h
- * correction made here flips the particle's target negative as a recompute signal: the first
- * NR iteration of the step then re-seeds it to rho * h^3 at the corrected h, so the correction
- * sticks instead of being pulled back to the stale target (SPHYNX findneighbors.f90 resets
- * ballmass = promro * h^3 in its recalc branch; the density is not available at guard time
- * here, hence the deferred recompute).
+ * With per-particle NR constraint targets, corrections made here are transient: the NR
+ * iterations pull h back towards the target's root. Whether a correction should stick (target
+ * re-seeded at the corrected h) is decided at the NR converging point, not here — see the
+ * neighbor-count band check in VeNRPostamble, which resets out-of-band converging points to
+ * this guard's output.
  */
 template<class Tc, class T, class KeyType>
 HOST_DEVICE_FUN void updateHIterative(unsigned ng0, unsigned ngmax, const cstone::Box<Tc>& box,
                                       const cstone::OctreeNsView<Tc, KeyType>& treeView, cstone::LocalIndex i,
                                       const Tc* __restrict__ x, const Tc* __restrict__ y, const Tc* __restrict__ z,
-                                      T* __restrict__ h, unsigned* __restrict__ nc, T* __restrict__ ballmass = nullptr)
+                                      T* __restrict__ h, unsigned* __restrict__ nc)
 {
     constexpr int  maxIteration = 10;
     const unsigned ngmin        = ng0 / 4;
@@ -136,11 +143,6 @@ HOST_DEVICE_FUN void updateHIterative(unsigned ng0, unsigned ngmax, const cstone
          * was introduced for. */
         ncSph = 1;
         h[i]  = hEntry;
-    }
-    else if (ballmass != nullptr && h[i] != hEntry)
-    {
-        //! h was corrected: signal the NR iterations to re-seed the constraint target
-        ballmass[i] = -ballmass[i];
     }
 
     nc[i] = ncSph;

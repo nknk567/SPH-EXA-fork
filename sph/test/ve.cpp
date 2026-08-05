@@ -542,18 +542,19 @@ TEST_F(SphKernelTests, XMass)
 constexpr float hNRExtFactor = 1.05;
 
 template<size_t stride = 1, class Tc, class T, class Tm>
-HOST_DEVICE_FUN inline std::tuple<T, T> veNRJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box,
-                                                  const cstone::LocalIndex* neighbors, unsigned neighborsCount,
-                                                  const Tc* x, const Tc* y, const Tc* z, const T* h, const T* xm,
-                                                  const Tm* m, T* ballmass, const T* wh, const T* whd)
+HOST_DEVICE_FUN inline std::tuple<T, T, T> veNRJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box,
+                                                     const cstone::LocalIndex* neighbors, unsigned neighborsCount,
+                                                     const Tc* x, const Tc* y, const Tc* z, const T* h, const T* xm,
+                                                     const Tm* m, T* ballmass, const T* wh, const T* whd,
+                                                     T tol = T(1e-4), T bandMin = T(0), T bandMax = T(1e30))
 {
     VeNRInteraction<T>   interaction{wh, whd};
-    VeNRPostamble<T, Tc> postamble{K, ballmass, T(hNRExtFactor)};
+    VeNRPostamble<T, Tc> postamble{K, ballmass, T(hNRExtFactor), tol, bandMin, bandMax};
 
     // each call passes the current h as the step-start h0, i.e. the upward cap acts per call
     const auto input = std::make_tuple(xm, m, h);
-    T          kxi = 0, hNew = 0;
-    const auto output = std::make_tuple((&kxi) - i, (&hNew) - i);
+    T          kxi = 0, hNew = 0, cnt = 0;
+    const auto output = std::make_tuple((&kxi) - i, (&hNew) - i, (&cnt) - i);
 
     const auto iData  = cstone::ijloop::loadParticleData(x, y, z, h, input, i);
     const bool usePbc = cstone::ijloop::requiresPbcHandling(box, iData);
@@ -577,7 +578,7 @@ HOST_DEVICE_FUN inline std::tuple<T, T> veNRJLoop(cstone::LocalIndex i, Tc K, co
 
     cstone::ijloop::storeParticleData(output, i, presult);
 
-    return {kxi, hNew};
+    return {kxi, hNew, cnt};
 }
 
 TEST_F(SphKernelTests, VeSmoothingLengthNewtonRaphson)
@@ -605,7 +606,7 @@ TEST_F(SphKernelTests, VeSmoothingLengthNewtonRaphson)
     T relResidual = 1;
     for (int it = 0; it < 10; ++it)
     {
-        auto [kxi, hNew] = callNR();
+        auto [kxi, hNew, cnt] = callNR();
 
         T hi        = h[i];
         T rhoi      = kxi * m[i] / xm[i];
@@ -630,9 +631,10 @@ TEST_F(SphKernelTests, VeSmoothingLengthNewtonRaphson)
     h[i] = h0;
 }
 
-/*! @brief a non-positive ballmass is the recompute signal set by the neighbor-count guard:
- * the NR pass re-seeds it to rho * h^3 at the current (corrected) h, the residual becomes zero
- * and h stays put instead of being pulled back to a stale target. Positive targets are frozen.
+/*! @brief a non-positive ballmass is the recompute signal (convergence-point band check reset
+ * or restart warm-up): the NR pass re-seeds it to rho * h^3 at the current h, the residual
+ * becomes zero and h stays put instead of being pulled back to a stale target. Positive targets
+ * are frozen.
  */
 TEST_F(SphKernelTests, VeNRBallmassRecomputeSignal)
 {
@@ -647,8 +649,8 @@ TEST_F(SphKernelTests, VeNRBallmassRecomputeSignal)
 
     for (T sentinel : {T(0), T(-2.5)})
     {
-        ballmass[i]      = sentinel;
-        auto [kxi, hNew] = callNR();
+        ballmass[i]           = sentinel;
+        auto [kxi, hNew, cnt] = callNR();
 
         // re-seeded to rho * h^3 with the density summed at the current h
         T rhoi = kxi * m[i] / xm[i];
@@ -662,6 +664,66 @@ TEST_F(SphKernelTests, VeNRBallmassRecomputeSignal)
     ballmass[i] = T(3.14);
     callNR();
     EXPECT_EQ(ballmass[i], T(3.14));
+}
+
+/*! @brief the convergence-point neighbor-count band check: a converging point whose 2h neighbor
+ * count (self included) falls outside [bandMin, bandMax] is reset to the step-start h with the
+ * target flagged for a re-seed there (ballmass = 0). The pass that consumes the flag never
+ * re-flags, so the decision is made at most once per step; unconverged particles are never
+ * checked.
+ */
+TEST_F(SphKernelTests, VeNRNeighborBandReset)
+{
+    cstone::LocalIndex i = 0;
+    std::vector<T>     ballmass(x.size(), T(0));
+
+    auto callNR = [&](T bandMin, T bandMax)
+    {
+        return veNRJLoop(i, K, box(), neighbors.data(), neighborsCount, x.data(), y.data(), z.data(), h.data(),
+                         xm.data(), m.data(), ballmass.data(), wh.data(), whd.data(), T(1e-4), bandMin, bandMax);
+    };
+
+    // seed the target at the current h through the recompute signal: h is the root afterwards
+    callNR(T(0), T(1e30));
+    const T ballmassSeeded = ballmass[i];
+    EXPECT_GT(ballmassSeeded, T(0));
+
+    // the count output is the number of neighbors within 2h plus the self contribution
+    T expectedCnt = 1;
+    for (unsigned pj = 0; pj < neighborsCount; ++pj)
+    {
+        cstone::LocalIndex j  = neighbors[pj];
+        T                  dx = x[i] - x[j], dy = y[i] - y[j], dz = z[i] - z[j];
+        expectedCnt += dx * dx + dy * dy + dz * dz < T(4) * h[i] * h[i];
+    }
+    auto [kxi, hNew, cnt] = callNR(T(0), T(1e30));
+    EXPECT_EQ(cnt, expectedCnt);
+    // in-band converging point: the target is untouched and h stays at the root
+    EXPECT_EQ(ballmass[i], ballmassSeeded);
+    EXPECT_NEAR(hNew, h[i], 1e-10 * h[i]);
+
+    // count above the band at convergence (cnt - 1 > bandMax): h resets to the step-start value
+    // (the helper passes the current h as h0) and the target is flagged for a re-seed
+    auto [kxUp, hUp, cntUp] = callNR(T(0), cnt - T(2));
+    EXPECT_EQ(hUp, h[i]);
+    EXPECT_EQ(ballmass[i], T(0));
+
+    // the consuming pass re-seeds at the reset h and never re-flags, band still violated or not
+    auto [kxRe, hRe, cntRe] = callNR(T(0), cnt - T(2));
+    EXPECT_NEAR(ballmass[i], ballmassSeeded, 1e-10 * ballmassSeeded);
+    EXPECT_NEAR(hRe, h[i], 1e-10 * h[i]);
+
+    // count below the band at convergence (cnt < bandMin) flags likewise
+    auto [kxLo, hLo, cntLo] = callNR(cnt + T(1), T(1e30));
+    EXPECT_EQ(hLo, h[i]);
+    EXPECT_EQ(ballmass[i], T(0));
+
+    // an unconverged particle is never checked: a target 5% off the root moves h by more than
+    // the tolerance, so the violated band must not fire and the positive target stays frozen
+    ballmass[i]                = T(1.05) * ballmassSeeded;
+    auto [kxFar, hFar, cntFar] = callNR(T(0), cnt - T(2));
+    EXPECT_GT(std::abs(hFar - h[i]), T(1e-4) * h[i]);
+    EXPECT_EQ(ballmass[i], T(1.05) * ballmassSeeded);
 }
 
 //! @brief the NR-mode grad-h term must be the derivative of the density that the NR iteration converges

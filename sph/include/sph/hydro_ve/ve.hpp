@@ -84,7 +84,8 @@ void setVolumeElements(const GroupView& grp, Dataset& d, const Tv* volstd, float
  *
  * Every step when the per-particle ballmass mode is off (fixed global target, legacy behavior),
  * only on the first step of a fresh run when it is on (afterwards the field is frozen and only
- * rewritten through the recompute signal of the neighbor-count guard, see VeNRPostamble).
+ * rewritten through the recompute signal of the convergence-point neighbor-count band check,
+ * see VeNRPostamble).
  */
 template<class Dataset>
 void fillNominalBallmass(const GroupView& grp, Dataset& d)
@@ -106,33 +107,41 @@ void fillNominalBallmass(const GroupView& grp, Dataset& d)
 /*! @brief one Newton-Raphson iteration for the smoothing length constraint rho * h^3 = ballmass
  *
  * Iterates over the fixed neighbor list with fixed volume elements xm and updates h of locally
- * owned particles in place. Uses the ay field as scratch space for the updated smoothing length
- * and the az field for the relative h change per particle (consumed by computeVeNRTail).
- * The constraint target is the per-particle ballmass field, nominally ballmassEta(ng0) * m.
+ * owned particles in place. Uses the ay field as scratch space for the updated smoothing length,
+ * the az field for the relative h change per particle (consumed by computeVeNRTail) and the ax
+ * field for the neighbor count inside 2h tested by the convergence-point band check.
+ * The constraint target is the per-particle ballmass field, nominally ballmassEta(ng0) * m;
+ * converging points whose neighbor count falls outside [bandMin, bandMax] are reset to h0 with
+ * the target flagged for a re-seed there, see VeNRPostamble.
  * @p h0 holds the smoothing lengths at the start of the step's NR iterations (filled here when
  * @p firstIteration is set); the cumulative upward h movement is capped at hNRExtFactor * h0 so
  * that the neighbor lists built before the iterations remain complete for the final h.
  *
  * @return pass statistics: the number of locally owned particles with a relative h change
- *         >= @p tol (zero means the iterations are converged) and the per-iteration clamp hits
+ *         >= @p tol (zero means the iterations are converged), the per-iteration clamp hits
+ *         and the band-check resets of this pass
  */
 template<typename Tc, class Dataset, class Tv>
 NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, Tv* h0, bool firstIteration,
-                        float tol, float hExtFactor)
+                        float tol, float hExtFactor, float bandMin, float bandMax)
 {
-    if constexpr (d.useGpu) { return gpu::computeVeNR(grp, d, box, h0, firstIteration, tol, hExtFactor); }
+    if constexpr (d.useGpu)
+    {
+        return gpu::computeVeNR(grp, d, box, h0, firstIteration, tol, hExtFactor, bandMin, bandMax);
+    }
     else
     {
         if (firstIteration) { std::copy(d.h.data(), d.h.data() + d.x.size(), h0); }
-        veNRIjLoop(d.neighborhood, d.K, hExtFactor, d.xm.data(), d.m.data(), h0, d.ballmass.data(), d.wh.data(),
-                   d.whd.data(), d.kx.data(), d.ay.data());
+        veNRIjLoop(d.neighborhood, d.K, hExtFactor, tol, bandMin, bandMax, d.xm.data(), d.m.data(), h0,
+                   d.ballmass.data(), d.wh.data(), d.whd.data(), d.kx.data(), d.ay.data(), d.ax.data());
 
         using Th               = std::decay_t<decltype(d.h[0])>;
         const Th* hNew         = d.ay.data();
+        const Th* bm           = d.ballmass.data();
         Th*       h            = d.h.data();
         Th*       relDh        = d.az.data();
-        size_t    numUnconverged = 0, capUp = 0, capDown = 0;
-#pragma omp parallel for schedule(static) reduction(+ : numUnconverged, capUp, capDown)
+        size_t    numUnconverged = 0, capUp = 0, capDown = 0, numReset = 0;
+#pragma omp parallel for schedule(static) reduction(+ : numUnconverged, capUp, capDown, numReset)
         for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
         {
             Th rel   = std::abs(hNew[i] - h[i]) / h[i];
@@ -142,8 +151,9 @@ NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>&
             relDh[i] = rel;
             h[i]     = hNew[i];
             numUnconverged += rel >= Th(tol);
+            numReset += bm[i] == Th(0);
         }
-        return {numUnconverged, capUp, capDown};
+        return {numUnconverged, capUp, capDown, numReset};
     }
 }
 
@@ -190,11 +200,12 @@ std::pair<size_t, size_t> countHWallPinned(const GroupView& grp, Dataset& d, con
 template<typename Tc, class Dataset, class Tv>
 unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, const Tv* h0,
                          unsigned maxPasses, std::vector<size_t>& unconvergedPerPass, float tol, float hExtFactor,
-                         size_t& capUp, size_t& capDown)
+                         float bandMin, float bandMax, size_t& capUp, size_t& capDown, size_t& numReset)
 {
     if constexpr (d.useGpu)
     {
-        return gpu::computeVeNRTail(grp, d, box, h0, maxPasses, unconvergedPerPass, tol, hExtFactor, capUp, capDown);
+        return gpu::computeVeNRTail(grp, d, box, h0, maxPasses, unconvergedPerPass, tol, hExtFactor, bandMin, bandMax,
+                                    capUp, capDown, numReset);
     }
     else
     {
@@ -209,10 +220,11 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
         }
         if (subset.empty()) { return 0; }
 
-        Th*                 h = d.h.data();
+        Th*                 h  = d.h.data();
+        const Th*           bm = d.ballmass.data();
         std::vector<size_t> bins(maxPasses + 2, 0);
-        size_t              tailCapUp = 0, tailCapDown = 0;
-#pragma omp parallel reduction(+ : tailCapUp, tailCapDown)
+        size_t              tailCapUp = 0, tailCapDown = 0, tailReset = 0;
+#pragma omp parallel reduction(+ : tailCapUp, tailCapDown, tailReset)
         {
             std::vector<size_t> localBins(maxPasses + 2, 0);
 #pragma omp for schedule(dynamic) nowait
@@ -221,11 +233,16 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
                 cstone::LocalIndex i     = subset[s];
                 Th                 hi    = h[i];
                 unsigned           kConv = maxPasses + 1;
+                bool               fired = false;
                 for (unsigned it = 1; it <= maxPasses; ++it)
                 {
-                    Th hNew = veNRTraversalUpdate(i, hi, d.K, d.ballmass.data(), Th(hExtFactor), d.treeView,
-                                                  box, d.x.data(), d.y.data(), d.z.data(), d.xm.data(), d.m.data(),
-                                                  h0, d.wh.data(), d.whd.data());
+                    Th hNew = veNRTraversalUpdate(i, hi, d.K, d.ballmass.data(), Th(hExtFactor), Th(tol), Th(bandMin),
+                                                  Th(bandMax), d.treeView, box, d.x.data(), d.y.data(), d.z.data(),
+                                                  d.xm.data(), d.m.data(), h0, d.wh.data(), d.whd.data(), d.ax.data());
+                    /* signals entering the tail were consumed by the update's re-seed branch, so a
+                     * zero after an update is a band-check reset fired by this update; the once-per-
+                     * step gate makes fired-detection through the array exact */
+                    fired = fired || bm[i] == Th(0);
                     tailCapUp += hNew == Th(1.1) * hi;
                     tailCapDown += hNew == Th(0.5) * hi;
                     Th rel  = std::abs(hNew - hi) / hi;
@@ -237,6 +254,7 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
                     }
                 }
                 h[i] = hi;
+                tailReset += fired;
                 ++localBins[kConv];
             }
 #pragma omp critical
@@ -247,6 +265,7 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
         }
         capUp += tailCapUp;
         capDown += tailCapDown;
+        numReset += tailReset;
 
         //! per-pass unconverged counts = suffix sums; passes performed = last needed iteration
         unsigned passes = maxPasses;

@@ -62,7 +62,7 @@ template<class Tc, class T, class KeyType>
 __global__ __launch_bounds__(128) void updateSmoothingLengthIterativeGpuKernel(
     GroupView grp, unsigned ng0, unsigned ngmax, const cstone::Box<Tc> box,
     const cstone::OctreeNsView<Tc, KeyType> tree, const Tc* __restrict__ x, const Tc* __restrict__ y,
-    const Tc* __restrict__ z, T* __restrict__ h, unsigned* __restrict__ nc, T* __restrict__ ballmass)
+    const Tc* __restrict__ z, T* __restrict__ h, unsigned* __restrict__ nc)
 {
     LocalIndex laneIdx = threadIdx.x & (cstone::GpuConfig::warpSize - 1);
     LocalIndex warpIdx = (blockDim.x * blockIdx.x + threadIdx.x) >> cstone::GpuConfig::warpSizeLog2;
@@ -71,12 +71,11 @@ __global__ __launch_bounds__(128) void updateSmoothingLengthIterativeGpuKernel(
     const LocalIndex i = grp.groupStart[warpIdx] + laneIdx;
     if (i >= grp.groupEnd[warpIdx]) { return; }
 
-    updateHIterative(ng0, ngmax, box, tree, i, x, y, z, h, nc, ballmass);
+    updateHIterative(ng0, ngmax, box, tree, i, x, y, z, h, nc);
 }
 
 template<class T, class Dataset>
-void updateSmoothingLengthIterativeGpu(const cstone::GroupView& grp, Dataset& d, const cstone::Box<T>& box,
-                                       typename Dataset::HydroType* ballmass)
+void updateSmoothingLengthIterativeGpu(const cstone::GroupView& grp, Dataset& d, const cstone::Box<T>& box)
 {
     unsigned numThreads       = 128;
     unsigned numWarpsPerBlock = numThreads / cstone::GpuConfig::warpSize;
@@ -85,12 +84,12 @@ void updateSmoothingLengthIterativeGpu(const cstone::GroupView& grp, Dataset& d,
 
     updateSmoothingLengthIterativeGpuKernel<<<numBlocks, numThreads>>>(grp, d.ng0, d.ngmax, box, d.treeView,
                                                                        rawPtr(d.x), rawPtr(d.y), rawPtr(d.z),
-                                                                       rawPtr(d.h), rawPtr(d.nc), ballmass);
+                                                                       rawPtr(d.h), rawPtr(d.nc));
 }
 
 template void updateSmoothingLengthIterativeGpu(const cstone::GroupView&,
                                                 sphexa::ParticlesData<cstone::execution::Gpu>&,
-                                                const cstone::Box<SphTypes::CoordinateType>&, SphTypes::HydroType*);
+                                                const cstone::Box<SphTypes::CoordinateType>&);
 
 template<class Tc, class T, class KeyType>
 __global__ __launch_bounds__(128) void updateSmoothingLengthIterativeNRGpuKernel(

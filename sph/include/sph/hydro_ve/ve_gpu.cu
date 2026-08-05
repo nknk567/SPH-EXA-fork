@@ -111,15 +111,15 @@ struct CapHit
 
 template<class Dataset, class Tv>
 NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* h0,
-                        bool firstIteration, float tol, float hExtFactor)
+                        bool firstIteration, float tol, float hExtFactor, float bandMin, float bandMax)
 {
     using Th = typename Dataset::HydroType;
     if (firstIteration)
     {
         cstone::memcpyD2DAsync(cstone::execution::gpuDefaultStream, rawPtr(d.h), d.x.size(), h0);
     }
-    veNRIjLoop(d.neighborhood, d.K, hExtFactor, rawPtr(d.xm), rawPtr(d.m), h0, rawPtr(d.ballmass), rawPtr(d.wh),
-               rawPtr(d.whd), rawPtr(d.kx), rawPtr(d.ay));
+    veNRIjLoop(d.neighborhood, d.K, hExtFactor, tol, bandMin, bandMax, rawPtr(d.xm), rawPtr(d.m), h0,
+               rawPtr(d.ballmass), rawPtr(d.wh), rawPtr(d.whd), rawPtr(d.kx), rawPtr(d.ay), rawPtr(d.ax));
     //! per-particle relative h change into the az scratch, consumed by computeVeNRTail
     auto begin = thrust::make_zip_iterator(rawPtr(d.ay) + grp.firstBody, rawPtr(d.h) + grp.firstBody);
     auto end   = thrust::make_zip_iterator(rawPtr(d.ay) + grp.lastBody, rawPtr(d.h) + grp.lastBody);
@@ -128,16 +128,19 @@ NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<type
                                              rawPtr(d.az) + grp.lastBody, Unconverged<Th>{Th(tol)});
     size_t capUp   = thrust::count_if(thrust::device, begin, end, CapHit<Th>{Th(1.1)});
     size_t capDown = thrust::count_if(thrust::device, begin, end, CapHit<Th>{Th(0.5)});
+    //! post-pass zeros are exactly this pass's band-check resets, see NRPassStats::numReset
+    size_t numReset = thrust::count(thrust::device, rawPtr(d.ballmass) + grp.firstBody,
+                                    rawPtr(d.ballmass) + grp.lastBody, Th(0));
     // commit the updated smoothing lengths of locally owned particles
     cstone::memcpyD2DAsync(cstone::execution::gpuDefaultStream, rawPtr(d.ay) + grp.firstBody,
                            grp.lastBody - grp.firstBody, rawPtr(d.h) + grp.firstBody);
     checkGpuErrors(cudaDeviceSynchronize());
-    return {numUnconverged, capUp, capDown};
+    return {numUnconverged, capUp, capDown, numReset};
 }
 
 template NRPassStats computeVeNR(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
                                  const cstone::Box<SphTypes::CoordinateType>&, SphTypes::HydroType*, bool, float,
-                                 float);
+                                 float, float, float);
 
 template<class Dataset, class Tv>
 std::pair<size_t, size_t> countHWallPinned(const GroupView& grp, Dataset& d, const Tv* h0, float hExtFactor)
@@ -175,22 +178,22 @@ struct UnconvergedIndex
 template<class Tc, class T, class Tm, class KeyType>
 __global__ __launch_bounds__(128) void veNRTailKernel(const cstone::LocalIndex* __restrict__ subset,
                                                       cstone::LocalIndex n, Tc K, T* __restrict__ ballmass,
-                                                      T hExtFactor, T tol,
+                                                      T hExtFactor, T tol, T bandMin, T bandMax,
                                                       unsigned maxIter, const cstone::OctreeNsView<Tc, KeyType> tree,
                                                       const cstone::Box<Tc> box, const Tc* __restrict__ x,
                                                       const Tc* __restrict__ y, const Tc* __restrict__ z,
                                                       T* __restrict__ h, const T* __restrict__ xm,
                                                       const Tm* __restrict__ m, const T* __restrict__ h0,
                                                       const T* __restrict__ wh, const T* __restrict__ whd,
-                                                      unsigned long long* __restrict__ bins)
+                                                      T* __restrict__ cnt, unsigned long long* __restrict__ bins)
 {
     /* block-local histogram: most threads converge at the same iteration, so direct global
      * atomics on bins would serialize; aggregate per block first (dynamic shared memory),
      * then flush with at most one global atomic per bin per block. Layout: [1, maxIter] =
      * convergence-iteration counts, [maxIter + 1] = budget exhausted, [maxIter + 2] and
-     * [maxIter + 3] = per-iteration up/down clamp events. */
+     * [maxIter + 3] = per-iteration up/down clamp events, [maxIter + 4] = band-check resets. */
     extern __shared__ unsigned long long sharedBins[];
-    const unsigned                       numBins = maxIter + 4;
+    const unsigned                       numBins = maxIter + 5;
     for (unsigned k = threadIdx.x; k < numBins; k += blockDim.x)
     {
         sharedBins[k] = 0;
@@ -205,9 +208,15 @@ __global__ __launch_bounds__(128) void veNRTailKernel(const cstone::LocalIndex* 
         T                  hi    = h[i];
         unsigned           kConv = maxIter + 1;
         unsigned long long capU = 0, capD = 0;
+        bool               fired = false;
         for (unsigned it = 1; it <= maxIter; ++it)
         {
-            T hNew = veNRTraversalUpdate(i, hi, K, ballmass, hExtFactor, tree, box, x, y, z, xm, m, h0, wh, whd);
+            T hNew = veNRTraversalUpdate(i, hi, K, ballmass, hExtFactor, tol, bandMin, bandMax, tree, box, x, y, z,
+                                         xm, m, h0, wh, whd, cnt);
+            /* signals entering the tail were consumed by the update's re-seed branch, so a zero
+             * after an update is a band-check reset fired by this update; the once-per-step gate
+             * makes fired-detection through the array exact */
+            fired = fired || ballmass[i] == T(0);
             capU += hNew == T(1.1) * hi;
             capD += hNew == T(0.5) * hi;
             T rel  = std::abs(hNew - hi) / hi;
@@ -222,6 +231,7 @@ __global__ __launch_bounds__(128) void veNRTailKernel(const cstone::LocalIndex* 
         atomicAdd(sharedBins + kConv, 1ull);
         if (capU) { atomicAdd(sharedBins + maxIter + 2, capU); }
         if (capD) { atomicAdd(sharedBins + maxIter + 3, capD); }
+        if (fired) { atomicAdd(sharedBins + maxIter + 4, 1ull); }
     }
 
     __syncthreads();
@@ -234,7 +244,8 @@ __global__ __launch_bounds__(128) void veNRTailKernel(const cstone::LocalIndex* 
 template<class Dataset, class Tv>
 unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<typename Dataset::RealType>& box,
                          const Tv* h0, unsigned maxPasses, std::vector<size_t>& unconvergedPerPass, float tol,
-                         float hExtFactor, size_t& capUp, size_t& capDown)
+                         float hExtFactor, float bandMin, float bandMax, size_t& capUp, size_t& capDown,
+                         size_t& numReset)
 {
     using Th = typename Dataset::HydroType;
     if (maxPasses == 0) { return 0; }
@@ -248,19 +259,20 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<typ
                     thrust::counting_iterator<cstone::LocalIndex>(grp.lastBody), subset.begin(),
                     UnconvergedIndex<Th>{rawPtr(d.az), Th(tol)});
 
-    thrust::device_vector<unsigned long long> devBins(maxPasses + 4, 0ull);
+    thrust::device_vector<unsigned long long> devBins(maxPasses + 5, 0ull);
     cstone::LocalIndex                        n         = subset.size();
     unsigned                                  numBlocks = (n + 127) / 128;
 
-    size_t sharedBytes = (maxPasses + 4) * sizeof(unsigned long long);
+    size_t sharedBytes = (maxPasses + 5) * sizeof(unsigned long long);
     veNRTailKernel<<<numBlocks, 128, sharedBytes>>>(
-        thrust::raw_pointer_cast(subset.data()), n, d.K, rawPtr(d.ballmass), Th(hExtFactor), Th(tol), maxPasses,
-        d.treeView, box, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), rawPtr(d.xm), rawPtr(d.m), h0,
-        rawPtr(d.wh), rawPtr(d.whd), thrust::raw_pointer_cast(devBins.data()));
+        thrust::raw_pointer_cast(subset.data()), n, d.K, rawPtr(d.ballmass), Th(hExtFactor), Th(tol), Th(bandMin),
+        Th(bandMax), maxPasses, d.treeView, box, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), rawPtr(d.xm),
+        rawPtr(d.m), h0, rawPtr(d.wh), rawPtr(d.whd), rawPtr(d.ax), thrust::raw_pointer_cast(devBins.data()));
     checkGpuErrors(cudaDeviceSynchronize());
     thrust::host_vector<unsigned long long> bins = devBins;
     capUp += bins[maxPasses + 2];
     capDown += bins[maxPasses + 3];
+    numReset += bins[maxPasses + 4];
 
     //! per-pass unconverged counts = suffix sums; passes performed = last needed iteration
     unsigned passes = maxPasses;
@@ -282,7 +294,7 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<typ
 
 template unsigned computeVeNRTail(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d,
                                   const cstone::Box<SphTypes::CoordinateType>&, const SphTypes::HydroType*, unsigned,
-                                  std::vector<size_t>&, float, float, size_t&, size_t&);
+                                  std::vector<size_t>&, float, float, float, float, size_t&, size_t&, size_t&);
 
 template<class Dataset, class Tv>
 void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* volstd)
@@ -336,24 +348,6 @@ size_t countNonFiniteGpu(const T* f, size_t first, size_t last)
 
 template size_t countNonFiniteGpu(const float*, size_t, size_t);
 template size_t countNonFiniteGpu(const double*, size_t, size_t);
-
-template<class T>
-struct Negative
-{
-    HOST_DEVICE_FUN size_t operator()(T v) const { return v < T(0); }
-};
-
-template<class T>
-size_t countNegativeGpu(const T* f, size_t first, size_t last)
-{
-    if (last <= first) { return 0; }
-    return thrust::transform_reduce(thrust::device, f + first, f + last, Negative<T>{}, size_t(0),
-                                    thrust::plus<size_t>{});
-}
-
-template size_t countNegativeGpu(const float*, size_t, size_t);
-template size_t countNegativeGpu(const double*, size_t, size_t);
-
 
 } // namespace gpu
 } // namespace sph
