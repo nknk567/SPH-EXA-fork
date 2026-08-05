@@ -72,9 +72,9 @@ struct DeviceNeighborhoodData::Impl
             {
 
                 if (subgroups)
-                    builder = ClusteredNeighborhoodBuilder<false>{cstone::GpuConfig::warpSize * ngmaxBuild};
+                    builder = ClusteredNeighborhoodBuilder<false>{cstone::GpuConfig::warpSize * ngmaxBuild * 2};
                 else
-                    builder = ClusteredNeighborhoodBuilder<true>{cstone::GpuConfig::warpSize * ngmaxBuild / 2};
+                    builder = ClusteredNeighborhoodBuilder<true>{cstone::GpuConfig::warpSize * ngmaxBuild};
             }
             else { builder = cstone::ijloop::GpuAlwaysTraverseNeighborhoodBuilder{ngmaxBuild}; }
 
