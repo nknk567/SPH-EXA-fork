@@ -116,7 +116,7 @@ HOST_DEVICE_FUN void updateHIterative(unsigned ng0, unsigned ngmax, const cstone
                                       T* __restrict__ h, unsigned* __restrict__ nc)
 {
     constexpr int  maxIteration = 10;
-    const unsigned ngmin        = ng0 / 4;
+    const unsigned ngmin        = ng0 / 2;
     //    const unsigned ngmin = 0.8 * ng0;
     //    if (ngmax > 1.2 * ng0) { ngmax = 1.2 * ng0; }
 
