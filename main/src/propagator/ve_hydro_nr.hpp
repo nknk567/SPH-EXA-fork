@@ -400,7 +400,7 @@ protected:
 
         /* Neighbor-count band of the convergence-point check (see VeNRPostamble): matches the
          * guard band of updateHIterative. Disabled (never fires) in the fixed-target mode. */
-        const float bandMin = nrParams_.particleBallmass ? float(d.ng0 / 4) : 0.0f;
+        const float bandMin = nrParams_.particleBallmass ? float(d.ng0 / 2) : 0.0f;
         const float bandMax = nrParams_.particleBallmass ? float(d.ngmax) : std::numeric_limits<float>::max();
         //! targets rebased this step because the NR converging point was outside the band
         size_t numBallmassAdjusted = 0;
