@@ -131,6 +131,10 @@ public:
         }
 
         translateAssignment<KeyType>(assignment, leaves_, assignment_);
+        // refresh global tree offsets before focusPeersAcc: globalLeaves may have been rebalanced since the last
+        // update, in which case stale offsets index out of bounds
+        std::copy_n(assignment.numNodesPerRankConst().begin(), numRanks_, globNumNodes_.begin());
+        std::copy_n(assignment.treeOffsetsConst().begin(), numRanks_ + 1, globDispl_.begin());
         auto extPeers = focusPeersAcc<KeyType>(exec_, globDispl_, assignment_, myRank_, globalLeaves, leaves_);
         auto intPeers = exchangePeers(extPeers, comm_);
         peerFlagsToList(extPeers, exteriorPeers_, PeerMask::focus);
@@ -153,8 +157,6 @@ public:
 
         translateAssignment<KeyType>(assignment, leaves_, assignment_);
         extractPeerRanges(exteriorPeers_, myRank_, assignment_, peerRanges_);
-        std::copy_n(assignment.numNodesPerRankConst().begin(), numRanks_, globNumNodes_.begin());
-        std::copy_n(assignment.treeOffsetsConst().begin(), numRanks_ + 1, globDispl_.begin());
         copy(exec_, treeletIdx_, treeletIdxAcc_);
 
         /*! Store box for use in all property updates (counts, centers, MACs, etc) until updateTree() is called again.
