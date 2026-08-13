@@ -114,8 +114,9 @@ void fillNominalBallmass(const GroupView& grp, Dataset& d)
  * converging points whose neighbor count falls outside [bandMin, bandMax] are reset to h0 with
  * the target flagged for a re-seed there, see VeNRPostamble.
  * @p h0 holds the smoothing lengths at the start of the step's NR iterations (filled here when
- * @p firstIteration is set); the cumulative upward h movement is capped at hNRExtFactor * h0 so
- * that the neighbor lists built before the iterations remain complete for the final h.
+ * @p firstIteration is set); the cumulative upward h movement is capped at hWallFactor * h0
+ * (>= the neighbor-list extension hExtFactor; growth beyond the extension trades the capture
+ * truncation of the listed sums for faster migration, see VeNRPostamble).
  *
  * @return pass statistics: the number of locally owned particles with a relative h change
  *         >= @p tol (zero means the iterations are converged), the per-iteration clamp hits
@@ -123,16 +124,16 @@ void fillNominalBallmass(const GroupView& grp, Dataset& d)
  */
 template<typename Tc, class Dataset, class Tv>
 NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, Tv* h0, bool firstIteration,
-                        float tol, float hExtFactor, float bandMin, float bandMax)
+                        float tol, float hExtFactor, float hWallFactor, float bandMin, float bandMax)
 {
     if constexpr (d.useGpu)
     {
-        return gpu::computeVeNR(grp, d, box, h0, firstIteration, tol, hExtFactor, bandMin, bandMax);
+        return gpu::computeVeNR(grp, d, box, h0, firstIteration, tol, hExtFactor, hWallFactor, bandMin, bandMax);
     }
     else
     {
         if (firstIteration) { std::copy(d.h.data(), d.h.data() + d.x.size(), h0); }
-        veNRIjLoop(d.neighborhood, d.K, hExtFactor, tol, bandMin, bandMax, d.xm.data(), d.m.data(), h0,
+        veNRIjLoop(d.neighborhood, d.K, hExtFactor, hWallFactor, tol, bandMin, bandMax, d.xm.data(), d.m.data(), h0,
                    d.ballmass.data(), d.wh.data(), d.whd.data(), d.kx.data(), d.ay.data(), d.ax.data());
 
         using Th               = std::decay_t<decltype(d.h[0])>;
@@ -159,14 +160,14 @@ NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>&
 
 /*! @brief count particles whose final h ended the NR iterations pinned at the cumulative walls
  *
- * @return {at hExtFactor * h0 (upper wall), at 0.5 * h0 (lower wall)}; these particles are
+ * @return {at hWallFactor * h0 (upper wall), at 0.5 * h0 (lower wall)}; these particles are
  *         frozen OFF their NR root (relDh = 0 at the wall counts as converged), so they do not
  *         appear in the unconverged statistics — this is the complementary view.
  */
 template<class Dataset, class Tv>
-std::pair<size_t, size_t> countHWallPinned(const GroupView& grp, Dataset& d, const Tv* h0, float hExtFactor)
+std::pair<size_t, size_t> countHWallPinned(const GroupView& grp, Dataset& d, const Tv* h0, float hWallFactor)
 {
-    if constexpr (d.useGpu) { return gpu::countHWallPinned(grp, d, h0, hExtFactor); }
+    if constexpr (d.useGpu) { return gpu::countHWallPinned(grp, d, h0, hWallFactor); }
     else
     {
         using Th        = std::decay_t<decltype(d.h[0])>;
@@ -175,7 +176,7 @@ std::pair<size_t, size_t> countHWallPinned(const GroupView& grp, Dataset& d, con
 #pragma omp parallel for schedule(static) reduction(+ : up, down)
         for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
         {
-            up += h[i] == Th(hExtFactor) * h0[i];
+            up += h[i] == Th(hWallFactor) * h0[i];
             down += h[i] == Th(0.5) * h0[i];
         }
         return {up, down};
@@ -200,12 +201,13 @@ std::pair<size_t, size_t> countHWallPinned(const GroupView& grp, Dataset& d, con
 template<typename Tc, class Dataset, class Tv>
 unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, const Tv* h0,
                          unsigned maxPasses, std::vector<size_t>& unconvergedPerPass, float tol, float hExtFactor,
-                         float bandMin, float bandMax, size_t& capUp, size_t& capDown, size_t& numReset)
+                         float hWallFactor, float bandMin, float bandMax, size_t& capUp, size_t& capDown,
+                         size_t& numReset)
 {
     if constexpr (d.useGpu)
     {
-        return gpu::computeVeNRTail(grp, d, box, h0, maxPasses, unconvergedPerPass, tol, hExtFactor, bandMin, bandMax,
-                                    capUp, capDown, numReset);
+        return gpu::computeVeNRTail(grp, d, box, h0, maxPasses, unconvergedPerPass, tol, hExtFactor, hWallFactor,
+                                    bandMin, bandMax, capUp, capDown, numReset);
     }
     else
     {
@@ -236,9 +238,10 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
                 bool               fired = false;
                 for (unsigned it = 1; it <= maxPasses; ++it)
                 {
-                    Th hNew = veNRTraversalUpdate(i, hi, d.K, d.ballmass.data(), Th(hExtFactor), Th(tol), Th(bandMin),
-                                                  Th(bandMax), d.treeView, box, d.x.data(), d.y.data(), d.z.data(),
-                                                  d.xm.data(), d.m.data(), h0, d.wh.data(), d.whd.data(), d.ax.data());
+                    Th hNew = veNRTraversalUpdate(i, hi, d.K, d.ballmass.data(), Th(hExtFactor), Th(hWallFactor),
+                                                  Th(tol), Th(bandMin), Th(bandMax), d.treeView, box, d.x.data(),
+                                                  d.y.data(), d.z.data(), d.xm.data(), d.m.data(), h0, d.wh.data(),
+                                                  d.whd.data(), d.ax.data());
                     /* signals entering the tail were consumed by the update's re-seed branch, so a
                      * zero after an update is a band-check reset fired by this update; the once-per-
                      * step gate makes fired-detection through the array exact */

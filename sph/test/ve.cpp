@@ -546,13 +546,15 @@ HOST_DEVICE_FUN inline std::tuple<T, T, T> veNRJLoop(cstone::LocalIndex i, Tc K,
                                                      const cstone::LocalIndex* neighbors, unsigned neighborsCount,
                                                      const Tc* x, const Tc* y, const Tc* z, const T* h, const T* xm,
                                                      const Tm* m, T* ballmass, const T* wh, const T* whd,
-                                                     T tol = T(1e-4), T bandMin = T(0), T bandMax = T(1e30))
+                                                     T tol = T(1e-4), T bandMin = T(0), T bandMax = T(1e30),
+                                                     T wallFactor = T(hNRExtFactor), const T* h0 = nullptr)
 {
     VeNRInteraction<T>   interaction{wh, whd};
-    VeNRPostamble<T, Tc> postamble{K, ballmass, T(hNRExtFactor), tol, bandMin, bandMax};
+    VeNRPostamble<T, Tc> postamble{K, ballmass, T(hNRExtFactor), wallFactor, tol, bandMin, bandMax};
 
-    // each call passes the current h as the step-start h0, i.e. the upward cap acts per call
-    const auto input = std::make_tuple(xm, m, h);
+    // without an explicit h0, each call passes the current h as the step-start h0, i.e. the
+    // cumulative caps act per call
+    const auto input = std::make_tuple(xm, m, h0 == nullptr ? h : h0);
     T          kxi = 0, hNew = 0, cnt = 0;
     const auto output = std::make_tuple((&kxi) - i, (&hNew) - i, (&cnt) - i);
 
@@ -724,6 +726,51 @@ TEST_F(SphKernelTests, VeNRNeighborBandReset)
     auto [kxFar, hFar, cntFar] = callNR(T(0), cnt - T(2));
     EXPECT_GT(std::abs(hFar - h[i]), T(1e-4) * h[i]);
     EXPECT_EQ(ballmass[i], T(1.05) * ballmassSeeded);
+}
+
+/*! @brief the NR upward wall decoupled from the list capture extension: cumulative growth is
+ * capped at hWallFactor * h0 instead of the capture extension, and at a converging point beyond
+ * the capture radius (h > hNRExtFactor * h0) the summed neighbor count is only a lower bound —
+ * the band check keeps its above-band decision (still certain) but defers the below-band one.
+ */
+TEST_F(SphKernelTests, VeNRWallBeyondCaptureExtension)
+{
+    cstone::LocalIndex i = 0;
+    std::vector<T>     ballmass(x.size(), T(0));
+
+    auto callNR = [&](T bandMin, T bandMax, T wallFactor, const T* h0)
+    {
+        return veNRJLoop(i, K, box(), neighbors.data(), neighborsCount, x.data(), y.data(), z.data(), h.data(),
+                         xm.data(), m.data(), ballmass.data(), wh.data(), whd.data(), T(1e-4), bandMin, bandMax,
+                         wallFactor, h0);
+    };
+
+    // seed the target at the current h through the recompute signal: h is the root afterwards
+    auto [kx0, hSeed, cnt] = callNR(T(0), T(1e30), T(hNRExtFactor), nullptr);
+    const T ballmassSeeded = ballmass[i];
+    EXPECT_GT(ballmassSeeded, T(0));
+
+    // a far-away target is capped at the wall, beyond the capture extension (the wall is kept
+    // below the 1.1 per-iteration clamp so that the cumulative cap is the binding one)
+    ballmass[i] = T(1e12) * ballmassSeeded;
+    T hWall     = std::get<1>(callNR(T(0), T(1e30), T(1.08), nullptr));
+    EXPECT_NEAR(hWall, T(1.08) * h[i], 1e-12 * h[i]);
+    EXPECT_GT(hWall, T(hNRExtFactor) * h[i]);
+    ballmass[i] = ballmassSeeded;
+
+    // converging point beyond the capture radius: h = 1.2 * h0 > hNRExtFactor * h0
+    std::vector<T> h0Arr(h.begin(), h.end());
+    h0Arr[i] = h[i] / T(1.2);
+
+    // a violated below-band count is deferred there (the count is only a lower bound)
+    auto [kxLo, hLo, cntLo] = callNR(cnt + T(1), T(1e30), T(1.3), h0Arr.data());
+    EXPECT_EQ(ballmass[i], ballmassSeeded);
+    EXPECT_NEAR(hLo, h[i], 1e-10 * h[i]);
+
+    // a violated above-band count still fires: reset to h0 with the target flagged for a re-seed
+    auto [kxUp, hUp, cntUp] = callNR(T(0), cnt - T(2), T(1.3), h0Arr.data());
+    EXPECT_EQ(hUp, h0Arr[i]);
+    EXPECT_EQ(ballmass[i], T(0));
 }
 
 //! @brief the NR-mode grad-h term must be the derivative of the density that the NR iteration converges
