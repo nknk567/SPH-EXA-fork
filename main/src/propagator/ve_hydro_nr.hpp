@@ -63,10 +63,23 @@ protected:
          *
          * Halos and neighbor lists are built before the NR iterations move h; extending both
          * search radii by this factor keeps them complete as long as h grows by less than this
-         * factor within a step (the interaction kernels always cut at the live 2h). It also caps
-         * the per-step h growth of the neighbor-count management and of the NR iterations.
+         * factor within a step (the interaction kernels always cut at the live 2h). It is also
+         * the default per-step upward wall of the NR iterations, see hNRWallFactor.
          */
         float hNRExtFactor{1.05f};
+
+        /*! @brief per-step upward NR wall as a factor on the step-start h0; 0 = use hNRExtFactor
+         *
+         * Decoupled from the capture extension so upward h migration can exceed the per-step
+         * list margin without paying the list-memory cost of a larger hNRExtFactor (which lands
+         * in the dense regions, exactly where h does not need to grow). Growth beyond the
+         * capture radius iterates on truncated pair sums (SPHYNX operates this way permanently):
+         * the kx/dkx error is kernel-tail suppressed (zero for growth into vacuum), while the
+         * neighbor count becomes a lower bound — the convergence-point band check defers its
+         * below-band decision there, see VeNRPostamble. Keep <~ 1.3: beyond that the missed
+         * shell reaches non-negligible kernel weights when the missed region is dense.
+         */
+        float hNRWallFactor{0.f};
 
         //! @brief relative smoothing-length change below which a particle counts as converged
         float hNRTol{1e-4f};
@@ -139,6 +152,7 @@ protected:
 
             optionalIO("hNRIterMax", &hNRIterMax, 1);
             optionalIO("hNRExtFactor", &hNRExtFactor, 1);
+            optionalIO("hNRWallFactor", &hNRWallFactor, 1);
             optionalIO("hNRTol", &hNRTol, 1);
             optionalIO("gradhMin", &gradhMin, 1);
             optionalIO("volstdGrowFactor", &volstdGrowFactor, 1);
@@ -228,7 +242,9 @@ public:
          * hNRExtFactor per step through the neighbor-count management and, in converged NR
          * tracking, by sub-percent amounts through the NR iterations. Enlarging the halo
          * search by the same factor keeps all remote particles within the final support
-         * radius 2h present as halos. */
+         * radius 2h present as halos. NR growth beyond this margin (hNRWallFactor > ext) is
+         * capture-truncated by design: neither the lists nor the tail traversal enumerate
+         * beyond 2 * hNRExtFactor * h0, so halos beyond the margin would be dead weight. */
         domain.setHaloFactor(nrParams_.hNRExtFactor);
         /* Symmetric pair sets need the remote big-h side of cross-rank pairs present as a halo
          * even when it is beyond the reach of all local search spheres. */
@@ -402,6 +418,9 @@ protected:
          * guard band of updateHIterative. Disabled (never fires) in the fixed-target mode. */
         const float bandMin = nrParams_.particleBallmass ? float(d.ng0 / 2) : 0.0f;
         const float bandMax = nrParams_.particleBallmass ? float(d.ngmax) : std::numeric_limits<float>::max();
+        //! upward per-step NR wall; defaults to the neighbor-list extension, see hNRWallFactor
+        const float wallFactor =
+            nrParams_.hNRWallFactor > 0.f ? nrParams_.hNRWallFactor : nrParams_.hNRExtFactor;
         //! targets rebased this step because the NR converging point was outside the band
         size_t numBallmassAdjusted = 0;
 
@@ -414,7 +433,7 @@ protected:
             ++nrIterations;
             NRPassStats stats = computeVeNR(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
                                             /*firstIteration*/ nrIterations == 1, nrParams_.hNRTol,
-                                            nrParams_.hNRExtFactor, bandMin, bandMax);
+                                            nrParams_.hNRExtFactor, wallFactor, bandMin, bandMax);
             nrUnconverged.push_back(stats.numUnconverged);
             capIterUp += stats.numCapUp;
             capIterDown += stats.numCapDown;
@@ -429,8 +448,8 @@ protected:
             {
                 nrIterations += computeVeNRTail(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
                                                 nrParams_.hNRIterMax - nrIterations, nrUnconverged, nrParams_.hNRTol,
-                                                nrParams_.hNRExtFactor, bandMin, bandMax, capIterUp, capIterDown,
-                                                numBallmassAdjusted);
+                                                nrParams_.hNRExtFactor, wallFactor, bandMin, bandMax, capIterUp,
+                                                capIterDown, numBallmassAdjusted);
                 break;
             }
         }
@@ -440,7 +459,7 @@ protected:
         printNRUnconverged(nrUnconverged, nrParams_.hNRIterMax, numBallmassAdjusted);
         //! cap statistics, safe to comment out; volstd_ still holds the step-start h here
 //        printNRCapped(capIterUp, capIterDown,
-//                      countHWallPinned(groups_.view(), d, cstone::rawPtr(volstd_), nrParams_.hNRExtFactor));
+//                      countHWallPinned(groups_.view(), d, cstone::rawPtr(volstd_), wallFactor));
         timer.step("hNewtonRaphson");
     }
 
@@ -448,7 +467,7 @@ protected:
      *
      * One line per step: iterUp/iterDown = per-iteration 1.1x / 0.5x clamp events summed over
      * all passes; endUp/endDown = particles whose FINAL h is pinned at the cumulative walls
-     * hNRExtFactor * h0 / 0.5 * h0. Wall-pinned particles are frozen OFF their NR root but
+     * hNRWallFactor * h0 / 0.5 * h0. Wall-pinned particles are frozen OFF their NR root but
      * count as converged (relDh = 0 at the wall) — this line and the h-residual check of
      * verify_nr.py are the complementary views. Costs one small Allreduce; the call site is
      * a single line, safe to comment out.

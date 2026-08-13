@@ -44,18 +44,19 @@ extern void fillNominalBallmass(const GroupView&, Dataset& d);
 //! @brief one NR pass; returns the unconverged count, per-iteration clamp hits and band-check resets
 template<class Dataset, class Tv>
 extern NRPassStats computeVeNR(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* h0,
-                               bool firstIteration, float tol, float hExtFactor, float bandMin, float bandMax);
+                               bool firstIteration, float tol, float hExtFactor, float hWallFactor, float bandMin,
+                               float bandMax);
 
 //! @brief NR iterations over the unconverged residual only, see the dispatcher in hydro_ve/ve.hpp
 template<class Dataset, class Tv>
 extern unsigned computeVeNRTail(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&,
                                 const Tv* h0, unsigned maxPasses, std::vector<size_t>& unconvergedPerPass, float tol,
-                                float hExtFactor, float bandMin, float bandMax, size_t& capUp, size_t& capDown,
-                                size_t& numReset);
+                                float hExtFactor, float hWallFactor, float bandMin, float bandMax, size_t& capUp,
+                                size_t& capDown, size_t& numReset);
 
-//! @brief count particles whose final h is pinned at the cumulative walls hExtFactor*h0 / 0.5*h0
+//! @brief count particles whose final h is pinned at the cumulative walls hWallFactor*h0 / 0.5*h0
 template<class Dataset, class Tv>
-extern std::pair<size_t, size_t> countHWallPinned(const GroupView&, Dataset& d, const Tv* h0, float hExtFactor);
+extern std::pair<size_t, size_t> countHWallPinned(const GroupView&, Dataset& d, const Tv* h0, float hWallFactor);
 
 template<class Dataset, class Tv>
 extern void computeVolstd(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&, Tv* volstd);

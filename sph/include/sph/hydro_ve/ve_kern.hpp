@@ -217,8 +217,25 @@ struct VeNRPostamble
      * Written only for the owned particle i of the postamble: race-free.
      */
     T* ballmass;
-    //! @brief cumulative upward h cap per step, matching the neighbor-list capture extension
+    /*! @brief neighbor-list capture extension: pairs are enumerated out to 2 * hExtFactor * h0
+     *
+     * Above hi = hExtFactor * h0 the summed pair set is incomplete: kx/dkx miss only the
+     * kernel tail (the missed shell starts at r/h = 2 * hExtFactor * h0 / h, where the sinc
+     * kernel is orders of magnitude below its mean pair weight — and growth into vacuum misses
+     * nothing at all), but the neighbor count cnti becomes a plain lower bound. Used by the
+     * band check below to decide when cnti is trustworthy.
+     */
     T hExtFactor;
+    /*! @brief cumulative upward h cap per step, as a factor on the step-start h0
+     *
+     * Equal to hExtFactor by default (h never leaves the complete neighbor list). May be set
+     * larger to let h migrate upward faster than the capture extension allows (SPHYNX operates
+     * this way permanently: no list extension at all, NR moves h on the frozen list): the
+     * truncation error this admits is the kernel tail described at hExtFactor. Keep <~ 1.3 —
+     * beyond that the missed shell reaches into kernel weights that are no longer negligible
+     * when the missed region is dense.
+     */
+    T hWallFactor;
     //! @brief relative h change below which the iteration counts as converged (hNRTol)
     T tol;
     /*! @brief neighbor-count band for the convergence check, [bandMin, bandMax]
@@ -228,7 +245,9 @@ struct VeNRPostamble
      * neighbor-count guard's output, in band by construction) and the target is flagged for
      * a re-seed there (ballmass = 0). Wall-pinned particles sit at the cumulative caps with
      * a zero h change, so they are checked at the wall: by monotonicity of the count along
-     * the remaining travel direction, an out-of-band wall count implies an out-of-band root.
+     * the remaining travel direction, an out-of-band wall count implies an out-of-band root
+     * (below-band only while the count is complete, i.e. inside the capture radius — see the
+     * gate at the check site).
      * In-band wall-pinned particles are left alone — they are legitimately migrating to a
      * new h over several steps at the per-step rate the caps allow. The check is skipped on
      * the pass that consumes a recompute signal (the target was not positive on entry), so
@@ -279,12 +298,12 @@ struct VeNRPostamble
         hNew   = stl::min(hNew, T(1.1) * hi);
         hNew   = stl::max(hNew, T(0.5) * hi);
 
-        /* The neighbor list of this step was built with the capture radius extended by
-         * hExtFactor around the step-start h0. Cumulative upward movement beyond that margin
-         * would miss pairs inside the final support (breaking momentum/energy conservation in
-         * every fast rarefaction), so cap it and let the affected particles finish converging
-         * in the following steps. Downward movement always stays inside the list. */
-        hNew = stl::min(hNew, hExtFactor * h0i);
+        /* Cumulative upward cap per step (the wall). At hWallFactor == hExtFactor movement
+         * never leaves the complete neighbor list; a larger wall admits the capture-truncation
+         * error described at the hExtFactor member in exchange for faster upward migration —
+         * the affected particles finish converging in the following steps, each step rebuilding
+         * the list around the grown h0. Downward movement always stays inside the list. */
+        hNew = stl::min(hNew, hWallFactor * h0i);
 
         /* Cumulative downward cap per step: where the volume elements are strongly non-uniform
          * (vacuum boundaries), the constraint can demand h far below the step-start value; the
@@ -297,8 +316,16 @@ struct VeNRPostamble
         /* Neighbor-count band check at the converging point, see the bandMin/bandMax doc.
          * Gated on convergence, so cnti (summed at hi ~ hNew) is the count at the converging
          * point; a reset makes the particle unconverged when h0 is more than tol away, so a
-         * following pass or tail iteration re-seeds the target at h0 within this step. */
-        if (targetWasPositive && std::abs(hNew - hi) < tol * hi && (cnti < bandMin || cnti - T(1) > bandMax))
+         * following pass or tail iteration re-seeds the target at h0 within this step.
+         * Beyond the capture radius (hi > hExtFactor * h0, reachable when the wall exceeds the
+         * capture extension) cnti is a lower bound: an above-band violation is then still
+         * certain, but a below-band count is inconclusive — defer that decision until the
+         * particle converges inside the capture radius of a later step's rebuilt list. The
+         * deferral is also what lets a fast-migrating wall-pinned particle keep its stale
+         * target as the engine pulling h up, instead of re-seeding at every step's wall. */
+        const bool cntComplete = hi <= hExtFactor * h0i;
+        if (targetWasPositive && std::abs(hNew - hi) < tol * hi &&
+            ((cnti < bandMin && cntComplete) || cnti - T(1) > bandMax))
         {
             hNew        = h0i;
             ballmass[i] = T(0);
@@ -316,14 +343,16 @@ struct VeNRPostamble
  * target is the per-particle @p ballmass field, nominally ballmassEta(ng0) * m_i; non-positive
  * entries are recompute signals resolved (and written back) by the postamble, see VeNRPostamble.
  * @p h0 is the smoothing length at the start of the step's NR iterations; the cumulative upward
- * movement is capped at hExtFactor * h0 to stay within the extended neighbor list.
+ * movement is capped at hWallFactor * h0 (>= the list extension hExtFactor, see VeNRPostamble).
  */
 template<class Neighbordhood, class Tc, class T, class Tm>
-void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, float hExtFactor, float tol, float bandMin, float bandMax,
-                const T* xm, const Tm* m, const T* h0, T* ballmass, const T* wh, const T* whd, T* kx, T* hNew, T* cnt)
+void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, float hExtFactor, float hWallFactor, float tol, float bandMin,
+                float bandMax, const T* xm, const Tm* m, const T* h0, T* ballmass, const T* wh, const T* whd, T* kx,
+                T* hNew, T* cnt)
 {
     neighborhood.ijLoop(std::make_tuple(xm, m, h0), std::make_tuple(kx, hNew, cnt), VeNRInteraction<T>{wh, whd},
-                        VeNRPostamble<T, Tc>{K, ballmass, T(hExtFactor), T(tol), T(bandMin), T(bandMax)});
+                        VeNRPostamble<T, Tc>{K, ballmass, T(hExtFactor), T(hWallFactor), T(tol), T(bandMin),
+                                             T(bandMax)});
 }
 
 /*! @brief one Newton-Raphson smoothing-length update for a single particle by direct octree traversal
@@ -342,8 +371,8 @@ void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, float hExtFactor, float
  *         neighbor count inside 2h (self included) that the convergence-point band check tested
  */
 template<class Tc, class T, class Tm, class KeyType>
-HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T* ballmass, T hExtFactor, T tol, T bandMin,
-                                      T bandMax, const cstone::OctreeNsView<Tc, KeyType>& tree,
+HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T* ballmass, T hExtFactor, T hWallFactor,
+                                      T tol, T bandMin, T bandMax, const cstone::OctreeNsView<Tc, KeyType>& tree,
                                       const cstone::Box<Tc>& box, const Tc* x, const Tc* y, const Tc* z, const T* xm,
                                       const Tm* m, const T* h0, const T* wh, const T* whd, T* cnt)
 {
@@ -354,7 +383,13 @@ HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T* ballm
     //! self contribution; the leaf sweep below skips i == j
     auto [kxsum, dkxsum, cntsum] = interaction(iData, iData, cstone::Vec3<Tc>{0, 0, 0}, T(0));
 
-    const Tc radiusSq     = Tc(4.0) * Tc(hi) * Tc(hi);
+    /* Enumeration is capped at the capture radius of the prebuilt lists: beyond it a live-radius
+     * search would be complete on interior ranks but halo-truncated near rank boundaries, making
+     * the root decomposition-dependent — and different from the ijloop passes. The cap keeps the
+     * tail exactly equivalent to an ijloop pass (a no-op while hi <= hExtFactor * h0); the
+     * interaction still cuts at the live 2h through the kernel support. */
+    const T  hSearch      = stl::min(hi, hExtFactor * h0[i]);
+    const Tc radiusSq     = Tc(4.0) * Tc(hSearch) * Tc(hSearch);
     const Tc cellRadiusSq = radiusSq * tree.searchExtFactor * tree.searchExtFactor;
 
     auto pbc    = cstone::BoundaryType::periodic;
@@ -406,7 +441,7 @@ HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T* ballm
     if (usePbc) { cstone::singleTraversal(tree.childOffsets, tree.parents, overlapsPbc, searchBoxPbc); }
     else { cstone::singleTraversal(tree.childOffsets, tree.parents, overlaps, searchBox); }
 
-    auto [kxi, hNew, cnti] = VeNRPostamble<T, Tc>{K, ballmass, hExtFactor, tol, bandMin, bandMax}(
+    auto [kxi, hNew, cnti] = VeNRPostamble<T, Tc>{K, ballmass, hExtFactor, hWallFactor, tol, bandMin, bandMax}(
         iData, std::make_tuple(kxsum, dkxsum, cntsum));
     cnt[i] = cnti;
     return hNew;
