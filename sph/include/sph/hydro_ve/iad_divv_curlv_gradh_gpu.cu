@@ -40,8 +40,7 @@ namespace gpu
 {
 
 template<class Dataset>
-void computeIadDivvCurlvGradh(const GroupView&, Dataset& d, const cstone::Box<typename Dataset::RealType>&,
-                              bool nrMode, float gradhMin)
+void computeIadDivvCurlvGradh(Dataset& d, const cstone::Box<typename Dataset::RealType>&, bool nrMode, float gradhMin)
 {
     using Th = typename Dataset::HydroType;
     iadDivvCurlvGradhIjLoop(d.neighborhood, d.K, d.iadConditionQuality, d.iadRegBit, rawPtr(d.vx), rawPtr(d.vy), rawPtr(d.vz), rawPtr(d.m), rawPtr(d.xm),
@@ -53,7 +52,7 @@ void computeIadDivvCurlvGradh(const GroupView&, Dataset& d, const cstone::Box<ty
     checkGpuErrors(cudaDeviceSynchronize());
 }
 
-template void computeIadDivvCurlvGradh(const GroupView& grp, sphexa::ParticlesData<cstone::execution::Gpu>& d,
+template void computeIadDivvCurlvGradh(sphexa::ParticlesData<cstone::execution::Gpu>& d,
                                        const cstone::Box<SphTypes::CoordinateType>&, bool, float);
 
 } // namespace gpu

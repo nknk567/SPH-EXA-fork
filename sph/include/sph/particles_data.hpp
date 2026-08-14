@@ -105,7 +105,6 @@ public:
      */
     unsigned ngmaxExt{0};
 
-
     //! @brief whether to remove unconverged particles when the smoothing length update failed
     int removeUnconvergedParticles{false};
 
@@ -161,7 +160,7 @@ public:
     //! @brief choice of smoothing kernel type
     sph::SphKernelType kernelChoice{sph::SphKernelType::sinc_n};
 
-    HydroType      iadConditionQuality{1e-6};
+    HydroType      iadConditionQuality{0.0};
     const unsigned iadRegBit{IDLayout::iadRegBit};
 
     //! @brief Unified interface to attribute initialization, reading and writing
@@ -238,33 +237,33 @@ public:
      * The length of these arrays equals the local number of particles including halos
      * if the field is active and is zero if the field is inactive.
      */
-    FieldVector<RealType>  x, y, z;                            // Positions
-    FieldVector<XM1Type>   x_m1, y_m1, z_m1;                   // Difference between current and previous positions
-    FieldVector<HydroType> vx, vy, vz;                         // Velocities
-    FieldVector<HydroType> rho;                                // Density
-    FieldVector<RealType>  temp;                               // Temperature
-    FieldVector<RealType>  u;                                  // Internal Energy
-    FieldVector<HydroType> p;                                  // Pressure
-    FieldVector<HydroType> prho;                               // p / (kx * m^2 * gradh)
-    FieldVector<HydroType> tdpdTrho;                           // temp * dp/dT * prho
-    FieldVector<HydroType> h;                                  // Smoothing Length
-    FieldVector<Tmass>     m;                                  // Mass
-    FieldVector<HydroType> c;                                  // Speed of sound
-    FieldVector<HydroType> cv;                                 // Specific heat
-    FieldVector<HydroType> mue, mui;                           // mean molecular weight (electrons, ions)
-    FieldVector<HydroType> divv, curlv;                        // Div(velocity), Curl(velocity)
-    FieldVector<HydroType> ugrav;                              // Gravitational potential
-    FieldVector<HydroType> ax, ay, az;                         // acceleration
-    FieldVector<RealType>  du;                                 // energy rate of change (du/dt)
-    FieldVector<XM1Type>   du_m1;                              // previous energy rate of change (du/dt)
-    FieldVector<HydroType> c11, c12, c13, c22, c23, c33;       // IAD components
-    FieldVector<HydroType> alpha;                              // AV coeficient
-    FieldVector<HydroType> xm;                                 // Volume element definition
-    FieldVector<HydroType> kx;                                 // Volume element normalization
-    FieldVector<HydroType> gradh;                              // grad(h) term
-    FieldVector<HydroType> ballmass;                           // NR h-target rho * h^3 = ballmass, nominal ballmassEta(ng0) * m
-    FieldVector<KeyType>   keys;                               // Particle space-filling-curve keys
-    FieldVector<unsigned>  nc;                                 // number of neighbors of each particle
+    FieldVector<RealType>  x, y, z;                      // Positions
+    FieldVector<XM1Type>   x_m1, y_m1, z_m1;             // Difference between current and previous positions
+    FieldVector<HydroType> vx, vy, vz;                   // Velocities
+    FieldVector<HydroType> rho;                          // Density
+    FieldVector<RealType>  temp;                         // Temperature
+    FieldVector<RealType>  u;                            // Internal Energy
+    FieldVector<HydroType> p;                            // Pressure
+    FieldVector<HydroType> prho;                         // p / (kx * m^2 * gradh)
+    FieldVector<HydroType> tdpdTrho;                     // temp * dp/dT * prho
+    FieldVector<HydroType> h;                            // Smoothing Length
+    FieldVector<Tmass>     m;                            // Mass
+    FieldVector<HydroType> c;                            // Speed of sound
+    FieldVector<HydroType> cv;                           // Specific heat
+    FieldVector<HydroType> mue, mui;                     // mean molecular weight (electrons, ions)
+    FieldVector<HydroType> divv, curlv;                  // Div(velocity), Curl(velocity)
+    FieldVector<HydroType> ugrav;                        // Gravitational potential
+    FieldVector<HydroType> ax, ay, az;                   // acceleration
+    FieldVector<RealType>  du;                           // energy rate of change (du/dt)
+    FieldVector<XM1Type>   du_m1;                        // previous energy rate of change (du/dt)
+    FieldVector<HydroType> c11, c12, c13, c22, c23, c33; // IAD components
+    FieldVector<HydroType> alpha;                        // AV coeficient
+    FieldVector<HydroType> xm;                           // Volume element definition
+    FieldVector<HydroType> kx;                           // Volume element normalization
+    FieldVector<HydroType> gradh;                        // grad(h) term
+    FieldVector<HydroType> ballmass; // NR h-target rho * h^3 = ballmass, nominal ballmassEta(ng0) * m
+    FieldVector<KeyType>   keys;     // Particle space-filling-curve keys
+    FieldVector<unsigned>  nc;       // number of neighbors of each particle
     FieldVector<HydroType> dV11, dV12, dV13, dV22, dV23, dV33; // Velocity gradient components
     FieldVector<uint8_t>   rung;                               // rung per particle of previous timestep
     FieldVector<uint64_t>  id;                                 // unique particle id
@@ -284,10 +283,10 @@ public:
      * Name of each field as string for use e.g in HDF5 output. Order has to correspond to what's returned by data().
      */
     inline static constexpr std::array fieldNames{
-        "x",     "y",    "z",        "x_m1",  "y_m1",  "z_m1",  "vx",    "vy",   "vz", "rho",  "u",
-        "p",     "prho", "tdpdTrho", "h",     "m",     "c",     "ugrav", "ax",   "ay", "az",   "du",
-        "du_m1", "c11",  "c12",      "c13",   "c22",   "c23",   "c33",   "mue",  "mui", "temp", "cv",
-        "xm",    "kx",   "divv",     "curlv", "alpha", "gradh", "keys",  "nc",   "dV11", "dV12", "dV13",
+        "x",     "y",    "z",        "x_m1",  "y_m1",  "z_m1",      "vx",      "vy",  "vz",   "rho",  "u",
+        "p",     "prho", "tdpdTrho", "h",     "m",     "c",         "ugrav",   "ax",  "ay",   "az",   "du",
+        "du_m1", "c11",  "c12",      "c13",   "c22",   "c23",       "c33",     "mue", "mui",  "temp", "cv",
+        "xm",    "kx",   "divv",     "curlv", "alpha", "gradh",     "keys",    "nc",  "dV11", "dV12", "dV13",
         "dV22",  "dV23", "dV33",     "rung",  "id",    "dtCourant", "ballmass"};
 
     //! @brief dataset prefix to be prepended to fieldNames for structured output

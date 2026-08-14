@@ -73,9 +73,10 @@ struct IADDivVCurlVPostamble
 {
     Tc K;
     //! @brief kernel lookup table, NR-mode flag and grad-h floor, forwarded to IADGradhPostamble
-    const T*       wh     = nullptr;
-    bool           nrMode = false;
-    T              gradhMin{0.1};
+    const T* wh     = nullptr;
+    bool     nrMode = false;
+    T        gradhMin{0.1};
+
     const T        iadConditionQuality;
     const unsigned iadRegBit;
 
@@ -112,27 +113,31 @@ void iadDivvCurlvGradhIjLoop(const Neighborhood& neighborhood, Tc K, T iadCondit
     {
         const auto output =
             std::make_tuple(c11, c12, c13, c22, c23, c33, gradh, id, divv, curlv, dV11, dV12, dV13, dV22, dV23, dV33);
-        neighborhood.ijLoop(input, output, IADDivVCurlVInteraction<T>{wh, whd},
-                            IADDivVCurlVPostamble<true, true, T, Tc>{K, wh, nrGradh, gradhMin, iadConditionQuality, iadRegBit});
+        neighborhood.ijLoop(
+            input, output, IADDivVCurlVInteraction<T>{wh, whd},
+            IADDivVCurlVPostamble<true, true, T, Tc>{K, wh, nrGradh, gradhMin, iadConditionQuality, iadRegBit});
     }
     else if (curlv)
     {
         const auto output = std::make_tuple(c11, c12, c13, c22, c23, c33, gradh, id, divv, curlv);
-        neighborhood.ijLoop(input, output, IADDivVCurlVInteraction<T>{wh, whd},
-                            IADDivVCurlVPostamble<true, false, T, Tc>{K, wh, nrGradh, gradhMin, iadConditionQuality, iadRegBit});
+        neighborhood.ijLoop(
+            input, output, IADDivVCurlVInteraction<T>{wh, whd},
+            IADDivVCurlVPostamble<true, false, T, Tc>{K, wh, nrGradh, gradhMin, iadConditionQuality, iadRegBit});
     }
     else if (doGradV)
     {
         const auto output =
             std::make_tuple(c11, c12, c13, c22, c23, c33, gradh, id, divv, dV11, dV12, dV13, dV22, dV23, dV33);
-        neighborhood.ijLoop(input, output, IADDivVCurlVInteraction<T>{wh, whd},
-                            IADDivVCurlVPostamble<false, true, T, Tc>{K, wh, nrGradh, gradhMin, iadConditionQuality, iadRegBit});
+        neighborhood.ijLoop(
+            input, output, IADDivVCurlVInteraction<T>{wh, whd},
+            IADDivVCurlVPostamble<false, true, T, Tc>{K, wh, nrGradh, gradhMin, iadConditionQuality, iadRegBit});
     }
     else
     {
         const auto output = std::make_tuple(c11, c12, c13, c22, c23, c33, gradh, id, divv);
-        neighborhood.ijLoop(input, output, IADDivVCurlVInteraction<T>{wh, whd},
-                            IADDivVCurlVPostamble<false, false, T, Tc>{K, wh, nrGradh, gradhMin, iadConditionQuality, iadRegBit});
+        neighborhood.ijLoop(
+            input, output, IADDivVCurlVInteraction<T>{wh, whd},
+            IADDivVCurlVPostamble<false, false, T, Tc>{K, wh, nrGradh, gradhMin, iadConditionQuality, iadRegBit});
     }
 }
 

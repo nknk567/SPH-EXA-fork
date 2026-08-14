@@ -115,15 +115,9 @@ struct IADGradhPostamble
         tau33 *= normalization;
 
         auto [det, regularize] = needRegularization(tau11, tau12, tau13, tau22, tau23, tau33, iadConditionQuality);
-        if (regularize)
+        if (regularize && nci > 1)
         {
-            regularizeIadMomentMatrix(tau11, tau12, tau13, tau22, tau23, tau33, iadConditionQuality);
-            /* The cij below are built from the adjugate of the RIDGED matrix; the determinant in
-             * the normalization must be the ridged one as well. With the pre-ridge determinant,
-             * cij get scaled by det(ridged)/det(original) = target/quality >> 1: the
-             * regularization then amplifies the gradients of degenerate particles instead of
-             * bounding them (observed as unphysical divv driving the rho time step to zero). */
-            det = iadMomentDet(tau11, tau12, tau13, tau22, tau23, tau33);
+            det = regularizeIadMomentMatrix(tau11, tau12, tau13, tau22, tau23, tau33, iadConditionQuality);
         }
         uint64_t newId = setRegularizationTag(regularize, iadRegBit, idi);
 
@@ -176,6 +170,7 @@ struct IADGradhPostamble
          * prho ~ 1/Omega in the EOS: floor it to keep the pressure term bounded in such transients.
          * Legitimate values stay well above the floor. */
         if (nrMode && gradhi < gradhMin) { gradhi = gradhMin; }
+
         return std::make_tuple(c11i, c12i, c13i, c22i, c23i, c33i, gradhi, newId);
     }
 };

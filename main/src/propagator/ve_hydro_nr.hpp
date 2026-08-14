@@ -317,7 +317,7 @@ public:
          * caps (observed as kx -> eta/(K*w0) spikes and permanent 9-iteration tug-of-war). */
         if (nrParams_.xmSource != 0 || d.iteration == 1)
         {
-            computeXMass(groups_.view(), d, domain.box());
+            computeXMass(d, domain.box());
             timer.step("XMass");
         }
         domain.exchangeHalos(std::tie(get<"xm">(d)), get<"ax">(d), get<"keys">(d));
@@ -325,7 +325,7 @@ public:
 
         convergeSmoothingLengthNR(domain, simData);
 
-        computeVe(groups_.view(), d, domain.box());
+        computeVe(d, domain.box());
         timer.step("Generalized Volume Elements");
         //! h of locally owned particles changed: halos need updating, h_j enters the momentum equation
         domain.exchangeHalos(std::tuple_cat(std::tie(get<"h">(d)), get<"vx", "vy", "vz", "kx">(d)), get<"ax">(d),

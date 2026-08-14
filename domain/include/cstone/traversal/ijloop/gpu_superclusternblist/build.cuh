@@ -203,7 +203,6 @@ template<class Config, unsigned NumSuperclustersPerBlock>
 __device__ __forceinline__ bool storeNeighborData(std::uint32_t* const __restrict__ jClusters,
                                                   const unsigned jClusterBytes,
                                                   const std::uint32_t* const __restrict__ masks,
-                                                  const unsigned ncmax,
                                                   std::uint32_t* const __restrict__ neighborData,
                                                   const std::size_t maxNeighborDataSize,
                                                   unsigned long long* __restrict__ neighborDataSize,
@@ -213,7 +212,7 @@ __device__ __forceinline__ bool storeNeighborData(std::uint32_t* const __restric
     assert(blockDim.x * blockDim.y == GpuConfig::warpSize);
     assert(blockDim.z == NumSuperclustersPerBlock);
 
-    const unsigned mSize  = masksSize<Config>(std::min(info.neighborsCount, ncmax));
+    const unsigned mSize  = masksSize<Config>(info.neighborsCount);
     const unsigned nbSize = (jClusterBytes + sizeof(std::uint32_t) - 1) / sizeof(std::uint32_t);
 
     const unsigned long long totalSize = nbSize + mSize;
@@ -358,7 +357,8 @@ collectNeighborJClusters(const OctreeNsView<Tc, KeyType>& tree,
     {
         const Vec3<Tc> srcCenter = tree.centers[idx];
         const Vec3<Tc> srcSize   = tree.sizes[idx];
-        const Th srcRadius       = Config::symmetric ? loadAtIndexIfPtr(nodeRMax, idx) * tree.searchExtFactor : Th(0);
+        if (srcSize[0] == 0 && srcSize[1] == 0 && srcSize[2] == 0) return false;
+        const Th srcRadius = Config::symmetric ? loadAtIndexIfPtr(nodeRMax, idx) * tree.searchExtFactor : Th(0);
 
         bool overlaps = false;
         for (unsigned w = 0; w < warpsPerSupercluster; ++w)
@@ -506,8 +506,8 @@ constexpr std::size_t scratchSize(const unsigned ncmax)
  * @param[in]    jClusterBboxes         bounding boxes of j-clusters
  * @param[in]    nodeRMax               max. particle radii of tree nodes
  * @param[in]    ncmax                  max. number of neighbor clusters (upper bound for numCandidates)
- * @param[out]   neighborData           global memory neighbor data array where (possibly compressed) neighbor indices
- *                                      will be stored
+ * @param[out]   neighborData           global memory neighbor data array where (possibly compressed) neighbor
+ *                                      indices will be stored
  * @param[in]    neighborDataSize       size of neighborData array to avoid out of bounds accesses
  * @param[inout] superclusterInfo       supercluster info
  * @param[in]    numSuperClusters       number of superclusters
@@ -564,19 +564,18 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
         SuperclusterInfo info = {.index = index + firstISupercluster, .neighborsCount = 0, .dataIndex = 0};
 
         const unsigned jClusterBytes = collectNeighborJClusters<Config, UsePbc>(
-            tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax, firstISupercluster,
-            lastISupercluster, jClusters, masks, info);
-
+            tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax,
+            firstISupercluster, lastISupercluster, jClusters, masks, info);
         maxNeighbors = std::max(info.neighborsCount, maxNeighbors);
 
         if (info.neighborsCount > ncmax && laneIdx == 0) globalBuildData->status = BuildStatus::neighbor_list_overflow;
+        info.neighborsCount = std::min(info.neighborsCount, ncmax);
 
         const bool storeSuccessful = storeNeighborData<Config, NumSuperclustersPerBlock>(
-            jClusters, jClusterBytes, masks, ncmax, neighborData, neighborDataSize,
-            &globalBuildData->neighborDataSize, info);
+            jClusters, jClusterBytes, masks, neighborData, neighborDataSize, &globalBuildData->neighborDataSize, info);
 
 #ifdef __CUDACC__
-        cuda::discard_memory(jClusters, scratchSize<Config>(std::min(info.neighborsCount, ncmax)) * sizeof(std::uint32_t));
+        cuda::discard_memory(jClusters, scratchSize<Config>(info.neighborsCount) * sizeof(std::uint32_t));
 #endif
 
         if (!storeSuccessful)
