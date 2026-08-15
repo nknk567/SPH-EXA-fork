@@ -36,7 +36,12 @@
 #endif
 #endif
 
+#include <thrust/execution_policy.h>
+#include <thrust/functional.h>
+#include <thrust/transform_reduce.h>
+
 #include "cstone/cuda/memory.cuh"
+#include "cstone/cuda/thrust_util.cuh"
 #include "cstone/execution.hpp"
 #include "cstone/findneighbors.hpp"
 #include "cstone/reducearray.cuh"
@@ -68,6 +73,13 @@ struct GlobalBuildData
     unsigned long long maxNeighborsAndIndex;
     //! @brief number of superclusters whose neighbor list overflowed ncmax
     unsigned numOverflows;
+};
+
+//! @brief masks invalid-h sentinels like the build traversal does; used by the overflow diagnostics
+template<class Th>
+struct InvalidHToZeroOp
+{
+    HOST_DEVICE_FUN Th operator()(Th v) const { return invalidHToZero(v); }
 };
 
 template<class Tc>
@@ -668,6 +680,26 @@ std::size_t buildNbList(const execution::Gpu exec,
                       << (maxSupercluster == lastSupercluster && lastHasTrailingHalos ? ", contains trailing halos"
                                                                                      : "")
                       << "; " << buildData.numOverflows << " supercluster(s) overflowed)." << std::endl;
+            //! locate the oversized smoothing lengths driving the overflow: a stale (guard-unchecked) large h either
+            //! sits inside the overflowing supercluster itself (i-side capture) or in the halo regions, whose h is the
+            //! owner rank's end-of-previous-step value and reaches in via the symmetric max(h_i, h_j) radius (j-side)
+            if constexpr (std::is_pointer_v<ThP>)
+            {
+                using Th        = std::remove_cvref_t<std::remove_pointer_t<ThP>>;
+                const auto maxH = [&](LocalIndex a, LocalIndex b)
+                {
+                    //! same invalid-h masking as the build itself, so the maxima reflect what the traversal saw
+                    return b > a ? thrust::transform_reduce(thrustExecPolicy(exec), h + a, h + b,
+                                                            InvalidHToZeroOp<Th>{}, Th(0), thrust::maximum<Th>())
+                                 : Th(0);
+                };
+                const LocalIndex scFirst = maxSupercluster * Config::superclusterSize;
+                const LocalIndex scLast  = std::min<LocalIndex>(scFirst + Config::superclusterSize, totalBodies);
+                std::cerr << "         overflow diagnostics: max h overflowing supercluster " << maxH(scFirst, scLast)
+                          << ", local " << maxH(groups.firstBody, groups.lastBody) << ", front halo "
+                          << maxH(firstValidBody, groups.firstBody) << ", back halo "
+                          << maxH(groups.lastBody, totalBodies) << std::endl;
+            }
             break;
         }
         case BuildStatus::neighbor_data_overflow: throw std::runtime_error("overflow in cluster neighbor data");
