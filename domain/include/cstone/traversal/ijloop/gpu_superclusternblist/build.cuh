@@ -64,8 +64,10 @@ struct GlobalBuildData
     //! @brief global group index counter, atomically increased during build
     unsigned index;
     BuildStatus status;
-    //! @brief maximum number of cluster neighbors
-    unsigned maxNeighbors;
+    //! @brief maximum number of cluster neighbors (bits 63:32) and the supercluster index it occurred at (bits 31:0)
+    unsigned long long maxNeighborsAndIndex;
+    //! @brief number of superclusters whose neighbor list overflowed ncmax
+    unsigned numOverflows;
 };
 
 template<class Tc>
@@ -552,7 +554,7 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
     const unsigned firstISupercluster = superclusterIndex<Config>(firstBody);
     const unsigned lastISupercluster  = superclusterIndex<Config>(lastBody - 1) + 1;
 
-    unsigned maxNeighbors = 0;
+    unsigned long long maxNeighborsAndIndex = 0;
 
     while (true)
     {
@@ -566,9 +568,15 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
         const unsigned jClusterBytes = collectNeighborJClusters<Config, UsePbc>(
             tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax,
             firstISupercluster, lastISupercluster, jClusters, masks, info);
-        maxNeighbors = std::max(info.neighborsCount, maxNeighbors);
+        //! pack count and supercluster index so the atomicMax below reports where the maximum occurred
+        maxNeighborsAndIndex =
+            std::max(maxNeighborsAndIndex, (static_cast<unsigned long long>(info.neighborsCount) << 32) | info.index);
 
-        if (info.neighborsCount > ncmax && laneIdx == 0) globalBuildData->status = BuildStatus::neighbor_list_overflow;
+        if (info.neighborsCount > ncmax && laneIdx == 0)
+        {
+            globalBuildData->status = BuildStatus::neighbor_list_overflow;
+            atomicAdd(&globalBuildData->numOverflows, 1u);
+        }
         info.neighborsCount = std::min(info.neighborsCount, ncmax);
 
         const bool storeSuccessful = storeNeighborData<Config, NumSuperclustersPerBlock>(
@@ -587,7 +595,7 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
         if (laneIdx == 0) superclusterInfo[index] = info;
     }
 
-    if (laneIdx == 0) atomicMax(&globalBuildData->maxNeighbors, maxNeighbors);
+    if (laneIdx == 0) atomicMax(&globalBuildData->maxNeighborsAndIndex, maxNeighborsAndIndex);
 }
 
 template<class Config, class Tc, class ThP, class KeyType>
@@ -644,10 +652,24 @@ std::size_t buildNbList(const execution::Gpu exec,
     {
         case BuildStatus::success: break;
         case BuildStatus::neighbor_list_overflow:
+        {
+            const unsigned maxNeighbors      = buildData.maxNeighborsAndIndex >> 32;
+            const unsigned maxSupercluster   = buildData.maxNeighborsAndIndex & 0xffffffffu;
+            const unsigned firstSupercluster = superclusterIndex<Config>(groups.firstBody);
+            const unsigned lastSupercluster  = superclusterIndex<Config>(groups.lastBody - 1);
+            //! trailing halo particles are traversed as i-particles of the last supercluster (range clamped at
+            //! totalBodies, not lastBody); a stale large halo h there inflates that one supercluster's list
+            const bool lastHasTrailingHalos = groups.lastBody % Config::superclusterSize != 0 &&
+                                              totalBodies > groups.lastBody;
             std::cerr << "WARNING: overflow in cluster neighbor list in supercluster neighborhood. Missing neighbors! "
                          "Try to increase ncmax. Current ncmax is "
-                      << ncmax << ", but found up to " << buildData.maxNeighbors << " neighbor clusters." << std::endl;
+                      << ncmax << ", but found up to " << maxNeighbors << " neighbor clusters (max at supercluster "
+                      << maxSupercluster << " in [" << firstSupercluster << ", " << lastSupercluster << "]"
+                      << (maxSupercluster == lastSupercluster && lastHasTrailingHalos ? ", contains trailing halos"
+                                                                                     : "")
+                      << "; " << buildData.numOverflows << " supercluster(s) overflowed)." << std::endl;
             break;
+        }
         case BuildStatus::neighbor_data_overflow: throw std::runtime_error("overflow in cluster neighbor data");
     }
 
