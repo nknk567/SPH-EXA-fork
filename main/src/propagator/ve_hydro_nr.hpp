@@ -304,6 +304,16 @@ public:
          * rebase) is decided at the NR converging point, see the band check in VeNRPostamble. */
         updateSmoothingLengthIterative(groups_.view(), d, domain.box());
         timer.step("updateSmoothingLengthIterative");
+        /* The guard bounds every LOCAL particle's neighbor count at the current positions, but
+         * the halo h received at sync is the owner's end-of-previous-step value: NR wall-grown
+         * and never count-checked at the new positions. The symmetric list build reads halo h
+         * on both sides (j-side max(h_i, h_j) acceptance, node rMax upsweep, and the trailing
+         * halo particles traversed as i-particles of the last supercluster), so a stale
+         * large-h halo can capture an unbounded cluster neighborhood — observed as episodic
+         * ncmax overflows at rank boundaries. Re-exchanging h here makes halo h exactly as
+         * guard-bounded as local h for the build. */
+        domain.exchangeHalos(std::tie(get<"h">(d)), get<"ax">(d), get<"keys">(d));
+        timer.step("mpi::synchronizeHalos");
         findNeighborsSfc(groups_.view(), d, domain.box());
         timer.step("FindNeighbors");
         pmReader.step();
