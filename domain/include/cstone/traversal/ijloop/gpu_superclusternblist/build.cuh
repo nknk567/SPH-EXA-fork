@@ -36,7 +36,12 @@
 #endif
 #endif
 
+#include <thrust/execution_policy.h>
+#include <thrust/functional.h>
+#include <thrust/reduce.h>
+
 #include "cstone/cuda/memory.cuh"
+#include "cstone/cuda/thrust_util.cuh"
 #include "cstone/execution.hpp"
 #include "cstone/findneighbors.hpp"
 #include "cstone/reducearray.cuh"
@@ -64,8 +69,10 @@ struct GlobalBuildData
     //! @brief global group index counter, atomically increased during build
     unsigned index;
     BuildStatus status;
-    //! @brief maximum number of cluster neighbors
-    unsigned maxNeighbors;
+    //! @brief maximum number of cluster neighbors (bits 63:32) and the supercluster index it occurred at (bits 31:0)
+    unsigned long long maxNeighborsAndIndex;
+    //! @brief number of superclusters whose neighbor list overflowed ncmax
+    unsigned numOverflows;
 };
 
 template<class Tc>
@@ -141,7 +148,7 @@ __global__ void computeJClusterBboxesKernel(const LocalIndex firstValidBody,
     if constexpr (Config::symmetric)
     {
         using Th    = std::remove_cvref_t<std::remove_pointer_t<ThP>>;
-        const Th hi = invalidHToZero(loadAtIndexIfPtr(h, std::max(std::min(i, totalBodies - 1), firstValidBody)));
+        const Th hi = loadAtIndexIfPtr(h, std::max(std::min(i, totalBodies - 1), firstValidBody));
         Th rMax     = 2 * hi;
 
 #pragma unroll
@@ -203,7 +210,6 @@ template<class Config, unsigned NumSuperclustersPerBlock>
 __device__ __forceinline__ bool storeNeighborData(std::uint32_t* const __restrict__ jClusters,
                                                   const unsigned jClusterBytes,
                                                   const std::uint32_t* const __restrict__ masks,
-                                                  const unsigned ncmax,
                                                   std::uint32_t* const __restrict__ neighborData,
                                                   const std::size_t maxNeighborDataSize,
                                                   unsigned long long* __restrict__ neighborDataSize,
@@ -213,7 +219,7 @@ __device__ __forceinline__ bool storeNeighborData(std::uint32_t* const __restric
     assert(blockDim.x * blockDim.y == GpuConfig::warpSize);
     assert(blockDim.z == NumSuperclustersPerBlock);
 
-    const unsigned mSize  = masksSize<Config>(std::min(info.neighborsCount, ncmax));
+    const unsigned mSize  = masksSize<Config>(info.neighborsCount);
     const unsigned nbSize = (jClusterBytes + sizeof(std::uint32_t) - 1) / sizeof(std::uint32_t);
 
     const unsigned long long totalSize = nbSize + mSize;
@@ -251,7 +257,7 @@ __device__ __forceinline__ auto loadSuperclusterParticleData(const LocalIndex fi
     {
         const unsigned i = std::min(firstBody + w * GpuConfig::warpSize + laneIdx, lastBody - 1);
         iPos[w]          = {x[i], y[i], z[i]};
-        iRadius[w]       = 2 * invalidHToZero(loadAtIndexIfPtr(h, i)) * searchExtFactor;
+        iRadius[w]       = 2 * loadAtIndexIfPtr(h, i) * searchExtFactor;
     }
     return std::make_tuple(iPos, iRadius);
 }
@@ -358,7 +364,8 @@ collectNeighborJClusters(const OctreeNsView<Tc, KeyType>& tree,
     {
         const Vec3<Tc> srcCenter = tree.centers[idx];
         const Vec3<Tc> srcSize   = tree.sizes[idx];
-        const Th srcRadius       = Config::symmetric ? loadAtIndexIfPtr(nodeRMax, idx) * tree.searchExtFactor : Th(0);
+        if (srcSize[0] == 0 && srcSize[1] == 0 && srcSize[2] == 0) return false;
+        const Th srcRadius = Config::symmetric ? loadAtIndexIfPtr(nodeRMax, idx) * tree.searchExtFactor : Th(0);
 
         bool overlaps = false;
         for (unsigned w = 0; w < warpsPerSupercluster; ++w)
@@ -422,8 +429,7 @@ collectNeighborJClusters(const OctreeNsView<Tc, KeyType>& tree,
                     const LocalIndex j =
                         std::clamp(jCluster * Config::jSize + jClusterParticle, firstValidBody, totalBodies - 1);
                     const Vec3<Tc> jPos = {x[j], y[j], z[j]};
-                    Th jRadius =
-                        Config::symmetric ? 2 * invalidHToZero(loadAtIndexIfPtr(h, j)) * tree.searchExtFactor : Th(0);
+                    const Th jRadius    = Config::symmetric ? 2 * loadAtIndexIfPtr(h, j) * tree.searchExtFactor : Th(0);
                     const unsigned warpIndex = jClusterParticle / (Config::jSize / Config::numWarpsPerInteraction);
 
                     for (unsigned w = 0; w < warpsPerSupercluster; ++w)
@@ -506,8 +512,8 @@ constexpr std::size_t scratchSize(const unsigned ncmax)
  * @param[in]    jClusterBboxes         bounding boxes of j-clusters
  * @param[in]    nodeRMax               max. particle radii of tree nodes
  * @param[in]    ncmax                  max. number of neighbor clusters (upper bound for numCandidates)
- * @param[out]   neighborData           global memory neighbor data array where (possibly compressed) neighbor indices
- *                                      will be stored
+ * @param[out]   neighborData           global memory neighbor data array where (possibly compressed) neighbor
+ *                                      indices will be stored
  * @param[in]    neighborDataSize       size of neighborData array to avoid out of bounds accesses
  * @param[inout] superclusterInfo       supercluster info
  * @param[in]    numSuperClusters       number of superclusters
@@ -552,7 +558,7 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
     const unsigned firstISupercluster = superclusterIndex<Config>(firstBody);
     const unsigned lastISupercluster  = superclusterIndex<Config>(lastBody - 1) + 1;
 
-    unsigned maxNeighbors = 0;
+    unsigned long long maxNeighborsAndIndex = 0;
 
     while (true)
     {
@@ -566,17 +572,22 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
         const unsigned jClusterBytes = collectNeighborJClusters<Config, UsePbc>(
             tree, box, firstValidBody, totalBodies, x, y, z, h, jClusterBboxes, nodeRMax, ncmax, firstISupercluster,
             lastISupercluster, jClusters, masks, info);
+        //! pack count and supercluster index so the atomicMax below reports where the maximum occurred
+        maxNeighborsAndIndex =
+            std::max(maxNeighborsAndIndex, (static_cast<unsigned long long>(info.neighborsCount) << 32) | info.index);
 
-        maxNeighbors = std::max(info.neighborsCount, maxNeighbors);
-
-        if (info.neighborsCount > ncmax && laneIdx == 0) globalBuildData->status = BuildStatus::neighbor_list_overflow;
+        if (info.neighborsCount > ncmax && laneIdx == 0)
+        {
+            globalBuildData->status = BuildStatus::neighbor_list_overflow;
+            atomicAdd(&globalBuildData->numOverflows, 1u);
+        }
+        info.neighborsCount = std::min(info.neighborsCount, ncmax);
 
         const bool storeSuccessful = storeNeighborData<Config, NumSuperclustersPerBlock>(
-            jClusters, jClusterBytes, masks, ncmax, neighborData, neighborDataSize,
-            &globalBuildData->neighborDataSize, info);
+            jClusters, jClusterBytes, masks, neighborData, neighborDataSize, &globalBuildData->neighborDataSize, info);
 
 #ifdef __CUDACC__
-        cuda::discard_memory(jClusters, scratchSize<Config>(std::min(info.neighborsCount, ncmax)) * sizeof(std::uint32_t));
+        cuda::discard_memory(jClusters, scratchSize<Config>(info.neighborsCount) * sizeof(std::uint32_t));
 #endif
 
         if (!storeSuccessful)
@@ -588,7 +599,7 @@ __global__ __launch_bounds__(GpuConfig::warpSize* NumSuperclustersPerBlock) void
         if (laneIdx == 0) superclusterInfo[index] = info;
     }
 
-    if (laneIdx == 0) atomicMax(&globalBuildData->maxNeighbors, maxNeighbors);
+    if (laneIdx == 0) atomicMax(&globalBuildData->maxNeighborsAndIndex, maxNeighborsAndIndex);
 }
 
 template<class Config, class Tc, class ThP, class KeyType>
@@ -645,10 +656,42 @@ std::size_t buildNbList(const execution::Gpu exec,
     {
         case BuildStatus::success: break;
         case BuildStatus::neighbor_list_overflow:
+        {
+            const unsigned maxNeighbors      = buildData.maxNeighborsAndIndex >> 32;
+            const unsigned maxSupercluster   = buildData.maxNeighborsAndIndex & 0xffffffffu;
+            const unsigned firstSupercluster = superclusterIndex<Config>(groups.firstBody);
+            const unsigned lastSupercluster  = superclusterIndex<Config>(groups.lastBody - 1);
+            //! trailing halo particles are traversed as i-particles of the last supercluster (range clamped at
+            //! totalBodies, not lastBody); a stale large halo h there inflates that one supercluster's list
+            const bool lastHasTrailingHalos = groups.lastBody % Config::superclusterSize != 0 &&
+                                              totalBodies > groups.lastBody;
             std::cerr << "WARNING: overflow in cluster neighbor list in supercluster neighborhood. Missing neighbors! "
                          "Try to increase ncmax. Current ncmax is "
-                      << ncmax << ", but found up to " << buildData.maxNeighbors << " neighbor clusters." << std::endl;
+                      << ncmax << ", but found up to " << maxNeighbors << " neighbor clusters (max at supercluster "
+                      << maxSupercluster << " in [" << firstSupercluster << ", " << lastSupercluster << "]"
+                      << (maxSupercluster == lastSupercluster && lastHasTrailingHalos ? ", contains trailing halos"
+                                                                                     : "")
+                      << "; " << buildData.numOverflows << " supercluster(s) overflowed)." << std::endl;
+            //! locate the oversized smoothing lengths driving the overflow: a stale (guard-unchecked) large h either
+            //! sits inside the overflowing supercluster itself (i-side capture) or in the halo regions, whose h is the
+            //! owner rank's end-of-previous-step value and reaches in via the symmetric max(h_i, h_j) radius (j-side)
+            if constexpr (std::is_pointer_v<ThP>)
+            {
+                using Th        = std::remove_cvref_t<std::remove_pointer_t<ThP>>;
+                const auto maxH = [&](LocalIndex a, LocalIndex b)
+                {
+                    return b > a ? thrust::reduce(thrustExecPolicy(exec), h + a, h + b, Th(0), thrust::maximum<Th>())
+                                 : Th(0);
+                };
+                const LocalIndex scFirst = maxSupercluster * Config::superclusterSize;
+                const LocalIndex scLast  = std::min<LocalIndex>(scFirst + Config::superclusterSize, totalBodies);
+                std::cerr << "         overflow diagnostics: max h overflowing supercluster " << maxH(scFirst, scLast)
+                          << ", local " << maxH(groups.firstBody, groups.lastBody) << ", front halo "
+                          << maxH(firstValidBody, groups.firstBody) << ", back halo "
+                          << maxH(groups.lastBody, totalBodies) << std::endl;
+            }
             break;
+        }
         case BuildStatus::neighbor_data_overflow: throw std::runtime_error("overflow in cluster neighbor data");
     }
 

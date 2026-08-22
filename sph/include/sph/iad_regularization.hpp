@@ -10,8 +10,8 @@ namespace sph
 template<class T>
 HOST_DEVICE_FUN constexpr T iadMomentDet(T tau11, T tau12, T tau13, T tau22, T tau23, T tau33)
 {
-    return tau11 * tau22 * tau33 + T(2) * tau12 * tau23 * tau13 - tau11 * tau23 * tau23 -
-           tau22 * tau13 * tau13 - tau33 * tau12 * tau12;
+    return tau11 * tau22 * tau33 + T(2) * tau12 * tau23 * tau13 - tau11 * tau23 * tau23 - tau22 * tau13 * tau13 -
+           tau33 * tau12 * tau12;
 }
 
 template<class T>
@@ -29,8 +29,8 @@ HOST_DEVICE_FUN constexpr T iadMomentQuality(T det, T trAvg)
 template<class T>
 HOST_DEVICE_FUN constexpr T iadRidgeQuality(T det, T secondInvariant, T trace, T trAvg, T lambda)
 {
-    T delta     = lambda * trAvg;
-    T detRidge  = det + secondInvariant * delta + trace * delta * delta + delta * delta * delta;
+    T delta      = lambda * trAvg;
+    T detRidge   = det + secondInvariant * delta + trace * delta * delta + delta * delta * delta;
     T trAvgRidge = trAvg + delta;
     return iadMomentQuality(detRidge, trAvgRidge);
 }
@@ -49,16 +49,9 @@ HOST_DEVICE_FUN constexpr auto needRegularization(T tau11, T tau12, T tau13, T t
 }
 
 template<class T>
-HOST_DEVICE_FUN constexpr void regularizeIadMomentMatrix(T& tau11, const T& tau12, const T& tau13, T& tau22,
-                                                         const T& tau23, T& tau33, const T conditionQualityTarget)
+HOST_DEVICE_FUN constexpr T regularizeIadMomentMatrix(T& tau11, const T& tau12, const T& tau13, T& tau22,
+                                                      const T& tau23, T& tau33, const T conditionQualityTarget)
 {
-    /* A particle without any neighbors (nc <= 1) has an exactly zero moment matrix; the ridge
-     * equation below divides by trAvg powers and would turn it into NaN (0/0 in a and b), which
-     * then poisons the accelerations of every particle that has this one inside its own support
-     * radius (the NaN survives the det > 0 guard because cij = NaN * factor even for factor = 0).
-     * Leave the matrix untouched: det stays 0, the caller's det > 0 gate zeroes the cij cleanly. */
-    if (!(tau11 + tau22 + tau33 > T(0))) { return; }
-
     T trAvg           = (tau11 + tau22 + tau33) / T(3);
     T det             = iadMomentDet(tau11, tau12, tau13, tau22, tau23, tau33);
     T secondInvariant = iadMomentSecondInvariant(tau11, tau12, tau13, tau22, tau23, tau33);
@@ -90,6 +83,9 @@ HOST_DEVICE_FUN constexpr void regularizeIadMomentMatrix(T& tau11, const T& tau1
     tau11 += delta;
     tau22 += delta;
     tau33 += delta;
+
+    const T regularizedDet = det + delta * secondInvariant + delta * delta * trAvg * 3. + (delta * delta * delta);
+    return regularizedDet;
 }
 
 HOST_DEVICE_FUN inline std::uint64_t setRegularizationTag(bool value, unsigned iadRegBit, std::uint64_t id)

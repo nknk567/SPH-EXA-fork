@@ -12,8 +12,8 @@ void findNeighborsSfc(const cstone::GroupView& groups, sphexa::ParticlesData<cst
     d.neighborhood.build(groups, d, box, subgroups);
 }
 
-using cstone::GroupView;
 using cstone::GpuConfig;
+using cstone::GroupView;
 using cstone::LocalIndex;
 using cstone::TreeNodeIndex;
 
@@ -82,9 +82,10 @@ void updateSmoothingLengthIterativeGpu(const cstone::GroupView& grp, Dataset& d,
     unsigned numBlocks        = (grp.numGroups + numWarpsPerBlock - 1) / numWarpsPerBlock;
     if (numBlocks == 0) { return; }
 
-    updateSmoothingLengthIterativeGpuKernel<<<numBlocks, numThreads>>>(grp, d.ng0, d.ngmax, box, d.treeView,
-                                                                       rawPtr(d.x), rawPtr(d.y), rawPtr(d.z),
-                                                                       rawPtr(d.h), rawPtr(d.nc));
+    updateSmoothingLengthIterativeGpuKernel<<<numBlocks, numThreads>>>(
+        grp, d.ng0, d.ngmax, box, d.treeView, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), rawPtr(d.nc));
+    checkGpuErrors(cudaGetLastError());
+    checkGpuErrors(cudaDeviceSynchronize());
 }
 
 template void updateSmoothingLengthIterativeGpu(const cstone::GroupView&,

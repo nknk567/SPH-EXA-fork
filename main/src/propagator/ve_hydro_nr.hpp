@@ -304,6 +304,16 @@ public:
          * rebase) is decided at the NR converging point, see the band check in VeNRPostamble. */
         updateSmoothingLengthIterative(groups_.view(), d, domain.box());
         timer.step("updateSmoothingLengthIterative");
+        /* The guard bounds every LOCAL particle's neighbor count at the current positions, but
+         * the halo h received at sync is the owner's end-of-previous-step value: NR wall-grown
+         * and never count-checked at the new positions. The symmetric list build reads halo h
+         * on both sides (j-side max(h_i, h_j) acceptance, node rMax upsweep, and the trailing
+         * halo particles traversed as i-particles of the last supercluster), so a stale
+         * large-h halo can capture an unbounded cluster neighborhood — observed as episodic
+         * ncmax overflows at rank boundaries. Re-exchanging h here makes halo h exactly as
+         * guard-bounded as local h for the build. */
+        domain.exchangeHalos(std::tie(get<"h">(d)), get<"ax">(d), get<"keys">(d));
+        timer.step("mpi::synchronizeHalos");
         findNeighborsSfc(groups_.view(), d, domain.box());
         timer.step("FindNeighbors");
         pmReader.step();
@@ -317,7 +327,7 @@ public:
          * caps (observed as kx -> eta/(K*w0) spikes and permanent 9-iteration tug-of-war). */
         if (nrParams_.xmSource != 0 || d.iteration == 1)
         {
-            computeXMass(groups_.view(), d, domain.box());
+            computeXMass(d, domain.box());
             timer.step("XMass");
         }
         domain.exchangeHalos(std::tie(get<"xm">(d)), get<"ax">(d), get<"keys">(d));
@@ -325,7 +335,7 @@ public:
 
         convergeSmoothingLengthNR(domain, simData);
 
-        computeVe(groups_.view(), d, domain.box());
+        computeVe(d, domain.box());
         timer.step("Generalized Volume Elements");
         //! h of locally owned particles changed: halos need updating, h_j enters the momentum equation
         domain.exchangeHalos(std::tuple_cat(std::tie(get<"h">(d)), get<"vx", "vy", "vz", "kx">(d)), get<"ax">(d),
