@@ -34,16 +34,15 @@
 #include "cstone/primitives/stl.hpp"
 #include "cstone/traversal/ijloop/ijloop.hpp"
 
-#include "sph/kernels.hpp"
-#include "sph/table_lookup.hpp"
+#include "sph/sph_kernels.hpp"
 
 namespace sph
 {
 
-template<class T>
+template<class T, class Kernel>
 struct VeInteraction
 {
-    const T* wh;
+    Kernel wh;
 
     template<class ParticleData, class Tc>
     constexpr auto operator()(const ParticleData& iData, const ParticleData& jData, cstone::Vec3<Tc> const& /* r_ij */,
@@ -56,7 +55,7 @@ struct VeInteraction
 
         T dist = std::sqrt(r2);
         T vloc = dist * hInv;
-        T w    = lt::lookup(wh, vloc);
+        T w    = wh(vloc);
 
         T kxi = w * xmassj;
 
@@ -85,9 +84,15 @@ struct VePostamble
 };
 
 template<class Neighbordhood, class Tc, class T>
-void veIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const T* wh, T* kx)
+void veIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, KernelVariant<T> const& wh, T* kx)
 {
-    neighborhood.ijLoop(std::make_tuple(xm), std::make_tuple(kx), VeInteraction{wh}, VePostamble<T, Tc>{K});
+    std::visit(
+        [&]<class Kernel>(Kernel wh)
+        {
+            neighborhood.ijLoop(cstone::ijloop::makeIjLoopData<Tc, T*>(
+                std::make_tuple(xm), std::make_tuple(kx), VeInteraction<T, Kernel>{wh}, VePostamble<T, Tc>{K}));
+        },
+        wh);
 }
 
 /*! @brief factor eta of the smoothing-length constraint rho * h^3 = eta * m
@@ -114,10 +119,10 @@ constexpr T ballmassEta(unsigned ng0)
  * (neutral), edge particles relax toward their neighbors' volumes, and the result is bounded
  * by the largest neighbor volume, which also removes the vacuum-edge inflation engine.
  */
-template<class T>
+template<class T, class Kernel>
 struct VolstdInteraction
 {
-    const T* wh;
+    Kernel wh;
 
     template<class ParticleData, class Tc>
     constexpr auto operator()(const ParticleData& iData, const ParticleData& jData, cstone::Vec3<Tc> const& /* r_ij */,
@@ -128,7 +133,7 @@ struct VolstdInteraction
 
         T dist = std::sqrt(r2);
         T vloc = dist / hi;
-        T w    = lt::lookup(wh, vloc);
+        T w    = wh(vloc);
 
         T vj = xmassj / kxj;
 
@@ -155,10 +160,17 @@ struct VolstdPostamble
 };
 
 template<class Neighbordhood, class Tc, class T>
-void volstdIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const T* kx, const T* wh, T* volstd)
+void volstdIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const T* kx, KernelVariant<T> const& wh,
+                  T* volstd)
 {
-    neighborhood.ijLoop(std::make_tuple(xm, kx), std::make_tuple(volstd), VolstdInteraction<T>{wh},
-                        VolstdPostamble<T, Tc>{K});
+    std::visit(
+        [&]<class Kernel>(Kernel wh)
+        {
+            neighborhood.ijLoop(cstone::ijloop::makeIjLoopData<Tc, T*>(std::make_tuple(xm, kx), std::make_tuple(volstd),
+                                                                        VolstdInteraction<T, Kernel>{wh},
+                                                                        VolstdPostamble<T, Tc>{K}));
+        },
+        wh);
 }
 
 /*! @brief kernel sums for the Newton-Raphson iteration of the smoothing length
@@ -172,10 +184,10 @@ void volstdIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const T*
  * fast path). On the symmetric GPU j-side the interaction is re-evaluated with swapped roles, so
  * the predicate counts against h_j there automatically.
  */
-template<class T>
+template<class T, class Kernel>
 struct VeNRInteraction
 {
-    const T *wh, *whd;
+    Kernel wh;
 
     template<class ParticleData, class Tc>
     constexpr auto operator()(const ParticleData& iData, const ParticleData& jData, cstone::Vec3<Tc> const& /* r_ij */,
@@ -188,8 +200,8 @@ struct VeNRInteraction
 
         T dist = std::sqrt(r2);
         T vloc = dist * hInv;
-        T w    = lt::lookup(wh, vloc);
-        T dw   = lt::lookup(whd, vloc);
+        T w    = wh(vloc);
+        T dw   = wh.derivative(vloc);
 
         T kxi = w * xmassj;
         //! contribution to dkx_i/dh_i, missing factor -K/h^4 is applied in the postamble
@@ -347,12 +359,17 @@ struct VeNRPostamble
  */
 template<class Neighbordhood, class Tc, class T, class Tm>
 void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, float hExtFactor, float hWallFactor, float tol, float bandMin,
-                float bandMax, const T* xm, const Tm* m, const T* h0, T* ballmass, const T* wh, const T* whd, T* kx,
+                float bandMax, const T* xm, const Tm* m, const T* h0, T* ballmass, KernelVariant<T> const& wh, T* kx,
                 T* hNew, T* cnt)
 {
-    neighborhood.ijLoop(std::make_tuple(xm, m, h0), std::make_tuple(kx, hNew, cnt), VeNRInteraction<T>{wh, whd},
-                        VeNRPostamble<T, Tc>{K, ballmass, T(hExtFactor), T(hWallFactor), T(tol), T(bandMin),
-                                             T(bandMax)});
+    std::visit(
+        [&]<class Kernel>(Kernel wh)
+        {
+            neighborhood.ijLoop(cstone::ijloop::makeIjLoopData<Tc, T*>(
+                std::make_tuple(xm, m, h0), std::make_tuple(kx, hNew, cnt), VeNRInteraction<T, Kernel>{wh},
+                VeNRPostamble<T, Tc>{K, ballmass, T(hExtFactor), T(hWallFactor), T(tol), T(bandMin), T(bandMax)}));
+        },
+        wh);
 }
 
 /*! @brief one Newton-Raphson smoothing-length update for a single particle by direct octree traversal
@@ -370,16 +387,16 @@ void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, float hExtFactor, float
  * @return the updated smoothing length of particle @p i (not committed); @p cnt[i] receives the
  *         neighbor count inside 2h (self included) that the convergence-point band check tested
  */
-template<class Tc, class T, class Tm, class KeyType>
+template<class Tc, class T, class Tm, class KeyType, class Kernel>
 HOST_DEVICE_FUN T veNRTraversalUpdate(cstone::LocalIndex i, T hi, Tc K, T* ballmass, T hExtFactor, T hWallFactor,
                                       T tol, T bandMin, T bandMax, const cstone::OctreeNsView<Tc, KeyType>& tree,
                                       const cstone::Box<Tc>& box, const Tc* x, const Tc* y, const Tc* z, const T* xm,
-                                      const Tm* m, const T* h0, const T* wh, const T* whd, T* cnt)
+                                      const Tm* m, const T* h0, const Kernel& wh, T* cnt)
 {
     const cstone::Vec3<Tc> particle{x[i], y[i], z[i]};
     const auto             iData = std::make_tuple(i, particle, hi, xm[i], m[i], h0[i]);
 
-    VeNRInteraction<T> interaction{wh, whd};
+    VeNRInteraction<T, Kernel> interaction{wh};
     //! self contribution; the leaf sweep below skips i == j
     auto [kxsum, dkxsum, cntsum] = interaction(iData, iData, cstone::Vec3<Tc>{0, 0, 0}, T(0));
 

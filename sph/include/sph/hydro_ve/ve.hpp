@@ -44,7 +44,7 @@ template<typename Tc, class Dataset>
 void computeVe(Dataset& d, const cstone::Box<Tc>& box)
 {
     if constexpr (d.useGpu) { gpu::computeVe(d, box); }
-    else { veIjLoop(d.neighborhood, d.K, d.xm.data(), d.wh.data(), d.kx.data()); }
+    else { veIjLoop(d.neighborhood, d.K, d.xm.data(), d.wh, d.kx.data()); }
 }
 
 /*! @brief compute the SPH-smoothed converged particle volume, the VE weights of the next step
@@ -57,7 +57,7 @@ template<typename Tc, class Dataset, class Tv>
 void computeVolstd(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, Tv* volstd)
 {
     if constexpr (d.useGpu) { gpu::computeVolstd(grp, d, box, volstd); }
-    else { volstdIjLoop(d.neighborhood, d.K, d.xm.data(), d.kx.data(), d.wh.data(), volstd); }
+    else { volstdIjLoop(d.neighborhood, d.K, d.xm.data(), d.kx.data(), d.wh, volstd); }
 }
 
 //! @brief assign the volume elements of the next step for locally owned particles
@@ -134,7 +134,7 @@ NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>&
     {
         if (firstIteration) { std::copy(d.h.data(), d.h.data() + d.x.size(), h0); }
         veNRIjLoop(d.neighborhood, d.K, hExtFactor, hWallFactor, tol, bandMin, bandMax, d.xm.data(), d.m.data(), h0,
-                   d.ballmass.data(), d.wh.data(), d.whd.data(), d.kx.data(), d.ay.data(), d.ax.data());
+                   d.ballmass.data(), d.wh, d.kx.data(), d.ay.data(), d.ax.data());
 
         using Th               = std::decay_t<decltype(d.h[0])>;
         const Th* hNew         = d.ay.data();
@@ -225,50 +225,55 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
         Th*                 h  = d.h.data();
         const Th*           bm = d.ballmass.data();
         std::vector<size_t> bins(maxPasses + 2, 0);
-        size_t              tailCapUp = 0, tailCapDown = 0, tailReset = 0;
-#pragma omp parallel reduction(+ : tailCapUp, tailCapDown, tailReset)
-        {
-            std::vector<size_t> localBins(maxPasses + 2, 0);
-#pragma omp for schedule(dynamic) nowait
-            for (size_t s = 0; s < subset.size(); ++s)
+        std::visit(
+            [&]<class Kernel>(const Kernel& wh)
             {
-                cstone::LocalIndex i     = subset[s];
-                Th                 hi    = h[i];
-                unsigned           kConv = maxPasses + 1;
-                bool               fired = false;
-                for (unsigned it = 1; it <= maxPasses; ++it)
+                size_t tailCapUp = 0, tailCapDown = 0, tailReset = 0;
+#pragma omp parallel reduction(+ : tailCapUp, tailCapDown, tailReset)
                 {
-                    Th hNew = veNRTraversalUpdate(i, hi, d.K, d.ballmass.data(), Th(hExtFactor), Th(hWallFactor),
-                                                  Th(tol), Th(bandMin), Th(bandMax), d.treeView, box, d.x.data(),
-                                                  d.y.data(), d.z.data(), d.xm.data(), d.m.data(), h0, d.wh.data(),
-                                                  d.whd.data(), d.ax.data());
-                    /* signals entering the tail were consumed by the update's re-seed branch, so a
-                     * zero after an update is a band-check reset fired by this update; the once-per-
-                     * step gate makes fired-detection through the array exact */
-                    fired = fired || bm[i] == Th(0);
-                    tailCapUp += hNew == Th(1.1) * hi;
-                    tailCapDown += hNew == Th(0.5) * hi;
-                    Th rel  = std::abs(hNew - hi) / hi;
-                    hi      = hNew;
-                    if (rel < Th(tol))
+                    std::vector<size_t> localBins(maxPasses + 2, 0);
+#pragma omp for schedule(dynamic) nowait
+                    for (size_t s = 0; s < subset.size(); ++s)
                     {
-                        kConv = it;
-                        break;
+                        cstone::LocalIndex i     = subset[s];
+                        Th                 hi    = h[i];
+                        unsigned           kConv = maxPasses + 1;
+                        bool               fired = false;
+                        for (unsigned it = 1; it <= maxPasses; ++it)
+                        {
+                            Th hNew = veNRTraversalUpdate(i, hi, d.K, d.ballmass.data(), Th(hExtFactor),
+                                                          Th(hWallFactor), Th(tol), Th(bandMin), Th(bandMax),
+                                                          d.treeView, box, d.x.data(), d.y.data(), d.z.data(),
+                                                          d.xm.data(), d.m.data(), h0, wh, d.ax.data());
+                            /* signals entering the tail were consumed by the update's re-seed branch, so a
+                             * zero after an update is a band-check reset fired by this update; the once-per-
+                             * step gate makes fired-detection through the array exact */
+                            fired = fired || bm[i] == Th(0);
+                            tailCapUp += hNew == Th(1.1) * hi;
+                            tailCapDown += hNew == Th(0.5) * hi;
+                            Th rel  = std::abs(hNew - hi) / hi;
+                            hi      = hNew;
+                            if (rel < Th(tol))
+                            {
+                                kConv = it;
+                                break;
+                            }
+                        }
+                        h[i] = hi;
+                        tailReset += fired;
+                        ++localBins[kConv];
+                    }
+#pragma omp critical
+                    for (size_t k = 0; k < bins.size(); ++k)
+                    {
+                        bins[k] += localBins[k];
                     }
                 }
-                h[i] = hi;
-                tailReset += fired;
-                ++localBins[kConv];
-            }
-#pragma omp critical
-            for (size_t k = 0; k < bins.size(); ++k)
-            {
-                bins[k] += localBins[k];
-            }
-        }
-        capUp += tailCapUp;
-        capDown += tailCapDown;
-        numReset += tailReset;
+                capUp += tailCapUp;
+                capDown += tailCapDown;
+                numReset += tailReset;
+            },
+            d.wh);
 
         //! per-pass unconverged counts = suffix sums; passes performed = last needed iteration
         unsigned passes = maxPasses;

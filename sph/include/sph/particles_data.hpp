@@ -31,6 +31,7 @@
 #pragma once
 
 #include <array>
+#include <cstring>
 #include <iostream>
 #include <vector>
 #include <variant>
@@ -48,15 +49,12 @@
 #include "sph/neighborhood.hpp"
 #include "sph/neighborhood_gpu.hpp"
 #include "sph/kernels.hpp"
-#include "sph/table_lookup.hpp"
 #include "sph/types.hpp"
 
-#include "sph_kernel_tables.hpp"
+#include "sph_kernels.hpp"
 
 namespace sphexa
 {
-
-namespace lt = ::sph::lt;
 
 template<cstone::execution::Policy Execution>
 class ParticlesData : public cstone::FieldStates<ParticlesData<Execution>>
@@ -84,7 +82,7 @@ public:
     using FieldVariant = std::variant<FieldVector<float>*, FieldVector<double>*, FieldVector<unsigned>*,
                                       FieldVector<uint64_t>*, FieldVector<uint8_t>*>;
 
-    ParticlesData() { createTables(); }
+    ParticlesData() { createSphKernel(); }
     ParticlesData(const ParticlesData&) = delete;
 
     uint64_t iteration{1};
@@ -223,7 +221,7 @@ public:
         optionalIO("kernelChoice", &kernelChoice, 1);
         optionalIO("iadConditionQuality", &iadConditionQuality, 1);
 
-        createTables();
+        createSphKernel();
     }
 
     //! @brief Interpolation kernel normalization constant, will be recomputed on initialization
@@ -272,8 +270,8 @@ public:
     std::conditional_t<useGpu, sph::DeviceNeighborhoodData, sph::NeighborhoodData> neighborhood;
     cstone::OctreeNsView<RealType, KeyType>                                        treeView;
 
-    //! @brief lookup tables for the SPH-kernel and its derivative
-    FieldVector<HydroType> wh, whd;
+    //! @brief SPH-kernel
+    sph::KernelVariant<HydroType> wh;
 
     FieldVector<cstone::LocalIndex> traversalStack;
     //! @brief non-stateful variables for statistics
@@ -407,16 +405,10 @@ public:
     void disableNeighborLists() { neighborhood.disableNeighborLists(); }
 
 private:
-    void createTables()
+    void createSphKernel()
     {
-        using H   = HydroType;
-        K         = sph::kernel_3D_k(getSphKernel(kernelChoice, sincIndex), 2.0);
-        auto a_wh = sph::tabulateFunction<H, lt::kTableSize>(sph::getSphKernel(kernelChoice, sincIndex), 0, 2);
-        auto a_whd =
-            sph::tabulateFunction<H, lt::kTableSize>(sph::getSphKernelDerivative(kernelChoice, sincIndex), 0, 2);
-
-        wh  = FieldVector<HydroType>(a_wh.begin(), a_wh.end());
-        whd = FieldVector<HydroType>(a_whd.begin(), a_whd.end());
+        wh = sph::getSphKernel<HydroType>(kernelChoice, sincIndex);
+        std::visit([this](auto const& kernel) { K = sph::kernel_3D_k(kernel); }, wh);
     }
 
     //! @brief buffer growth factor when reallocating

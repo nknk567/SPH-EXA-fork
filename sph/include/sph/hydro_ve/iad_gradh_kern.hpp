@@ -36,15 +36,15 @@
 #include "cstone/traversal/ijloop/ijloop.hpp"
 
 #include "sph/iad_regularization.hpp"
-#include "sph/table_lookup.hpp"
+#include "sph/sph_kernels.hpp"
 
 namespace sph
 {
 
-template<class T>
+template<class T, class Kernel>
 struct IADGradhInteraction
 {
-    const T *wh, *whd;
+    Kernel wh;
 
     template<class ParticleData, class Tc>
     constexpr auto operator()(const ParticleData& iData, const ParticleData& jData, cstone::Vec3<Tc> const& r_ij,
@@ -61,7 +61,7 @@ struct IADGradhInteraction
 
         T dist = std::sqrt(r2);
         T vloc = dist * hiInv;
-        T w    = i == j ? 0 : lt::lookup(wh, vloc);
+        T w    = i == j ? 0 : wh(vloc);
 
         T volj_w = xmj / kxj * w;
 
@@ -73,7 +73,7 @@ struct IADGradhInteraction
         T tau33 = rz * rz * volj_w;
 
         // gradh summation
-        T dw        = i == j ? 0 : lt::lookup(whd, vloc);
+        T dw        = i == j ? 0 : wh.derivative(vloc);
         T dterh     = -(T(3) * w + vloc * dw);
         T whomegai  = dterh * xmj;
         T wrho0i    = dterh * mj;
@@ -87,8 +87,8 @@ template<class T, class Tc>
 struct IADGradhPostamble
 {
     Tc K;
-    //! @brief kernel lookup table, needed for the self-contribution to grad-h when nrMode is active
-    const T* wh = nullptr;
+    //! @brief kernel value at the origin W(0), needed for the self-contribution to grad-h when nrMode is active
+    T w0{1};
     //! @brief true if h is converged with Newton-Raphson iterations to satisfy rho * h^3 = const
     bool nrMode = false;
     //! @brief lower grad-h (Omega) limit applied in nrMode, see the postamble
@@ -152,7 +152,7 @@ struct IADGradhPostamble
              * rho * h^3 = const, so the consistent grad-h term is Omega = 1 + h/(3 rho) * m/xm * dkx/dh
              * at fixed xm. The self-contribution -3 * W(0) * xm_i * K/h^4 to dkx/dh is added here
              * because the pairwise sum excludes i == j. */
-            whomegai = (whomegai - T(3) * lt::lookup(wh, T(0)) * xmi * dnorm) * mi / xmi;
+            whomegai = (whomegai - T(3) * w0 * xmi * dnorm) * mi / xmi;
         }
         else
         {

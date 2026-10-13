@@ -39,14 +39,13 @@ struct CountInteraction
     }
 };
 
-struct IdentityPostamble
+//! @brief loop data for the counting interaction; ThP = T* matches the h pointer handed to build()
+template<class T>
+auto countLoopData(const T* x, double* cnt, double* sum)
 {
-    template<class ParticleData, class Result>
-    constexpr auto operator()(const ParticleData& /*iData*/, const Result& result) const
-    {
-        return result;
-    }
-};
+    return ijloop::makeIjLoopData<T, T*>(std::make_tuple(x), std::make_tuple(cnt, sum), CountInteraction{},
+                                         ijloop::empty_postamble);
+}
 
 } // namespace
 
@@ -132,8 +131,7 @@ static void symmetricNeighborLists()
                                                                             z, h.data());
         std::fill(cnt.begin(), cnt.end(), 0);
         std::fill(sum.begin(), sum.end(), 0);
-        nbList.ijLoop(std::make_tuple(x), std::make_tuple(cnt.data(), sum.data()), CountInteraction{},
-                      IdentityPostamble{});
+        nbList.ijLoop(countLoopData(x, cnt.data(), sum.data()));
     };
 
     auto compare = [&](LocalIndex first, LocalIndex last, bool symmetric, const char* label)
@@ -171,8 +169,7 @@ static void symmetricNeighborLists()
         }
         std::fill(cnt.begin(), cnt.end(), 0);
         std::fill(sum.begin(), sum.end(), 0);
-        nbList.ijLoop(std::make_tuple(x), std::make_tuple(cnt.data(), sum.data()), CountInteraction{},
-                      IdentityPostamble{});
+        nbList.ijLoop(countLoopData(x, cnt.data(), sum.data()));
         compare(0, n, true, "growth");
         for (auto& hi : h)
         {
