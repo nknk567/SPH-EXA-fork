@@ -24,6 +24,9 @@
  * This tests that the domain halo exchange finds all halos needed for a correct neighbor count.
  */
 
+#include <algorithm>
+#include <numeric>
+
 #include "gtest/gtest.h"
 
 #define USE_CUDA
@@ -31,6 +34,7 @@
 #include "coord_samples/random.hpp"
 #include "cstone/cuda/stream_holder.cuh"
 #include "cstone/domain/domain.hpp"
+#include "cstone/findneighbors.hpp"
 #include "cstone/util/reallocate.hpp"
 
 using namespace cstone;
@@ -110,6 +114,148 @@ TEST(DomainGpu, matchTreeCpu)
     randomGaussianAssignment<uint64_t, double>(rank, numRanks, Box<double>(0, 1, fbc));
     randomGaussianAssignment<uint64_t, double>(rank, numRanks,
                                                Box<double>(0, 1, 0, 0.015625, 0, 0.00390625, fbc, fbc, fbc));
+}
+
+/*! @brief halo completeness for symmetric pair interactions, CPU and GPU domains
+ *
+ * Every rank builds the same global particle set and takes a 1/numRanks slice. After sync with
+ * symmetric halos enabled, every owned particle i must have every global particle j within
+ * 2 * haloFactor * max(h_i, h_j) locally available (owned or halo), including j beyond i's own
+ * reach. With symmetric halos disabled, the one-way condition (within 2 * haloFactor * h_i) must
+ * still hold while symmetric-only pairs go missing — the negative control proving the check bites.
+ * The GPU domain must produce the same owned range and the same halo set as the CPU domain.
+ */
+template<class KeyType, class T>
+void symmetricHalosComplete(int rank, int numRanks, Box<T> box, bool symmetric)
+{
+    const LocalIndex n            = 4000;
+    const unsigned bucketSize     = 64;
+    const unsigned bucketSizeFocus = 8;
+    const float theta             = 0.5f;
+    const float haloFactor        = 1.05f;
+
+    // identical global pool on every rank
+    RandomGaussianCoordinates<T, SfcKind<KeyType>> coords(n, box, 5);
+    coords.adjustH(10, 20);
+    coords.shuffle();
+
+    std::vector<T> gx = coords.x(), gy = coords.y(), gz = coords.z(), gh = coords.h();
+    // h contrast: every 20th particle in the core reaches 3x further than its surroundings
+    for (LocalIndex i = 0; i < n; i += 20)
+    {
+        if (std::abs(gx[i]) < 0.5 && std::abs(gy[i]) < 0.5 && std::abs(gz[i]) < 0.5) { gh[i] *= 3; }
+    }
+    std::vector<uint64_t> gid(n);
+    std::iota(gid.begin(), gid.end(), uint64_t(0));
+
+    const LocalIndex first = rank * n / numRanks, last = (rank + 1) * n / numRanks;
+    std::vector<T> x0(gx.begin() + first, gx.begin() + last), y0(gy.begin() + first, gy.begin() + last),
+        z0(gz.begin() + first, gz.begin() + last), h0(gh.begin() + first, gh.begin() + last);
+    std::vector<uint64_t> id0(gid.begin() + first, gid.begin() + last);
+
+    // CPU domain
+    std::vector<T> x = x0, y = y0, z = z0, h = h0;
+    std::vector<uint64_t> id = id0;
+    std::vector<KeyType> keys(x.size());
+    Domain<KeyType, T, execution::Cpu> domainCpu(execution::cpu, rank, numRanks, bucketSize, bucketSizeFocus, theta,
+                                                 MPI_COMM_WORLD, box);
+    domainCpu.setSymmetricHalos(symmetric);
+    domainCpu.setHaloFactor(haloFactor);
+    std::vector<T> hs1, hs2, hs3;
+    domainCpu.sync(keys, x, y, z, h, std::tie(id), std::tie(hs1, hs2, hs3));
+    domainCpu.exchangeHalos(std::tie(id), hs1, hs2);
+
+    // GPU domain
+    DeviceVector<T> d_x = x0, d_y = y0, d_z = z0, d_h = h0;
+    DeviceVector<uint64_t> d_id = id0;
+    DeviceVector<KeyType> d_keys(x0.size());
+    StreamHolder stream;
+    Domain<KeyType, T, execution::Gpu> domainGpu(stream.exec(), rank, numRanks, bucketSize, bucketSizeFocus, theta,
+                                                 MPI_COMM_WORLD, box);
+    domainGpu.setSymmetricHalos(symmetric);
+    domainGpu.setHaloFactor(haloFactor);
+    DeviceVector<T> s1, s2, s3;
+    domainGpu.sync(d_keys, d_x, d_y, d_z, d_h, std::tie(d_id), std::tie(s1, s2, s3));
+    domainGpu.exchangeHalos(std::tie(d_id), s1, s2);
+    syncGpu(stream.exec());
+    std::vector<uint64_t> idGpu = toHost(d_id);
+
+    // CPU and GPU agree on the owned range and on the halo set
+    ASSERT_EQ(domainCpu.startIndex(), domainGpu.startIndex());
+    ASSERT_EQ(domainCpu.endIndex(), domainGpu.endIndex());
+    ASSERT_EQ(domainCpu.nParticlesWithHalos(), domainGpu.nParticlesWithHalos());
+    const LocalIndex start = domainGpu.startIndex(), end = domainGpu.endIndex();
+    const LocalIndex size  = domainGpu.nParticlesWithHalos();
+    ASSERT_EQ(id.size(), size);
+    ASSERT_EQ(idGpu.size(), size);
+    {
+        std::vector<uint64_t> ownedCpu(id.begin() + start, id.begin() + end), ownedGpu(idGpu.begin() + start,
+                                                                                       idGpu.begin() + end);
+        std::sort(ownedCpu.begin(), ownedCpu.end());
+        std::sort(ownedGpu.begin(), ownedGpu.end());
+        EXPECT_EQ(ownedCpu, ownedGpu);
+
+        std::vector<uint64_t> haloCpu(id.begin(), id.begin() + start), haloGpu(idGpu.begin(), idGpu.begin() + start);
+        haloCpu.insert(haloCpu.end(), id.begin() + end, id.end());
+        haloGpu.insert(haloGpu.end(), idGpu.begin() + end, idGpu.end());
+        std::sort(haloCpu.begin(), haloCpu.end());
+        std::sort(haloGpu.begin(), haloGpu.end());
+        EXPECT_EQ(haloCpu, haloGpu);
+    }
+
+    // which global particles are available locally (owned or halo)
+    std::vector<uint8_t> present(n, 0);
+    for (LocalIndex k = 0; k < size; ++k)
+    {
+        ASSERT_LT(idGpu[k], n);
+        present[idGpu[k]] = 1;
+    }
+
+    // completeness: owned i against every global j
+    const Box<T> syncedBox = domainGpu.box();
+    uint64_t missOneWay = 0, missSymmetric = 0, numSymmetricPairs = 0;
+    for (LocalIndex k = start; k < end; ++k)
+    {
+        const uint64_t i = idGpu[k];
+        const T ri       = 2 * haloFactor * gh[i];
+        for (LocalIndex j = 0; j < n; ++j)
+        {
+            const T r2 = distanceSq<false>(gx[i], gy[i], gz[i], gx[j], gy[j], gz[j], syncedBox);
+            const T rj = 2 * haloFactor * gh[j];
+            if (r2 < ri * ri) { missOneWay += !present[j]; }
+            else if (r2 < rj * rj)
+            {
+                ++numSymmetricPairs;
+                missSymmetric += !present[j];
+            }
+        }
+    }
+    MPI_Allreduce(MPI_IN_PLACE, &missOneWay, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, &missSymmetric, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, &numSymmetricPairs, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+
+    if (rank == 0)
+    {
+        std::cout << "[symmetricHalos=" << symmetric << "] symmetric-only pairs: " << numSymmetricPairs
+                  << ", missing one-way: " << missOneWay << ", missing symmetric-only: " << missSymmetric
+                  << std::endl;
+    }
+
+    EXPECT_GT(numSymmetricPairs, 0u) << "sample has no pairs beyond the owner's reach";
+    EXPECT_EQ(missOneWay, 0u);
+    if (symmetric) { EXPECT_EQ(missSymmetric, 0u); }
+    else { EXPECT_GT(missSymmetric, 0u) << "negative control: one-way halos already cover all symmetric pairs"; }
+}
+
+TEST(DomainGpu, symmetricHalosComplete)
+{
+    int rank = 0, numRanks = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+
+    Box<double> box(-1, 1, BoundaryType::fixed);
+    symmetricHalosComplete<uint64_t, double>(rank, numRanks, box, true);
+    symmetricHalosComplete<uint64_t, double>(rank, numRanks, box, false);
 }
 
 /*! @brief Test particle removal in a focused GPU domain with mixed-dimension boxes

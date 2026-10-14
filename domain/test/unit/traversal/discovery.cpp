@@ -13,8 +13,11 @@
  * @author Sebastian Keller <sebastian.f.keller@gmail.com>
  */
 
+#include <random>
+
 #include "gtest/gtest.h"
 
+#include "cstone/findneighbors.hpp"
 #include "cstone/traversal/collisions.hpp"
 #include "cstone/tree/cs_util.hpp"
 
@@ -221,4 +224,164 @@ TEST(HaloDiscovery, findHalosSymmetric)
 {
     findHalosSymmetricFlags<unsigned>();
     findHalosSymmetricFlags<uint64_t>();
+}
+
+/*! @brief symmetric halo discovery driven from particles: leaf reach = 2 * ext * max(h) per leaf
+ *
+ * Replicates the leaf-reach construction of FocusedOctree::discoverHalos (symmetric branch) from
+ * per-particle smoothing lengths and a particle layout, then checks the guarantee production relies
+ * on at particle level: every remote particle j that reaches a local particle i within 2 * ext * h_j
+ * lives in a flagged leaf, including pairs beyond i's own reach, which the gather-sense discovery
+ * (local boxes inflated by the local reach only) misses.
+ */
+template<class KeyType>
+static void findHalosSymmetricFromParticles(float ext)
+{
+    using T  = double;
+    Box<T> box(0, 1);
+
+    std::vector<KeyType> tree = makeUniformNLevelTree<KeyType>(64, 1);
+    OctreeData<KeyType, execution::Cpu> octree;
+    octree.resize(nNodes(tree));
+    updateInternalTree<KeyType>(tree, octree.data());
+
+    std::vector<Vec3<T>> nodeCenters(octree.numNodes), nodeSizes(octree.numNodes);
+    nodeFpCenters<KeyType>(octree.prefixes, nodeCenters.data(), nodeSizes.data(), box);
+    auto leaf2int = leafToInternal(octree);
+    auto od       = octree.data();
+
+    const TreeNodeIndex numLeaves = octree.numLeafNodes;
+    const TreeNodeIndex a         = 32; // local leaves [0:a), remote leaves [a:numLeaves)
+
+    // particles per leaf at consecutive indices, i.e. the SFC-sorted layout of a real domain
+    constexpr LocalIndex perLeaf = 8;
+    std::vector<LocalIndex> layout(numLeaves + 1);
+    for (TreeNodeIndex l = 0; l <= numLeaves; ++l)
+    {
+        layout[l] = l * perLeaf;
+    }
+    const LocalIndex numParticles = layout[numLeaves];
+
+    std::mt19937 gen(7);
+    std::uniform_real_distribution<T> offset(-1.0, 1.0);
+    std::vector<T> x(numParticles), y(numParticles), z(numParticles), h(numParticles, 0.01);
+    std::vector<TreeNodeIndex> leafOf(numParticles);
+    for (TreeNodeIndex l = 0; l < numLeaves; ++l)
+    {
+        const Vec3<T> c = nodeCenters[leaf2int[l]], s = nodeSizes[leaf2int[l]];
+        for (LocalIndex p = layout[l]; p < layout[l + 1]; ++p)
+        {
+            x[p]      = c[0] + offset(gen) * s[0];
+            y[p]      = c[1] + offset(gen) * s[1];
+            z[p]      = c[2] + offset(gen) * s[2];
+            leafOf[p] = l;
+        }
+    }
+    // remote leaf in the last corner: large reach 2 * ext * 0.3 (inflated 0.25-cell covers the unit box)
+    for (LocalIndex p = layout[numLeaves - 1], k = 0; p < layout[numLeaves]; ++p, ++k)
+    {
+        h[p] = 0.3 * T(k + 1) / T(perLeaf);
+    }
+    // another remote leaf in a different level-1 subtree with a smaller reach (non-trivial max-upsweep)
+    for (LocalIndex p = layout[40]; p < layout[41]; ++p)
+    {
+        h[p] = 0.05;
+    }
+    // a local leaf with a large reach: must never flag anything by itself
+    for (LocalIndex p = layout[3]; p < layout[4]; ++p)
+    {
+        h[p] = 0.2;
+    }
+
+    // leaf reach exactly as in FocusedOctree::discoverHalos, for all leaves (as if already peer-exchanged)
+    std::vector<T> expansions(octree.numNodes, 0);
+    for (TreeNodeIndex l = 0; l < numLeaves; ++l)
+    {
+        T hMax = 0;
+        for (LocalIndex p = layout[l]; p < layout[l + 1]; ++p)
+        {
+            hMax = std::max(hMax, h[p]);
+        }
+        expansions[leaf2int[l]] = T(2 * ext) * hMax;
+    }
+    std::span<const TreeNodeIndex> levelRange{od.levelRange, size_t(maxTreeLevel<KeyType>{}) + 2};
+    upsweep(levelRange, od.childOffsets, expansions.data(), MaxCombination<T>{});
+
+    EXPECT_EQ(expansions[leaf2int[numLeaves - 1]], T(2 * ext) * 0.3);
+    EXPECT_EQ(expansions[0], T(2 * ext) * 0.3); // root holds the global maximum
+
+    // plain local leaf boxes as search targets
+    std::vector<Vec3<T>> tC(numLeaves), tS(numLeaves);
+    for (TreeNodeIndex l = 0; l < numLeaves; ++l)
+    {
+        tC[l] = nodeCenters[leaf2int[l]];
+        tS[l] = nodeSizes[leaf2int[l]];
+    }
+
+    std::vector<uint8_t> flags(octree.numNodes, 0);
+    findHalosSymmetric(od.prefixes, od.childOffsets, od.parents, nodeCenters.data(), nodeSizes.data(),
+                       expansions.data(), octree.numNodes, tree.data(), tC.data(), tS.data(), box, 0, a, flags.data());
+
+    // node-level: all-to-all reference with nodes inflated by their own reach
+    std::vector<uint8_t> reference(octree.numNodes, 0);
+    for (TreeNodeIndex t = 0; t < a; ++t)
+    {
+        for (TreeNodeIndex n = 0; n < octree.numNodes; ++n)
+        {
+            auto [k1, k2] = decodePlaceholderBit2K(od.prefixes[n]);
+            if (containedIn(k1, k2, tree[0], tree[a])) { continue; }
+            if (nodeSizes[n] == Vec3<T>{0, 0, 0}) { continue; }
+            Vec3<T> inflated = nodeSizes[n] + Vec3<T>{expansions[n], expansions[n], expansions[n]};
+            if (overlap(nodeCenters[n], inflated, tC[t], tS[t], box)) { reference[n] = 1; }
+        }
+    }
+    EXPECT_EQ(flags, reference);
+    EXPECT_EQ(1, flags[leaf2int[numLeaves - 1]]);
+    for (TreeNodeIndex n = 0; n < octree.numNodes; ++n)
+    {
+        auto [k1, k2] = decodePlaceholderBit2K(od.prefixes[n]);
+        if (containedIn(k1, k2, tree[0], tree[a])) { EXPECT_EQ(0, flags[n]); }
+    }
+
+    // gather-sense discovery: local boxes inflated by the LOCAL reach only (what the one-way search does)
+    std::vector<Vec3<T>> tSLocal(numLeaves);
+    for (TreeNodeIndex l = 0; l < numLeaves; ++l)
+    {
+        const T e = expansions[leaf2int[l]];
+        tSLocal[l] = tS[l] + Vec3<T>{e, e, e};
+    }
+    std::vector<uint8_t> plainFlags(octree.numNodes, 0);
+    findHalos(od.prefixes, od.childOffsets, od.parents, nodeCenters.data(), nodeSizes.data(), tree.data(), tC.data(),
+              tSLocal.data(), box, 0, a, plainFlags.data());
+
+    // particle-level: every remote j reaching a local i within 2 * ext * h_j lives in a flagged leaf
+    size_t numReaching = 0, numJOnly = 0, numJOnlyMissedByPlain = 0;
+    for (LocalIndex i = 0; i < layout[a]; ++i)
+    {
+        for (LocalIndex j = layout[a]; j < numParticles; ++j)
+        {
+            const T r2 = distanceSq<false>(x[i], y[i], z[i], x[j], y[j], z[j], box);
+            const T ri = T(2 * ext) * h[i], rj = T(2 * ext) * h[j];
+            if (r2 >= rj * rj) { continue; }
+
+            ++numReaching;
+            EXPECT_EQ(1, flags[leaf2int[leafOf[j]]]) << "remote particle " << j << " reaches local " << i;
+            if (r2 >= ri * ri)
+            {
+                ++numJOnly;
+                numJOnlyMissedByPlain += plainFlags[leaf2int[leafOf[j]]] == 0;
+            }
+        }
+    }
+    EXPECT_GT(numReaching, 0u);
+    EXPECT_GT(numJOnly, 0u) << "sample has no pairs beyond the local reach";
+    EXPECT_GT(numJOnlyMissedByPlain, 0u) << "gather-sense discovery already finds every reaching remote particle";
+}
+
+TEST(HaloDiscovery, findHalosSymmetricFromParticles)
+{
+    findHalosSymmetricFromParticles<unsigned>(1.0f);
+    findHalosSymmetricFromParticles<uint64_t>(1.0f);
+    findHalosSymmetricFromParticles<unsigned>(1.05f);
+    findHalosSymmetricFromParticles<uint64_t>(1.05f);
 }

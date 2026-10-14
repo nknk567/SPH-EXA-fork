@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <numeric>
 #include <random>
 
 #include <thrust/universal_vector.h>
@@ -181,7 +182,7 @@ struct IjLoopTest : testing::Test
                box.zmax(), boundaryType, boundaryType, boundaryType};
     }
 
-    OctreeNsView<double, KeyT> treeView(float searchExtFactor = 1.0f) const
+    OctreeNsView<double, KeyT> treeView(float searchExtFactor = 1.0f, bool symmetric = false) const
     {
         return {.numLeafNodes    = numLeafNodes,
                 .numNodes        = numNodes,
@@ -195,7 +196,64 @@ struct IjLoopTest : testing::Test
                 .layout          = rawPtr(layout),
                 .centers         = rawPtr(centers),
                 .sizes           = rawPtr(sizes),
-                .searchExtFactor = searchExtFactor};
+                .searchExtFactor = searchExtFactor,
+                .symmetric       = symmetric};
+    }
+
+    //! @brief x_i - x_j with the minimum-image convention applied on periodic axes
+    Vec3<double> minImageDiff(LocalIndex i, LocalIndex j) const
+    {
+        double xij = x[i] - x[j];
+        double yij = y[i] - y[j];
+        double zij = z[i] - z[j];
+
+        if (box.boundaryX() == BoundaryType::periodic)
+        {
+            if (xij < -0.5 * box.lx())
+                xij += box.lx();
+            else if (xij > 0.5 * box.lx())
+                xij -= box.lx();
+        }
+        if (box.boundaryY() == BoundaryType::periodic)
+        {
+            if (yij < -0.5 * box.ly())
+                yij += box.ly();
+            else if (yij > 0.5 * box.ly())
+                yij -= box.ly();
+        }
+        if (box.boundaryZ() == BoundaryType::periodic)
+        {
+            if (zij < -0.5 * box.lz())
+                zij += box.lz();
+            else if (zij > 0.5 * box.lz())
+                zij -= box.lz();
+        }
+        return {xij, yij, zij};
+    }
+
+    /*! @brief count pairs that only the symmetric rule accepts: target i, j within 2h_j but beyond 2h_i
+     *
+     * @return (pairs with j inside the target range, pairs with j outside the target range)
+     */
+    std::pair<std::size_t, std::size_t> countJOnlyPairs(const GroupView& groups) const
+    {
+        std::size_t inside = 0, outside = 0;
+        for (unsigned g = 0; g < groups.numGroups; ++g)
+        {
+            for (unsigned i = groups.groupStart[g]; i < groups.groupEnd[g]; ++i)
+            {
+                for (unsigned j = 0; j < totalBodies; ++j)
+                {
+                    const double d2 = norm2(minImageDiff(i, j));
+                    if (d2 >= 4 * h[i] * h[i] && d2 < 4 * h[j] * h[j])
+                    {
+                        if (j >= groups.firstBody && j < groups.lastBody) { ++inside; }
+                        else { ++outside; }
+                    }
+                }
+            }
+        }
+        return {inside, outside};
     }
 
     GroupView groupView() const
@@ -216,7 +274,12 @@ struct IjLoopTest : testing::Test
                 .groupEnd   = rawPtr(subgroupEnd)};
     }
 
-    Result reference(const GroupView& groups) const
+    /*! @brief all-to-all reference
+     *
+     * @param groups     target particle groups
+     * @param symmetric  accept pairs within 2 * max(h_i, h_j) instead of within 2 * h_i only
+     */
+    Result reference(const GroupView& groups, bool symmetric = false) const
     {
         thrust::universal_vector<LocalIndex> iSum(totalBodies), jSum(totalBodies), jMin(totalBodies);
         thrust::universal_vector<Vec3<double>> iPosSum(totalBodies), jPosSum(totalBodies), ijPosDiffSum(totalBodies);
@@ -241,35 +304,10 @@ struct IjLoopTest : testing::Test
                     const double yj = y[j];
                     const double zj = z[j];
 
-                    double xij = xi - xj;
-                    double yij = yi - yj;
-                    double zij = zi - zj;
+                    const auto [xij, yij, zij] = minImageDiff(i, j);
+                    const double d2            = xij * xij + yij * yij + zij * zij;
 
-                    if (box.boundaryX() == BoundaryType::periodic)
-                    {
-                        if (xij < -0.5 * box.lx())
-                            xij += box.lx();
-                        else if (xij > 0.5 * box.lx())
-                            xij -= box.lx();
-                    }
-                    if (box.boundaryY() == BoundaryType::periodic)
-                    {
-                        if (yij < -0.5 * box.ly())
-                            yij += box.ly();
-                        else if (yij > 0.5 * box.ly())
-                            yij -= box.ly();
-                    }
-                    if (box.boundaryZ() == BoundaryType::periodic)
-                    {
-                        if (zij < -0.5 * box.lz())
-                            zij += box.lz();
-                        else if (zij > 0.5 * box.lz())
-                            zij -= box.lz();
-                    }
-
-                    const double d2 = xij * xij + yij * yij + zij * zij;
-
-                    if (d2 < 4 * h[i] * h[i])
+                    if (d2 < 4 * h[i] * h[i] || (symmetric && d2 < 4 * h[j] * h[j]))
                     {
                         iSum[i] += i;
                         jSum[i] += j;
@@ -443,6 +481,140 @@ TYPED_TEST(IjLoopTest, IjLoopWithSearchExtFactor)
         reference = this->reference(this->groupView());
         this->validate(reference, result);
     }
+}
+
+/*! @brief builders that honor OctreeNsView::symmetric (pairs processed within 2 * max(h_i, h_j))
+ *
+ * The always-traverse builders search with the own radius only. The non-symmetric supercluster
+ * configs build lists with zero j-side reach, so pairs beyond 2 * h_i are never discovered; the
+ * production GPU configuration is the symmetric one.
+ */
+template<ijloop::NeighborhoodBuilder NeighborhoodBuilder>
+consteval bool supportsSymmetricInteractions(NeighborhoodBuilder)
+{
+    return false;
+}
+
+consteval bool supportsSymmetricInteractions(ijloop::CpuFullNbListNeighborhoodBuilder) { return true; }
+
+template<class Config>
+consteval bool supportsSymmetricInteractions(ijloop::GpuSuperclusterNbListNeighborhoodBuilder<Config>)
+{
+    return Config::symmetric;
+}
+
+/*! @brief give a fixed set of particles a large h so that pairs beyond 2 * h_i but within 2 * h_j
+ *         exist deterministically, both with j among the targets and with j outside the target range
+ *         (the halo-source case)
+ */
+template<class Fixture>
+void boostSmoothingLengths(Fixture& f, double hBoost)
+{
+    for (LocalIndex j : {0u, 100u, 200u, 800u, 900u, 300u, 450u, 600u})
+    {
+        f.h[j] = hBoost;
+    }
+}
+
+TYPED_TEST(IjLoopTest, SymmetricInteractions)
+{
+    using NeighborhoodBuilder = TypeParam;
+
+    if constexpr (supportsSymmetricInteractions(NeighborhoodBuilder{}))
+    {
+        const thrust::universal_vector<double> hOriginal = this->h;
+        // reach 0.4 < L/2, so the minimum-image reference stays unambiguous in the periodic case
+        boostSmoothingLengths(*this, 0.2);
+
+        for (BoundaryType boundaryType : {BoundaryType::open, BoundaryType::periodic, BoundaryType::fixed})
+        {
+            this->setBoundaryType(boundaryType);
+
+            auto [jOnlyInside, jOnlyOutside] = this->countJOnlyPairs(this->groupView());
+            ASSERT_GT(jOnlyInside, 0u) << "sample has no target-target pairs that only the symmetric rule accepts";
+            ASSERT_GT(jOnlyOutside, 0u) << "sample has no halo-source pairs that only the symmetric rule accepts";
+
+            Result result;
+            util::for_each_tuple([&](auto& v) { v.resize(this->totalBodies); }, result);
+
+            const auto nbBuilder = NeighborhoodBuilder{1024};
+            const auto stream    = getStream(nbBuilder);
+            const auto nb = nbBuilder.build(stream.exec(), this->treeView(1.0f, true), this->box, this->totalBodies,
+                                            this->groupView(), rawPtr(this->x), rawPtr(this->y), rawPtr(this->z),
+                                            rawPtr(this->h));
+
+            auto input  = std::make_tuple(rawPtr(this->v));
+            auto output = util::tupleMap([](auto& v) { return rawPtr(v); }, result);
+
+            nb.ijLoop(makeIjLoopData(input, output));
+            stream.sync();
+
+            Result reference = this->reference(this->groupView(), true);
+            this->validate(reference, result);
+        }
+
+        this->h = hOriginal;
+    }
+    else { GTEST_SKIP() << "symmetric interactions not supported by this neighborhood builder"; }
+}
+
+/*! @brief symmetric interactions with lists built at an extended capture radius and h grown afterwards
+ *
+ * This is the production configuration: lists are built once with searchExtFactor > 1 and the
+ * interaction cutoff uses the live h, so the j-side reach must be scaled by the extension too.
+ */
+TYPED_TEST(IjLoopTest, SymmetricInteractionsWithSearchExtFactor)
+{
+    using NeighborhoodBuilder       = TypeParam;
+    constexpr float searchExtFactor = 1.5f;
+    constexpr double growth         = 1.2; // < searchExtFactor; 0.2 * 1.2 * 2 = 0.48 < L/2
+
+    if constexpr (supportsSymmetricInteractions(NeighborhoodBuilder{}))
+    {
+        const thrust::universal_vector<double> hOriginal = this->h;
+        boostSmoothingLengths(*this, 0.2);
+        const thrust::universal_vector<double> hBoosted = this->h;
+
+        for (BoundaryType boundaryType : {BoundaryType::open, BoundaryType::periodic, BoundaryType::fixed})
+        {
+            this->setBoundaryType(boundaryType);
+            this->h = hBoosted;
+
+            Result result;
+            util::for_each_tuple([&](auto& v) { v.resize(this->totalBodies); }, result);
+
+            const auto nbBuilder = NeighborhoodBuilder{1024};
+            const auto stream    = getStream(nbBuilder);
+            const auto nb = nbBuilder.build(stream.exec(), this->treeView(searchExtFactor, true), this->box,
+                                            this->totalBodies, this->groupView(), rawPtr(this->x), rawPtr(this->y),
+                                            rawPtr(this->z), rawPtr(this->h));
+
+            auto input  = std::make_tuple(rawPtr(this->v));
+            auto output = util::tupleMap([](auto& v) { return rawPtr(v); }, result);
+
+            nb.ijLoop(makeIjLoopData(input, output));
+            stream.sync();
+
+            Result reference = this->reference(this->groupView(), true);
+            this->validate(reference, result);
+
+            for (auto& h : this->h)
+                h *= growth;
+
+            auto [jOnlyInside, jOnlyOutside] = this->countJOnlyPairs(this->groupView());
+            ASSERT_GT(jOnlyInside, 0u);
+            ASSERT_GT(jOnlyOutside, 0u);
+
+            nb.ijLoop(makeIjLoopData(input, output));
+            stream.sync();
+
+            reference = this->reference(this->groupView(), true);
+            this->validate(reference, result);
+        }
+
+        this->h = hOriginal;
+    }
+    else { GTEST_SKIP() << "symmetric interactions not supported by this neighborhood builder"; }
 }
 
 template<ijloop::NeighborhoodBuilder NeighborhoodBuilder>
