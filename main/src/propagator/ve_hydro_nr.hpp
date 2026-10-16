@@ -473,8 +473,8 @@ protected:
         // NR convergence diagnostic, safe to comment out
         printNRUnconverged(nrUnconverged, nrParams_.hNRIterMax, numBallmassAdjusted);
         //! cap statistics, safe to comment out; volstd_ still holds the step-start h here
-//        printNRCapped(capIterUp, capIterDown,
-//                      countHWallPinned(groups_.view(), d, cstone::rawPtr(volstd_), wallFactor));
+        printNRCapped(capIterUp, capIterDown,
+                      countHWallPinned(groups_.view(), d, cstone::rawPtr(volstd_), wallFactor));
         timer.step("hNewtonRaphson");
     }
 
