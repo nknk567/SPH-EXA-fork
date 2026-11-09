@@ -102,8 +102,8 @@ struct Unconverged
 };
 
 template<typename Dataset>
-NRStatistics computeNRStat(const cstone::GroupView& grp, Dataset& d, const typename Dataset::HydroType* h_new,
-                           const float hNRTol)
+sph::NRStatistics computeNRStat(const cstone::GroupView& grp, Dataset& d, const typename Dataset::HydroType* h_new,
+                                const float hNRTol)
 {
     auto begin           = thrust::make_zip_iterator(h_new + grp.firstBody, rawPtr(d.h) + grp.firstBody);
     auto end             = thrust::make_zip_iterator(h_new + grp.lastBody, rawPtr(d.h) + grp.lastBody);
@@ -114,8 +114,8 @@ NRStatistics computeNRStat(const cstone::GroupView& grp, Dataset& d, const typen
     return {n_unconverged, n_reset};
 }
 
-template NRStatistics computeNRStat(const cstone::GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>, float*,
-                                    const float);
+template sph::NRStatistics computeNRStat(const cstone::GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>,
+                                         float*, const float);
 
 } // namespace gpu
 } // namespace sph
