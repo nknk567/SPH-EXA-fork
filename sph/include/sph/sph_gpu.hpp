@@ -35,9 +35,10 @@ void computeDensity(Dataset& d, const cstone::Box<typename Dataset::RealType>& b
 template<class Dataset>
 extern void computeVe(Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
-template<class Dataset, class Th>
-extern void computeVeNR(Dataset& d, float hExtFactor, float hWallFactor, float hNRTol, float ngmin, float ngmax,
-                        const Th* h0, Th* h_buf, Th* nc_buf);
+template<class Dataset>
+void computeVeNR(Dataset& d, float hExtFactor, float hWallFactor, float hNRTol, float ngmin, float ngmax,
+                 const typename Dataset::HydroType* h0, typename Dataset::HydroType* h_buf,
+                 typename Dataset::HydroType* nc_buf);
 
 struct NRStatistics;
 template<typename Dataset>
