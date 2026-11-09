@@ -72,7 +72,7 @@ void initializeBallmass(const GroupView& grp, Dataset& d)
 
 template void initializeBallmass(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d);
 
-template<class Dataset, class Th>
+template<class Dataset>
 void computeVeNR(Dataset& d, float hExtFactor, float hWallFactor, float hNRTol, float ngmin, float ngmax,
                  const typename Dataset::HydroType* h0, typename Dataset::HydroType* h_buf,
                  typename Dataset::HydroType* nc_buf)
