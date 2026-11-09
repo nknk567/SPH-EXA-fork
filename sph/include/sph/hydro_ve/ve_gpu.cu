@@ -36,6 +36,9 @@
 #include "sph/particles_data.hpp"
 #include "sph/hydro_ve/ve_kern.hpp"
 
+#include <thrust/count.h>
+#include "sph/hydro_ve/ve.hpp"
+
 namespace sph
 {
 namespace gpu
@@ -87,7 +90,7 @@ COMPUTE_VE_NR(sphexa::ParticlesData<cstone::execution::Gpu>);
 template<class Th>
 struct Unconverged
 {
-    T               tol;
+    Th              tol;
     __device__ bool operator()(const thrust::tuple<Th, Th>& h_new_h) const
     {
         const auto& h_new = thrust::get<0>(h_new_h);
@@ -100,10 +103,11 @@ struct Unconverged
 
 template<typename Dataset>
 NRStatistics computeNRStat(const cstone::GroupView& grp, Dataset& d, const typename Dataset::HydroType* h_new,
-                        const float hNRTol)
+                           const float hNRTol)
 {
-    auto   begin         = thrust::make_zip_iterator(h_new + grp.firstBody, rawPtr(d.h) + grp.firstBody);
-    auto   end           = thrust::make_zip_iterator(h_new + grp.lastBody, rawPtr(d.h) + grp.lastBody);
+    auto begin           = thrust::make_zip_iterator(h_new + grp.firstBody, rawPtr(d.h) + grp.firstBody);
+    auto end             = thrust::make_zip_iterator(h_new + grp.lastBody, rawPtr(d.h) + grp.lastBody);
+    using Th             = typename Dataset::HydroType;
     size_t n_unconverged = thrust::count_if(thrust::device, begin, end, Unconverged<Th>{Th(tol)});
     size_t n_reset =
         thrust::count(thrust::device, rawPtr(d.ballmass) + grp.firstBody, rawPtr(d.ballmass) + grp.lastBody, Th(0));
@@ -111,7 +115,7 @@ NRStatistics computeNRStat(const cstone::GroupView& grp, Dataset& d, const typen
 }
 
 template NRStatistics computeNRStat(const cstone::GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>, float*,
-                                 const float);
+                                    const float);
 
 } // namespace gpu
 } // namespace sph
