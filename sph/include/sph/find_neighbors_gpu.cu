@@ -89,7 +89,7 @@ template void updateSmoothingLengthIterativeGpu(const cstone::GroupView&,
                                                 sphexa::ParticlesData<cstone::execution::Gpu>&,
                                                 const cstone::Box<SphTypes::CoordinateType>&, unsigned);
 
-template<class Th, class KeyType>
+template<class KeyType>
 __global__ void setRemovalKeysIfNeighborlessGpuKernel(GroupView grp, const unsigned* nc, KeyType* keys)
 {
     LocalIndex laneIdx = threadIdx.x & (cstone::GpuConfig::warpSize - 1);

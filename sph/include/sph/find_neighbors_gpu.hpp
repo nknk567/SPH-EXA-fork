@@ -18,7 +18,7 @@ template<class T, class Dataset>
 extern void updateSmoothingLengthIterativeGpu(const cstone::GroupView&, Dataset& d, const cstone::Box<T>& box,
                                               unsigned);
 
-template<class Th, class KeyType>
+template<class KeyType>
 extern bool setRemovalKeysIfNeighborlessGpu(const cstone::GroupView&, const unsigned* nc, KeyType* keys);
 
 } // namespace sph
