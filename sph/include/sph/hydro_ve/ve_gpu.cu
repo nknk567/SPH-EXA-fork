@@ -108,14 +108,14 @@ sph::NRStatistics computeNRStat(const cstone::GroupView& grp, Dataset& d, const 
     auto begin           = thrust::make_zip_iterator(h_new + grp.firstBody, rawPtr(d.h) + grp.firstBody);
     auto end             = thrust::make_zip_iterator(h_new + grp.lastBody, rawPtr(d.h) + grp.lastBody);
     using Th             = typename Dataset::HydroType;
-    size_t n_unconverged = thrust::count_if(thrust::device, begin, end, Unconverged<Th>{Th(tol)});
+    size_t n_unconverged = thrust::count_if(thrust::device, begin, end, Unconverged<Th>{Th(hNRTol)});
     size_t n_reset =
         thrust::count(thrust::device, rawPtr(d.ballmass) + grp.firstBody, rawPtr(d.ballmass) + grp.lastBody, Th(0));
     return {n_unconverged, n_reset};
 }
 
 template sph::NRStatistics computeNRStat(const cstone::GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>,
-                                         float*, const float);
+                                         const float*, const float);
 
 } // namespace gpu
 } // namespace sph
