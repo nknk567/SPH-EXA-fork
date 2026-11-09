@@ -280,6 +280,7 @@ struct OctreeNsView
      *          Default for fully converged trees: 1.0, >1.0 otherwise
      */
     float searchExtFactor{1.0};
+    bool symmetric_neighbors{false};
 };
 
 template<class KeyType, execution::Policy Exec>

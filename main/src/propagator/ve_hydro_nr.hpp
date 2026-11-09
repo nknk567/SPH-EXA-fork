@@ -267,7 +267,8 @@ public:
         // h exchange prevents neighbor list overflow (symmetric counterpart)
         domain.exchangeHalos(std::tie(get<"h">(d)), get<"ax">(d), get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
-        findNeighborsSfc(groups_.view(), d, domain.box(), false, true);
+        d.treeView.symmetric_neighbors = true;
+        findNeighborsSfc(groups_.view(), d, domain.box(), false);
         timer.step("FindNeighbors");
         pmReader.step();
 

@@ -10,12 +10,11 @@ namespace sph
 {
 
 inline void findNeighborsSfc(const cstone::GroupView& groups, sphexa::ParticlesData<cstone::execution::Cpu>& d,
-                             const cstone::Box<SphTypes::CoordinateType>& box, bool subgroups = false,
-                             bool symmetric_neighbors = false)
+                             const cstone::Box<SphTypes::CoordinateType>& box, bool subgroups = false)
 {
     if (d.ng0 > d.ngmax) { throw std::runtime_error("ng0 should be smaller than ngmax\n"); }
 
-    d.neighborhood.build(groups, d, box, subgroups, symmetric_neighbors);
+    d.neighborhood.build(groups, d, box, subgroups);
 }
 
 using cstone::GroupView;

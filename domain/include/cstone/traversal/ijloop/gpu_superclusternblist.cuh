@@ -346,7 +346,8 @@ struct GpuSuperclusterNbListNeighborhoodBuilder
                 std::move(neighborData),
                 std::move(superclusterInfo),
                 ncmax,
-                numBytes};
+                numBytes,
+                tree.symmetric_neighbors};
     }
 };
 
