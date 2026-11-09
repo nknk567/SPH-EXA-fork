@@ -89,8 +89,6 @@ template void updateSmoothingLengthIterativeGpu(const cstone::GroupView&,
                                                 sphexa::ParticlesData<cstone::execution::Gpu>&,
                                                 const cstone::Box<SphTypes::CoordinateType>&, unsigned);
 
-__device__ bool nc_h_convergenceFailure = false;
-
 template<class Th, class KeyType>
 __global__ void setRemovalKeysIfNeighborlessGpuKernel(GroupView grp, const unsigned* nc, KeyType* keys)
 {
