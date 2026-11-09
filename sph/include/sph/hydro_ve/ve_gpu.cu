@@ -114,7 +114,7 @@ sph::NRStatistics computeNRStat(const cstone::GroupView& grp, Dataset& d, const 
     return {n_unconverged, n_reset};
 }
 
-template sph::NRStatistics computeNRStat(const cstone::GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>,
+template sph::NRStatistics computeNRStat(const cstone::GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>&,
                                          const float*, const float);
 
 } // namespace gpu
