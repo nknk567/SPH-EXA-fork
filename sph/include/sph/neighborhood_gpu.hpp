@@ -23,7 +23,8 @@ struct DeviceNeighborhoodData
     void disableNeighborLists();
 
     template<class Dataset, class T>
-    void build(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box, bool subgroups);
+    void build(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box, bool subgroups,
+               bool symmetric_neighbors);
 
     template<class... Args>
     void ijLoop(cstone::ijloop::IjLoopData<Args...>) const;
@@ -42,7 +43,7 @@ using ClusteredNeighborhoodBuilder =
 struct DeviceNeighborhoodData::Impl
 {
     template<class Dataset, class T>
-    void build(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box, bool subgroups)
+    void build(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box, bool subgroups, bool symmetric_neighbors)
     {
         if (subgroups && groups.firstBody == 0 && groups.lastBody == 0)
         {
@@ -80,7 +81,7 @@ struct DeviceNeighborhoodData::Impl
                 [&](auto const& nb)
                 {
                     neighborhood = nb.build(cstone::execution::gpuDefaultStream, d.treeView, box, d.size(), groups,
-                                            rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h));
+                                            rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), symmetric_neighbors);
                 },
                 builder);
         }
@@ -109,10 +110,10 @@ struct DeviceNeighborhoodData::Impl
 
 template<class Dataset, class T>
 void DeviceNeighborhoodData::build(const cstone::GroupView& groups, Dataset& d, const cstone::Box<T>& box,
-                                   bool subgroups)
+                                   bool subgroups, bool symmetric_neighbors)
 {
     assert(impl);
-    impl->build(groups, d, box, subgroups);
+    impl->build(groups, d, box, subgroups, symmetric_neighbors);
 }
 
 template<class... Args>

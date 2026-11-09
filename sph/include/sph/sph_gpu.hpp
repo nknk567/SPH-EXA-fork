@@ -35,6 +35,18 @@ void computeDensity(Dataset& d, const cstone::Box<typename Dataset::RealType>& b
 template<class Dataset>
 extern void computeVe(Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
+template<class Dataset, class Th>
+extern void computeVeNR(Dataset& d, float hExtFactor, float hWallFactor, float hNRTol, float ngmin, float ngmax,
+                        const Th* h0, Th* h_buf, Th* nc_buf);
+
+struct NRStatistics;
+template<typename Dataset>
+extern NRStatistics computeNRStat(const cstone::GroupView& grp, Dataset& d, const typename Dataset::HydroType* h_new,
+                                  const float hNRTol);
+
+template<class Dataset>
+extern void initializeBallmass(const GroupView&, Dataset& d);
+
 template<class Dataset>
 extern void computeIadDivvCurlvGradh(Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
@@ -42,7 +54,8 @@ template<class Dataset>
 extern void computeAVswitches(Dataset& d, const cstone::Box<typename Dataset::RealType>&);
 
 template<bool avClean, class Dataset>
-extern void computeMomentumEnergy(const GroupView&, float*, Dataset&, const cstone::Box<typename Dataset::RealType>&);
+extern void computeMomentumEnergy(const GroupView&, float*, Dataset&, const cstone::Box<typename Dataset::RealType>&,
+                                  bool nrMode);
 
 template<class Tt, class Tm, class Th>
 extern void computeIdealGasEOS(size_t firstParticle, size_t lastParticle, Tm mui, Tt gamma, const Tt* temp, const Tt* u,

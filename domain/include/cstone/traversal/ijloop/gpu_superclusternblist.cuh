@@ -92,6 +92,9 @@ struct GpuSuperclusterNbListNeighborhood
     unsigned ncmax       = 0;
     std::size_t numBytes = 0;
 
+    //! @brief The neighbors of a particle are within 2 * max(h_i, h_j) instead of 2 * h_i
+    bool symmetric_neighbors = false;
+
     template<class... Ts>
     void ijLoop(IjLoopData<Ts...> ijData) const
     {
@@ -175,7 +178,7 @@ protected:
         }
 
         runIjLoop<Config>(exec, box, firstValidBody, totalBodies, firstBody, lastBody, x, y, z, h, ijData, tmpOrOutput,
-                          neighborData.get(), superclusterInfo, numISuperclusters, activeMasks);
+                          neighborData.get(), superclusterInfo, numISuperclusters, activeMasks, symmetric_neighbors);
 
         if constexpr (Config::symmetric)
         {

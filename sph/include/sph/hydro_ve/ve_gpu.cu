@@ -50,5 +50,68 @@ void computeVe(Dataset& d, const cstone::Box<typename Dataset::RealType>&)
 
 template void computeVe(sphexa::ParticlesData<cstone::execution::Gpu>& d, const cstone::Box<SphTypes::CoordinateType>&);
 
+template<class Tm, class T>
+struct Ballmass
+{
+    T            eta;
+    __device__ T operator()(Tm mi) const { return eta * T(mi); }
+};
+
+template<class Dataset>
+void initializeBallmass(const GroupView& grp, Dataset& d)
+{
+    using Th = typename Dataset::HydroType;
+    using Tm = typename Dataset::Tmass;
+    thrust::transform(thrust::device, rawPtr(d.m) + grp.firstBody, rawPtr(d.m) + grp.lastBody,
+                      rawPtr(d.ballmass) + grp.firstBody, Ballmass<Tm, Th>{ballmassEta<Th>(d.ng0)});
+    checkGpuErrors(cudaDeviceSynchronize());
+}
+
+template void initializeBallmass(const GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>& d);
+
+template<class Dataset, class Th>
+void computeVeNR(Dataset& d, float hExtFactor, float hWallFactor, float hNRTol, float ngmin, float ngmax,
+                 const typename Dataset::HydroType* h0, typename Dataset::HydroType* h_buf,
+                 typename Dataset::HydroType* nc_buf)
+{
+    veNRIjLoop(d.neighborhood, d.K, d.xm.data(), d.m.data(), d.ballmass.data(), d.wh, d.kx.data(), hExtFactor,
+               hWallFactor, hNRTol, ngmin, ngmax, h0, h_buf, nc_buf);
+}
+
+#define COMPUTE_VE_NR(Dataset)                                                                                         \
+    template void computeVeNR(Dataset&, float, float, float, float, float, const typename Dataset::HydroType*,         \
+                              typename Dataset::HydroType*, typename Dataset::HydroType*);
+
+COMPUTE_VE_NR(sphexa::ParticlesData<cstone::execution::Gpu>);
+
+template<class Th>
+struct Unconverged
+{
+    T               tol;
+    __device__ bool operator()(const thrust::tuple<Th, Th>& h_new_h) const
+    {
+        const auto& h_new = thrust::get<0>(h_new_h);
+        const auto& h     = thrust::get<1>(h_new_h);
+
+        Th rel = std::abs(h_new - h) / h;
+        return rel >= tol;
+    }
+};
+
+template<typename Dataset>
+NRStatistics computeNRStat(const cstone::GroupView& grp, Dataset& d, const typename Dataset::HydroType* h_new,
+                        const float hNRTol)
+{
+    auto   begin         = thrust::make_zip_iterator(h_new + grp.firstBody, rawPtr(d.h) + grp.firstBody);
+    auto   end           = thrust::make_zip_iterator(h_new + grp.lastBody, rawPtr(d.h) + grp.lastBody);
+    size_t n_unconverged = thrust::count_if(thrust::device, begin, end, Unconverged<Th>{Th(tol)});
+    size_t n_reset =
+        thrust::count(thrust::device, rawPtr(d.ballmass) + grp.firstBody, rawPtr(d.ballmass) + grp.lastBody, Th(0));
+    return {n_unconverged, n_reset};
+}
+
+template NRStatistics computeNRStat(const cstone::GroupView&, sphexa::ParticlesData<cstone::execution::Gpu>, float*,
+                                 const float);
+
 } // namespace gpu
 } // namespace sph

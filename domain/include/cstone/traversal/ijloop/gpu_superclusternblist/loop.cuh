@@ -324,7 +324,8 @@ __global__ __launch_bounds__(Config::iSize* Config::jSize* NumSuperclustersPerBl
     const std::uint32_t* const __restrict__ neighborData,
     const SuperclusterInfo* const __restrict__ superclusterInfo,
     const unsigned numISuperclusters,
-    const Mask* const __restrict__ activeMasks)
+    const Mask* const __restrict__ activeMasks,
+    const bool symmetric_neighbors)
 {
     static_assert(NumSuperclustersPerBlock > 0);
     static_assert(Config::iSize * Config::jSize >= GpuConfig::warpSize);
@@ -343,11 +344,10 @@ __global__ __launch_bounds__(Config::iSize* Config::jSize* NumSuperclustersPerBl
     const unsigned iSuperclusterIndex = blockIdx.x * NumSuperclustersPerBlock + threadIdx.z;
     if (iSuperclusterIndex >= numISuperclusters) return;
 
-    auto [iSupercluster, iSuperclusterNeighborsCount, iSuperclusterDataIndex] =
-        superclusterInfo[iSuperclusterIndex];
+    auto [iSupercluster, iSuperclusterNeighborsCount, iSuperclusterDataIndex] = superclusterInfo[iSuperclusterIndex];
     // Show NVCC that variables are warp-uniform. Inspired by https://gitlab.com/gromacs/gromacs/-/merge_requests/5715.
     iSuperclusterNeighborsCount = shflSync(iSuperclusterNeighborsCount, 0);
-    iSuperclusterDataIndex = shflSync(iSuperclusterDataIndex, 0);
+    iSuperclusterDataIndex      = shflSync(iSuperclusterDataIndex, 0);
 
     using ParticleDataWithRadiusSq = decltype(loadParticleDataWithRadiusSq(x, y, z, h, ijData.input, firstBody));
     using InteractionResultType    = typename IjData::InteractionResultType;
@@ -397,22 +397,27 @@ __global__ __launch_bounds__(Config::iSize* Config::jSize* NumSuperclustersPerBl
                         getIData(iSuperclusterData, c * Config::iSize + threadIdx.x, i - firstValidBody, h);
                     assert(std::get<0>(iData) == i - firstValidBody);
                     const auto [ijPosDiff, distSq] = posDiffAndDistSq(UsePbc, box, iData, jData);
-                    bool iClose, jClose;
+                    bool updateI, updateJ;
                     if constexpr (std::is_pointer_v<ThP>)
                     {
-                        iClose = distSq < iRadiusSq;
-                        jClose = Config::symmetric && (distSq < jRadiusSq & jRequired);
+                        //                        updateI = distSq < iRadiusSq;
+                        //                        updateJ = Config::symmetric && (distSq < jRadiusSq & jRequired);
+                        const bool iClose    = distSq < iRadiusSq;
+                        const bool jClose    = distSq < jRadiusSq;
+                        const bool pairClose = (iClose | jClose);
+                        updateI              = symmetric_neighbors ? pairClose : iClose;
+                        updateJ              = Config::symmetric && (symmetric_neighbors ? pairClose : jClose);
                     }
                     else
                     {
-                        iClose = distSq < jRadiusSq;
-                        jClose = Config::symmetric && (iClose & jRequired);
+                        updateI = distSq < jRadiusSq;
+                        updateJ = Config::symmetric && (updateI & jRequired);
                     }
-                    if (iClose | jClose)
+                    if (updateI | updateJ)
                     {
                         const auto ijInteraction = ijData.interaction(iData, jData, ijPosDiff, distSq);
-                        if (iClose) updateResult(iResults[c], ijInteraction);
-                        if (jClose)
+                        if (updateI) updateResult(iResults[c], ijInteraction);
+                        if (updateJ)
                         {
                             const auto jiInteraction =
                                 selectSymmetric(ijInteraction, ijData.interaction(jData, iData, -ijPosDiff, distSq));
@@ -500,7 +505,8 @@ void runIjLoop(const execution::Gpu exec,
                const std::uint32_t* const neighborData,
                const SuperclusterInfo* const superclusterInfo,
                const LocalIndex numISuperclusters,
-               const Mask* const activeMasks)
+               const Mask* const activeMasks,
+               const bool symmetric_neighbors)
 {
     constexpr unsigned numSuperclustersPerBlock = 64 / (Config::iSize * Config::jSize);
     const dim3 blockSize                        = {Config::iSize, Config::jSize, numSuperclustersPerBlock};
@@ -509,7 +515,7 @@ void runIjLoop(const execution::Gpu exec,
     {
         runIjLoopKernel<Config, numSuperclustersPerBlock, decltype(usePbc)::value><<<numBlocks, blockSize, 0, exec>>>(
             box, firstValidBody, totalBodies, firstBody, lastBody, x, y, z, h, ijData, symmTmpOutput, neighborData,
-            superclusterInfo, numISuperclusters, activeMasks);
+            superclusterInfo, numISuperclusters, activeMasks, symmetric_neighbors);
         checkGpuErrors(cudaGetLastError());
     };
 

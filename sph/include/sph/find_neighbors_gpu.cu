@@ -5,11 +5,11 @@ namespace sph
 {
 
 void findNeighborsSfc(const cstone::GroupView& groups, sphexa::ParticlesData<cstone::execution::Gpu>& d,
-                      const cstone::Box<SphTypes::CoordinateType>& box, bool subgroups)
+                      const cstone::Box<SphTypes::CoordinateType>& box, bool subgroups, bool symmetric_neighbors)
 {
     if (d.ng0 > d.ngmax) { throw std::runtime_error("ng0 should be smaller than ngmax\n"); }
 
-    d.neighborhood.build(groups, d, box, subgroups);
+    d.neighborhood.build(groups, d, box, subgroups, symmetric_neighbors);
 }
 
 using cstone::GpuConfig;
@@ -71,7 +71,8 @@ __global__ __launch_bounds__(128) void updateSmoothingLengthIterativeGpuKernel(
 }
 
 template<class T, class Dataset>
-void updateSmoothingLengthIterativeGpu(const cstone::GroupView& grp, Dataset& d, const cstone::Box<T>& box)
+void updateSmoothingLengthIterativeGpu(const cstone::GroupView& grp, Dataset& d, const cstone::Box<T>& box,
+                                       unsigned ngmax)
 {
     unsigned numThreads       = 128;
     unsigned numWarpsPerBlock = numThreads / cstone::GpuConfig::warpSize;
@@ -79,12 +80,46 @@ void updateSmoothingLengthIterativeGpu(const cstone::GroupView& grp, Dataset& d,
     if (numBlocks == 0) { return; }
 
     updateSmoothingLengthIterativeGpuKernel<<<numBlocks, numThreads>>>(
-        grp, d.ng0, d.ngmax, box, d.treeView, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), rawPtr(d.nc));
+        grp, d.ng0, ngmax, box, d.treeView, rawPtr(d.x), rawPtr(d.y), rawPtr(d.z), rawPtr(d.h), rawPtr(d.nc));
     checkGpuErrors(cudaGetLastError());
     checkGpuErrors(cudaDeviceSynchronize());
 }
 
 template void updateSmoothingLengthIterativeGpu(const cstone::GroupView&,
                                                 sphexa::ParticlesData<cstone::execution::Gpu>&,
-                                                const cstone::Box<SphTypes::CoordinateType>&);
+                                                const cstone::Box<SphTypes::CoordinateType>&, unsigned);
+
+__device__ bool nc_h_convergenceFailure = false;
+
+template<class Th, class KeyType>
+__global__ void setRemovalKeysIfNeighborlessGpuKernel(GroupView grp, const unsigned* nc, KeyType* keys)
+{
+    LocalIndex laneIdx = threadIdx.x & (cstone::GpuConfig::warpSize - 1);
+    LocalIndex warpIdx = (blockDim.x * blockIdx.x + threadIdx.x) >> cstone::GpuConfig::warpSizeLog2;
+    if (warpIdx >= grp.numGroups) { return; }
+
+    LocalIndex i = grp.groupStart[warpIdx] + laneIdx;
+    if (i >= grp.groupEnd[warpIdx]) { return; }
+
+    if (nc[i] <= 1)
+    {
+        keys[i]                 = cstone::removeKey<KeyType>{};
+        nc_h_convergenceFailure = true;
+    }
+}
+
+template<class KeyType>
+bool setRemovalKeysIfNeighborlessGpu(const GroupView& grp, const unsigned* nc, KeyType* keys)
+{
+    unsigned numThreads       = 256;
+    unsigned numWarpsPerBlock = numThreads / cstone::GpuConfig::warpSize;
+    unsigned numBlocks        = (grp.numGroups + numWarpsPerBlock - 1) / numWarpsPerBlock;
+    if (numBlocks == 0) { return false; }
+    setRemovalKeysIfNeighborlessGpuKernel<<<numBlocks, numThreads>>>(grp, nc, keys);
+
+    bool convergenceFailure;
+    checkGpuErrors(cudaMemcpyFromSymbol(&convergenceFailure, GPU_SYMBOL(nc_h_convergenceFailure), sizeof(bool)));
+    return convergenceFailure;
+}
+
 } // namespace sph

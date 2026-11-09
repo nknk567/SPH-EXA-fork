@@ -155,6 +155,15 @@ public:
         timer.step("Generalized Volume Elements");
         domain.exchangeHalos(get<"vx", "vy", "vz", "kx">(d), get<"ax">(d), get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
+        computeForcesCommon(domain, simData);
+    }
+
+    void computeForcesCommon(DomainType& domain, DataType& simData, bool nrMode = false)
+    {
+        // changes in computeIadDivvCurlvGradh, computeMomentumEnergy
+        auto&  d     = simData.hydro;
+        size_t first = domain.startIndex();
+        size_t last  = domain.endIndex();
 
         release(d, "ay", "az");
         acquire(d, "divv", "gradh");
@@ -182,7 +191,7 @@ public:
 
         release(d, "divv", "gradh");
         acquire(d, "ay", "az");
-        computeMomentumEnergy<avClean>(groups_.view(), nullptr, d, domain.box());
+        computeMomentumEnergy<avClean>(groups_.view(), nullptr, d, domain.box(), nrMode);
         timer.step("MomentumAndEnergy");
         pmReader.step();
 
@@ -261,13 +270,13 @@ public:
         acquire(d, "c11", "c12", "c13");
 
         // third output pass: recover temporary curlv and divv quantities
-        release(d, "prho", "c");
-        acquire(d, "divv", "curlv");
+        release(d, "prho", "c", "dtCourant");
+        acquire(d, "divv", "curlv", "gradh");
         // partial recovery of cij in range [first:last] without halos, which are not needed for divv and curlv
         if (!indicesDone.empty()) { computeIadDivvCurlvGradh(d, box); }
         output();
-        release(d, "divv", "curlv");
-        acquire(d, "prho", "c");
+        release(d, "divv", "curlv", "gradh");
+        acquire(d, "prho", "c", "dtCourant");
 
         /* The following data is now lost and no longer available in the integration step
          *  c11, c12, c12: halos invalidated

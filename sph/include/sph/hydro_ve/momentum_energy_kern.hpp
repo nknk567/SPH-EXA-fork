@@ -67,6 +67,7 @@ struct MomentumAndEnergyInteraction
 {
     Kernel wh;
     T      Atmin, Atmax, ramp;
+    bool   nrMode{false};
 
     template<class ParticleData, class Tc>
     constexpr auto operator()(const ParticleData& iData, const ParticleData& jData, cstone::Vec3<Tc> const& r_ij,
@@ -82,7 +83,15 @@ struct MomentumAndEnergyInteraction
         T hiInv  = T(1) / hi;
         T hiInv3 = hiInv * hiInv * hiInv;
 
-        T eta_crit = std::cbrt(T(32) * M_PI / T(3) / T(nci));
+//        T eta_crit = std::cbrt(T(32) * M_PI / T(3) / T(nci));
+        T eta_crit;
+        if (nrMode)
+        {
+            T etaCriti = std::cbrt(xmassi / (kxi * hi * hi * hi));
+            T etaCritj = std::cbrt(xmassj / (kxj * hj * hj * hj));
+            eta_crit   = stl::max(etaCriti, etaCritj);
+        }
+        else { eta_crit = std::cbrt(T(32) * M_PI / T(3) / T(nci)); }
 
         T rx = r_ij[0];
         T ry = r_ij[1];
@@ -116,6 +125,14 @@ struct MomentumAndEnergyInteraction
         T rv = rx * vx_ij + ry * vy_ij + rz * vz_ij;
         if constexpr (AvClean)
         {
+//            T eta_crit;
+//            if (nrMode)
+//            {
+//                T etaCriti = std::cbrt(xmassi / (kxi * hi * hi * hi));
+//                T etaCritj = std::cbrt(xmassj / (kxj * hj * hj * hj));
+//                eta_crit   = stl::max(etaCriti, etaCritj);
+//            }
+//            else { eta_crit = std::cbrt(T(32) * M_PI / T(3) / T(nci)); }
             rv += avRvCorrection({rx, ry, rz}, stl::min(v1, v2), eta_crit, {dV11i, dV12i, dV13i, dV22i, dV23i, dV33i},
                                  {dV11j, dV12j, dV13j, dV22j, dV23j, dV33j});
         }
@@ -220,7 +237,8 @@ void momentumAndEnergyIjLoop(Neighborhood const& neighborhood, Tc K, Tc Kcour, T
                              const T* xm, const T* prho, const T* c11, const T* c12, const T* c13, const T* c22,
                              const T* c23, const T* c33, const unsigned* nc, const T* dV11, const T* dV12,
                              const T* dV13, const T* dV22, const T* dV23, const T* dV33, const T* tdpdTrho,
-                             KernelVariant<T> const& wh, Tm1* du, T* grad_P_x, T* grad_P_y, T* grad_P_z, T* dt)
+                             KernelVariant<T> const& wh, Tm1* du, T* grad_P_x, T* grad_P_y, T* grad_P_z, T* dt,
+                             bool nrMode)
 {
     if constexpr (!AvClean) dV11 = dV12 = dV13 = dV22 = dV23 = dV33 = vx;
     const auto input =
@@ -233,13 +251,13 @@ void momentumAndEnergyIjLoop(Neighborhood const& neighborhood, Tc K, Tc Kcour, T
             if (tdpdTrho)
             {
                 neighborhood.ijLoop(cstone::ijloop::makeIjLoopData<Tc, T*>(
-                    input, output, MomentumAndEnergyInteraction<AvClean, T, Kernel>{wh, Atmin, Atmax, ramp},
+                    input, output, MomentumAndEnergyInteraction<AvClean, T, Kernel>{wh, Atmin, Atmax, ramp, nrMode},
                     MomentumAndEnergyPostambleWithDt<true, T, Tc>{K, Kcour}));
             }
             else
             {
                 neighborhood.ijLoop(cstone::ijloop::makeIjLoopData<Tc, T*>(
-                    input, output, MomentumAndEnergyInteraction<AvClean, T, Kernel>{wh, Atmin, Atmax, ramp},
+                    input, output, MomentumAndEnergyInteraction<AvClean, T, Kernel>{wh, Atmin, Atmax, ramp, nrMode},
                     MomentumAndEnergyPostambleWithDt<false, T, Tc>{K, Kcour}));
             }
         },
