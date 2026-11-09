@@ -38,6 +38,7 @@
 
 #include <thrust/count.h>
 #include "sph/hydro_ve/ve.hpp"
+#include "sph/hydro_ve/nr_statistics.hpp"
 
 namespace sph
 {

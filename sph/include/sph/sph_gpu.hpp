@@ -5,6 +5,7 @@
 #include "cstone/tree/octree.hpp"
 #include "cstone/tree/definitions.h"
 #include "sph/timestep.h"
+#include "sph/hydro_ve/nr_statistics.hpp"
 
 namespace sph
 {
@@ -40,7 +41,6 @@ void computeVeNR(Dataset& d, float hExtFactor, float hWallFactor, float hNRTol, 
                  const typename Dataset::HydroType* h0, typename Dataset::HydroType* h_buf,
                  typename Dataset::HydroType* nc_buf);
 
-struct NRStatistics;
 template<typename Dataset>
 extern NRStatistics computeNRStat(const cstone::GroupView& grp, Dataset& d, const typename Dataset::HydroType* h_new,
                                   const float hNRTol);

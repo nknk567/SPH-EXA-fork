@@ -11,6 +11,7 @@
 
 #include "io/arg_parser.hpp"
 #include "ve_hydro.hpp"
+#include "sph/hydro_ve/nr_statistics.hpp"
 
 namespace sphexa
 {
