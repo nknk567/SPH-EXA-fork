@@ -120,4 +120,6 @@ bool setRemovalKeysIfNeighborlessGpu(const GroupView& grp, const unsigned* nc, K
     return convergenceFailure;
 }
 
+template bool setRemovalKeysIfNeighborlessGpu(const GroupView&, const unsigned*, uint64_t*);
+
 } // namespace sph
