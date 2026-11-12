@@ -78,9 +78,11 @@ void restoreDataset(IFileReader* reader, Dataset& d)
                         if (reader->rank() == 0)
                         {
                             std::cout << "\nWARNING: optional field " << key
-                                      << " not found in restart file, initializing to zero. It will be recomputed "
-                                         "when running without NR smoothing-length iterations; for the ve-nr and "
-                                         "ve-disk propagators, first regenerate the checkpoint with a classical run."
+                                      << " not found in restart file, initializing to zero. Volume elements "
+                                         "(xm, ballmass) are recomputed when running without NR smoothing-length "
+                                         "iterations; for the ve-nr and ve-disk propagators, first regenerate the "
+                                         "checkpoint with a classical run. Dissipation accumulators (u_visc_*) "
+                                         "start counting from zero."
                                       << std::endl;
                         }
                         std::fill(tmp.begin(), tmp.end(), T(0));
@@ -282,6 +284,9 @@ public:
         else if (d.isAllocated("u")) { replicateField(reader, "u", d.u, T(1)); }
         cstone::fill(d.exec, d.du_m1.begin(), d.du_m1.end(), 0);
         cstone::fill(d.exec, d.rung.begin(), d.rung.end(), 0);
+        // dissipation accumulators (allocated by ve-nr/ve-disk only; no-op otherwise) start at zero
+        cstone::fill(d.exec, d.u_visc_tot.begin(), d.u_visc_tot.end(), 0.0);
+        cstone::fill(d.exec, d.u_visc_restr.begin(), d.u_visc_restr.end(), 0.0);
         cstone::scale(d.exec, d.vx.data(), d.vx.data() + d.vx.size(), d.x_m1.data(), d.minDt);
         cstone::scale(d.exec, d.vy.data(), d.vy.data() + d.vy.size(), d.y_m1.data(), d.minDt);
         cstone::scale(d.exec, d.vz.data(), d.vz.data() + d.vz.size(), d.z_m1.data(), d.minDt);

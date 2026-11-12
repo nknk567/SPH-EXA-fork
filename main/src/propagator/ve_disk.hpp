@@ -17,6 +17,7 @@
 #include "accretion.hpp"
 #include "beta_cooling.hpp"
 #include "central_force.hpp"
+#include "dissipation.hpp"
 #include "exchange_star_position.hpp"
 #include "star_data.hpp"
 
@@ -83,7 +84,7 @@ public:
         disk::computeCentralForce(first, last, d, star);
         timer.step("computeCentralForce");
 
-//        Base::printNonFinite("disk", d, first, last); // NaN-localizer diagnostic, safe to comment out
+        //        Base::printNonFinite("disk", d, first, last); // NaN-localizer diagnostic, safe to comment out
     }
 
     void integrate(DomainType& domain, DataType& simData) override
@@ -97,6 +98,12 @@ public:
 
         computeTimestep(first, last, d, star.t_du, d.etaAcc * star.t_star);
         timer.step("Timestep");
+
+        /* accumulate this step's AV heating (shock observation): total, and only outside
+         * star.r_shock_restr; before computePositions so the gate uses the force-evaluation
+         * positions and d.minDt is the dt that advances u with the same du */
+        disk::integrateDissipation(first, last, d, d.minDt, star);
+        timer.step("integrateDissipation");
 
         computePositions(groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)});
         /* h is converged towards rho * h^3 = eta * m during the force computation; nudging h

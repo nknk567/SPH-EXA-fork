@@ -211,19 +211,25 @@ struct MomentumAndEnergyPostamble
         auto [a_visc_energy, energy, momentum_x, momentum_y, momentum_z, maxvsignal] = result;
         a_visc_energy                                                                = stl::max(T(0), a_visc_energy);
         T eCoeff                                                                     = UseTdpdTrho ? tdpdTrhoi : prhoi;
-        T dui = K * (eCoeff * energy + T(0.5) * a_visc_energy); // factor of 2 already removed from 2P/rho
+        T dui     = K * (eCoeff * energy + T(0.5) * a_visc_energy); // factor of 2 already removed from 2P/rho
+        T du_visc = K * T(0.5) * a_visc_energy;
         if (nci <= 1)
         {
             dui        = 0;
             momentum_x = momentum_y = momentum_z = 0;
+            du_visc                              = 0;
         }
 
         // grad_P_xyz is stored as the acceleration,s accel = -grad_P / rho
-        return std::make_tuple(Tc(dui), T(-K * momentum_x), T(-K * momentum_y), T(-K * momentum_z), maxvsignal);
+        return std::make_tuple(Tc(dui), T(-K * momentum_x), T(-K * momentum_y), T(-K * momentum_z), maxvsignal,
+                               du_visc);
     }
 };
 
-template<bool UseTdpdTrho, class T, class Tc>
+/*! @brief postamble with Courant time step; StoreDuVisc selects whether the AV heating rate is
+ * part of the output tuple (only propagators that allocate the du_visc field store it)
+ */
+template<bool UseTdpdTrho, bool StoreDuVisc, class T, class Tc>
 struct MomentumAndEnergyPostambleWithDt : MomentumAndEnergyPostamble<UseTdpdTrho, T, Tc>
 {
     Tc Kcour;
@@ -237,7 +243,7 @@ struct MomentumAndEnergyPostambleWithDt : MomentumAndEnergyPostamble<UseTdpdTrho
     template<class ParticleData, class Result>
     constexpr auto operator()(const ParticleData& iData, const Result& result) const
     {
-        const auto [du, grad_P_x, grad_P_y, grad_P_z, maxvsignal] =
+        const auto [du, grad_P_x, grad_P_y, grad_P_z, maxvsignal, du_visc] =
             MomentumAndEnergyPostamble<UseTdpdTrho, T, Tc>::operator()(iData, result);
         const auto [i, iPos, hi, vxi, vyi, vzi, mi, ci, kxi, alpha_i, xmassi, prhoi, c11i, c12i, c13i, c22i, c23i, c33i,
                     nci, dV11i, dV12i, dV13i, dV22i, dV23i, dV33i, tdpdTrhoi] = iData;
@@ -245,7 +251,8 @@ struct MomentumAndEnergyPostambleWithDt : MomentumAndEnergyPostamble<UseTdpdTrho
         //! flagged for removal at the next sync; must not constrain the global time step
         auto dt = nci <= 1 ? decltype(tsKCourant(maxvsignal, hi, ci, Kcour))(INFINITY)
                            : tsKCourant(maxvsignal, hi, ci, Kcour);
-        return std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt);
+        if constexpr (StoreDuVisc) { return std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt, du_visc); }
+        else { return std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt); }
     }
 };
 
@@ -256,27 +263,35 @@ void momentumAndEnergyIjLoop(Neighborhood const& neighborhood, Tc K, Tc Kcour, T
                              const T* c23, const T* c33, const unsigned* nc, const T* dV11, const T* dV12,
                              const T* dV13, const T* dV22, const T* dV23, const T* dV33, const T* tdpdTrho,
                              KernelVariant<T> const& wh, Tm1* du, T* grad_P_x, T* grad_P_y, T* grad_P_z, T* dt,
-                             bool nrMode)
+                             T* du_visc, bool nrMode)
 {
     if constexpr (!AvClean) dV11 = dV12 = dV13 = dV22 = dV23 = dV33 = vx;
     const auto input =
         std::make_tuple(vx, vy, vz, m, c, kx, alpha, xm, prho, c11, c12, c13, c22, c23, c33, nc, dV11, dV12, dV13, dV22,
                         dV23, dV33, tdpdTrho ? tdpdTrho : vx /* pass random derefable array if tdpdTrho is null */);
-    const auto output = std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt);
+    /* du_visc may be nullptr (propagators without the dissipation field): the store helper
+     * writes every output slot unconditionally, so the slot is left out of the output tuple
+     * and the matching postamble variant is selected at runtime, like the optional tdpdTrho. */
+    const auto output5 = std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, dt);
+    const auto output6 = std::tuple_cat(output5, std::make_tuple(du_visc));
     std::visit(
         [&]<class Kernel>(Kernel wh)
         {
-            if (tdpdTrho)
+            MomentumAndEnergyInteraction<AvClean, T, Kernel> interaction{wh, Atmin, Atmax, ramp, nrMode};
+            auto run = [&]<bool Tdpd, bool DuVisc>(const auto& output)
             {
                 neighborhood.ijLoop(cstone::ijloop::makeIjLoopData<Tc, T*>(
-                    input, output, MomentumAndEnergyInteraction<AvClean, T, Kernel>{wh, Atmin, Atmax, ramp, nrMode},
-                    MomentumAndEnergyPostambleWithDt<true, T, Tc>{K, Kcour}));
+                    input, output, interaction, MomentumAndEnergyPostambleWithDt<Tdpd, DuVisc, T, Tc>{K, Kcour}));
+            };
+            if (tdpdTrho)
+            {
+                if (du_visc) { run.template operator()<true, true>(output6); }
+                else { run.template operator()<true, false>(output5); }
             }
             else
             {
-                neighborhood.ijLoop(cstone::ijloop::makeIjLoopData<Tc, T*>(
-                    input, output, MomentumAndEnergyInteraction<AvClean, T, Kernel>{wh, Atmin, Atmax, ramp, nrMode},
-                    MomentumAndEnergyPostambleWithDt<false, T, Tc>{K, Kcour}));
+                if (du_visc) { run.template operator()<false, true>(output6); }
+                else { run.template operator()<false, false>(output5); }
             }
         },
         wh);

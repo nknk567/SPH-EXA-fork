@@ -267,6 +267,16 @@ public:
     FieldVector<uint64_t>  id;                                 // unique particle id
     FieldVector<HydroType> dtCourant;                          // per-particle timestep restriction
 
+    /* shock observation (TDE): heating by artificial viscosity, accumulated per particle.
+     * u_visc_tot   = sum over steps of du_visc * dt (energy per unit mass, like u)
+     * u_visc_restr = same, only while the particle is farther than star::r_shock_restr
+     *                from the central object (excludes the pericentre nozzle shock)
+     * du_visc_tot  = AV part of du of the current step, written by the momentum/energy kernel
+     * The accumulators are RealType like u: they sum ~1e5 small increments. */
+    FieldVector<RealType>  u_visc_tot;
+    FieldVector<RealType>  u_visc_restr;
+    FieldVector<HydroType> du_visc_tot;
+
     std::conditional_t<useGpu, sph::DeviceNeighborhoodData, sph::NeighborhoodData> neighborhood;
     cstone::OctreeNsView<RealType, KeyType>                                        treeView;
 
@@ -281,21 +291,23 @@ public:
      * Name of each field as string for use e.g in HDF5 output. Order has to correspond to what's returned by data().
      */
     inline static constexpr std::array fieldNames{
-        "x",     "y",    "z",        "x_m1",  "y_m1",  "z_m1",      "vx",      "vy",  "vz",   "rho",  "u",
-        "p",     "prho", "tdpdTrho", "h",     "m",     "c",         "ugrav",   "ax",  "ay",   "az",   "du",
-        "du_m1", "c11",  "c12",      "c13",   "c22",   "c23",       "c33",     "mue", "mui",  "temp", "cv",
-        "xm",    "kx",   "divv",     "curlv", "alpha", "gradh",     "keys",    "nc",  "dV11", "dV12", "dV13",
-        "dV22",  "dV23", "dV33",     "rung",  "id",    "dtCourant", "ballmass"};
+        "x",     "y",    "z",        "x_m1",  "y_m1",  "z_m1",      "vx",       "vy",         "vz",           "rho",
+        "u",     "p",    "prho",     "tdpdTrho", "h",  "m",         "c",        "ugrav",      "ax",           "ay",
+        "az",    "du",   "du_m1",    "c11",   "c12",   "c13",       "c22",      "c23",        "c33",          "mue",
+        "mui",   "temp", "cv",       "xm",    "kx",    "divv",      "curlv",    "alpha",      "gradh",        "keys",
+        "nc",    "dV11", "dV12",     "dV13",  "dV22",  "dV23",      "dV33",     "rung",       "id",           "dtCourant",
+        "ballmass", "u_visc_tot", "u_visc_restr", "du_visc_tot"};
 
     //! @brief dataset prefix to be prepended to fieldNames for structured output
     static const inline std::string prefix{};
 
     /*! @brief conserved fields that may be missing in restart files from older versions
      *
-     * These are zero-initialized with a warning instead of failing the restart; they are
-     * recomputed on the first step after the restart.
+     * These are zero-initialized with a warning instead of failing the restart: xm and
+     * ballmass are recomputed on the first step after the restart, the dissipation
+     * accumulators simply start counting from zero.
      */
-    inline static constexpr std::array optionalRestartFields{"xm", "ballmass"};
+    inline static constexpr std::array optionalRestartFields{"xm", "ballmass", "u_visc_tot", "u_visc_restr"};
 
     /*! @brief return a tuple of field references
      *
@@ -305,7 +317,8 @@ public:
     {
         auto ret = std::tie(x, y, z, x_m1, y_m1, z_m1, vx, vy, vz, rho, u, p, prho, tdpdTrho, h, m, c, ugrav, ax, ay,
                             az, du, du_m1, c11, c12, c13, c22, c23, c33, mue, mui, temp, cv, xm, kx, divv, curlv, alpha,
-                            gradh, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant, ballmass);
+                            gradh, keys, nc, dV11, dV12, dV13, dV22, dV23, dV33, rung, id, dtCourant, ballmass,
+                            u_visc_tot, u_visc_restr, du_visc_tot);
 
 #if defined(__clang__) || __GNUC__ > 11
         static_assert(std::tuple_size_v<decltype(ret)> == fieldNames.size());

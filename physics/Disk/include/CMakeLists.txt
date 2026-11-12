@@ -1,11 +1,13 @@
 
+set(DISK_GPU_SOURCES central_force_gpu.cu accretion_gpu.cu beta_cooling_gpu.cu dissipation_gpu.cu)
+
 if (SPH_EXA_WITH_HIP)
-    set_source_files_properties(central_force_gpu.cu accretion_gpu.cu beta_cooling_gpu.cu PROPERTIES LANGUAGE HIP)
+    set_source_files_properties(${DISK_GPU_SOURCES} PROPERTIES LANGUAGE HIP)
 endif ()
 
 set(testname disk_gpu)
 if (SPH_EXA_WITH_CUDA OR SPH_EXA_WITH_HIP)
-    add_library(${testname} OBJECT central_force_gpu.cu accretion_gpu.cu beta_cooling_gpu.cu)
+    add_library(${testname} OBJECT ${DISK_GPU_SOURCES})
     target_include_directories(${testname} PRIVATE ${CSTONE_DIR} ${SPH_DIR})
     if (SPH_EXA_WITH_CUDA)
         target_link_libraries(${testname} PRIVATE CUDA::cudart)

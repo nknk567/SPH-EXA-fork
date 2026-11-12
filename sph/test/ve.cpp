@@ -305,7 +305,7 @@ momentumAndEnergyJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box, c
                        const T* c11, const T* c12, const T* c13, const T* c22, const T* c23, const T* c33,
                        const T Atmin, const T Atmax, const T ramp, const Kernel& wh, const T* kx, const T* xm,
                        const T* alpha, const T* dV11, const T* dV12, const T* dV13, const T* dV22, const T* dV23,
-                       const T* dV33, T* grad_P_x, T* grad_P_y, T* grad_P_z, Tm1* du, T* maxvsignal,
+                       const T* dV33, T* grad_P_x, T* grad_P_y, T* grad_P_z, Tm1* du, T* maxvsignal, T* du_visc,
                        bool nrMode = false)
 {
     MomentumAndEnergyInteraction<avClean, T, Kernel> interaction{wh, Atmin, Atmax, ramp, nrMode};
@@ -314,7 +314,7 @@ momentumAndEnergyJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box, c
     const auto input =
         std::make_tuple(vx, vy, vz, m, c, kx, alpha, xm, prho, c11, c12, c13, c22, c23, c33, nc, dV11, dV12, dV13, dV22,
                         dV23, dV33, tdpdTrho ? tdpdTrho : vx /* pass random derefable array if tdpdTrho is null */);
-    const auto output = std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, maxvsignal - i);
+    const auto output = std::make_tuple(du, grad_P_x, grad_P_y, grad_P_z, maxvsignal - i, du_visc - i);
 
     const auto iData  = cstone::ijloop::loadParticleData(x, y, z, h, input, i);
     const bool usePbc = cstone::ijloop::requiresPbcHandling(box, iData);
@@ -345,6 +345,12 @@ momentumAndEnergyJLoop(cstone::LocalIndex i, Tc K, const cstone::Box<Tc>& box, c
     }
 }
 
+// reference values of the AV heating rate du_visc = K/2 * sum_j a_visc_ij . v_ij for the fixture
+constexpr double DU_VISC_AVCLEAN_REF = 442759847836.49872;
+constexpr double DU_VISC_AVCLEAN_TOL = 1.2e6; // same relative tolerance as du
+constexpr double DU_VISC_NOCLEAN_REF = 396459115196.42517;
+constexpr double DU_VISC_NOCLEAN_TOL = 1.1e6;
+
 TEST_F(SphKernelTests, MomentumEnergy)
 {
     std::vector<T> dV11(npart), dV12(npart), dV13(npart), dV22(npart), dV23(npart), dV33(npart);
@@ -354,54 +360,60 @@ TEST_F(SphKernelTests, MomentumEnergy)
 
     { // test with AV cleaning
         std::vector<unsigned> nc(x.size(), neighborsCount + 1);
-        auto [du, grad_Px, grad_Py, grad_Pz, maxvsignal] = std::array<T, 5>{-1, -1, -1, -1, -1};
+        auto [du, grad_Px, grad_Py, grad_Pz, maxvsignal, du_visc] = std::array<T, 6>{-1, -1, -1, -1, -1, -1};
 
         momentumAndEnergyJLoop<true>(0, K, box(), neighbors.data(), neighborsCount, nc.data(), x.data(), y.data(),
                                      z.data(), vx.data(), vy.data(), vz.data(), h.data(), m.data(), prho.data(),
                                      (const T*)nullptr, c.data(), c11.data(), c12.data(), c13.data(), c22.data(),
                                      c23.data(), c33.data(), Atmin, Atmax, ramp, wh, kx.data(), xm.data(), alpha.data(),
                                      dV11.data(), dV12.data(), dV13.data(), dV22.data(), dV23.data(), dV33.data(),
-                                     &grad_Px, &grad_Py, &grad_Pz, &du, &maxvsignal);
+                                     &grad_Px, &grad_Py, &grad_Pz, &du, &maxvsignal, &du_visc);
 
         EXPECT_NEAR(grad_Px, -23175.29155183331, 0.023);
         EXPECT_NEAR(grad_Py, 13564.560025399775, 0.053);
         EXPECT_NEAR(grad_Pz, -80978.279574341461, 0.043);
         EXPECT_NEAR(du, -2.6643381633458105e11, 7.1e5);
         EXPECT_NEAR(maxvsignal, 26490876.319252387, 1e-6);
+        // AV heating is the non-negative viscous part of du
+        EXPECT_GE(du_visc, 0.0);
+        EXPECT_NEAR(du_visc, DU_VISC_AVCLEAN_REF, DU_VISC_AVCLEAN_TOL);
     }
     { // test without AV cleaning
         std::vector<unsigned> nc(x.size(), neighborsCount + 1);
-        auto [du, grad_Px, grad_Py, grad_Pz, maxvsignal] = std::array<T, 5>{-1, -1, -1, -1, -1};
+        auto [du, grad_Px, grad_Py, grad_Pz, maxvsignal, du_visc] = std::array<T, 6>{-1, -1, -1, -1, -1, -1};
 
         momentumAndEnergyJLoop<false>(0, K, box(), neighbors.data(), neighborsCount, nc.data(), x.data(), y.data(),
                                       z.data(), vx.data(), vy.data(), vz.data(), h.data(), m.data(), prho.data(),
                                       (const T*)nullptr, c.data(), c11.data(), c12.data(), c13.data(), c22.data(),
                                       c23.data(), c33.data(), Atmin, Atmax, ramp, wh, kx.data(), xm.data(),
                                       alpha.data(), dV11.data(), dV12.data(), dV13.data(), dV22.data(), dV23.data(),
-                                      dV33.data(), &grad_Px, &grad_Py, &grad_Pz, &du, &maxvsignal);
+                                      dV33.data(), &grad_Px, &grad_Py, &grad_Pz, &du, &maxvsignal, &du_visc);
 
         EXPECT_NEAR(grad_Px, -23599.138813909038, 0.022);
         EXPECT_NEAR(grad_Py, 335.48616557085978, 0.064);
         EXPECT_NEAR(grad_Pz, -79670.116695894292, 0.042);
         EXPECT_NEAR(du, -3.1273454967721649e11, 3.1e5);
         EXPECT_NEAR(maxvsignal, 26490876.319252387, 1e-6);
+        EXPECT_GE(du_visc, 0.0);
+        EXPECT_NEAR(du_visc, DU_VISC_NOCLEAN_REF, DU_VISC_NOCLEAN_TOL);
     }
     { // test zero neighbors
         std::vector<unsigned> nc(x.size(), 1);
-        auto [du, grad_Px, grad_Py, grad_Pz, maxvsignal] = std::array<T, 5>{-1, -1, -1, -1, -1};
+        auto [du, grad_Px, grad_Py, grad_Pz, maxvsignal, du_visc] = std::array<T, 6>{-1, -1, -1, -1, -1, -1};
 
         momentumAndEnergyJLoop<false>(0, K, box(), neighbors.data(), 0, nc.data(), x.data(), y.data(), z.data(),
                                       vx.data(), vy.data(), vz.data(), h.data(), m.data(), prho.data(),
                                       (const T*)nullptr, c.data(), c11.data(), c12.data(), c13.data(), c22.data(),
                                       c23.data(), c33.data(), Atmin, Atmax, ramp, wh, kx.data(), xm.data(),
                                       alpha.data(), dV11.data(), dV12.data(), dV13.data(), dV22.data(), dV23.data(),
-                                      dV33.data(), &grad_Px, &grad_Py, &grad_Pz, &du, &maxvsignal);
+                                      dV33.data(), &grad_Px, &grad_Py, &grad_Pz, &du, &maxvsignal, &du_visc);
 
         EXPECT_EQ(grad_Px, 0.0);
         EXPECT_EQ(grad_Py, 0.0);
         EXPECT_EQ(grad_Pz, 0.0);
         EXPECT_EQ(du, 0.0);
         EXPECT_EQ(maxvsignal, 0.0);
+        EXPECT_EQ(du_visc, 0.0);
     }
 }
 
@@ -421,13 +433,13 @@ TEST_F(SphKernelTests, MomentumEnergyAvCleanNRIndependentOfNc)
     {
         std::vector<unsigned> nc(x.size(), neighborsCount + 1);
         nc[0] = nc0;
-        std::array<T, 5> r{-1, -1, -1, -1, -1}; // grad_Px, grad_Py, grad_Pz, du, maxvsignal
+        std::array<T, 6> r{-1, -1, -1, -1, -1, -1}; // grad_Px, grad_Py, grad_Pz, du, maxvsignal, du_visc
         momentumAndEnergyJLoop<true>(0, K, box(), neighbors.data(), neighborsCount, nc.data(), x.data(), y.data(),
                                      z.data(), vx.data(), vy.data(), vz.data(), h.data(), m.data(), prho.data(),
                                      (const T*)nullptr, c.data(), c11.data(), c12.data(), c13.data(), c22.data(),
                                      c23.data(), c33.data(), Atmin, Atmax, ramp, wh, kx.data(), xm.data(),
                                      alpha.data(), dV11.data(), dV12.data(), dV13.data(), dV22.data(), dV23.data(),
-                                     dV33.data(), &r[0], &r[1], &r[2], &r[3], &r[4], nrMode);
+                                     dV33.data(), &r[0], &r[1], &r[2], &r[3], &r[4], &r[5], nrMode);
         return r;
     };
 

@@ -43,15 +43,23 @@ protected:
     using typename Base::Acc;
     using T = typename DataType::RealType;
 
+    /*! @brief TDE shock observation: the accumulated AV heating (total / outside the nozzle
+     * radius) is carried between steps and checkpointed; the per-step AV heating rate is
+     * recomputed by the momentum/energy kernel, which only stores it when the field exists.
+     * Declared here rather than in VeDiskProp because the field lists are consumed by the
+     * base activateFields()/conservedFields(); plain ve-nr runs carry the two extra arrays. */
+    using ShockObsFields  = FieldList<"u_visc_tot", "u_visc_restr">;
+    using ShockDiffFields = FieldList<"du_visc_tot">;
+
     /*! @brief NR field lists: the volume elements are carried between steps (SPHYNX volstd),
      * so xm is CONSERVED here, unlike the classical base where it is a dependent field.
      * ballmass is the per-particle NR constraint target rho * h^3 = ballmass, carried between
      * steps (frozen when particleBallmass = 1, refilled nominal every step otherwise). */
-    using ConservedFields = decltype(typename Base::ConservedFields{} + FieldList<"xm", "ballmass">{});
+    using ConservedFields =
+        decltype(typename Base::ConservedFields{} + FieldList<"xm", "ballmass">{} + ShockObsFields{});
+    using DependentFields_ = decltype(typename Base::DependentFieldsCommon_{} + ShockDiffFields{});
     using DependentFields =
-        std::conditional_t<avClean,
-                           decltype(typename Base::DependentFieldsCommon_{} + typename Base::GradVFields{}),
-                           typename Base::DependentFieldsCommon_>;
+        std::conditional_t<avClean, decltype(DependentFields_{} + typename Base::GradVFields{}), DependentFields_>;
 
     //! @brief runtime parameters of the NR scheme, persisted as checkpoint attributes
     struct NRParams
@@ -357,8 +365,8 @@ public:
          * the A/B reference for isolating the symmetric interactions. */
         Base::computeForcesCommon(domain, simData, /*nrMode*/ nrParams_.hNRIterMax > 0, nrParams_.gradhMin);
 
-//        printVeStateExtrema(d, first, last); // VE state diagnostic, safe to comment out
-//        printNonFiniteVe(d, first, last);    // NaN monitor, safe to comment out
+        //        printVeStateExtrema(d, first, last); // VE state diagnostic, safe to comment out
+        //        printNonFiniteVe(d, first, last);    // NaN monitor, safe to comment out
     }
 
     void integrate(DomainType& domain, DataType& simData) override
@@ -374,8 +382,7 @@ public:
          * towards the neighbor count target here would displace it from the converged solution
          * every step. Unresolvable particles are still flagged. Without NR iterations
          * (hNRIterMax == 0) the classical neighbor-count nudge is the only h update. */
-        bool haveUnconvergedParticles =
-            updateSmoothingLength(groups_.view(), d, /*adjustH*/ nrParams_.hNRIterMax == 0);
+        bool haveUnconvergedParticles = updateSmoothingLength(groups_.view(), d, /*adjustH*/ nrParams_.hNRIterMax == 0);
         if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
         {
             throw std::runtime_error("Neighbor search did not converge\n");
@@ -434,8 +441,7 @@ protected:
         const float bandMin = nrParams_.particleBallmass ? float(d.ng0 / 2) : 0.0f;
         const float bandMax = nrParams_.particleBallmass ? float(d.ngmax) : std::numeric_limits<float>::max();
         //! upward per-step NR wall; defaults to the neighbor-list extension, see hNRWallFactor
-        const float wallFactor =
-            nrParams_.hNRWallFactor > 0.f ? nrParams_.hNRWallFactor : nrParams_.hNRExtFactor;
+        const float wallFactor = nrParams_.hNRWallFactor > 0.f ? nrParams_.hNRWallFactor : nrParams_.hNRExtFactor;
         //! targets rebased this step because the NR converging point was outside the band
         size_t numBallmassAdjusted = 0;
 
@@ -473,8 +479,7 @@ protected:
         // NR convergence diagnostic, safe to comment out
         printNRUnconverged(nrUnconverged, nrParams_.hNRIterMax, numBallmassAdjusted);
         //! cap statistics, safe to comment out; volstd_ still holds the step-start h here
-        printNRCapped(capIterUp, capIterDown,
-                      countHWallPinned(groups_.view(), d, cstone::rawPtr(volstd_), wallFactor));
+        printNRCapped(capIterUp, capIterDown, countHWallPinned(groups_.view(), d, cstone::rawPtr(volstd_), wallFactor));
         timer.step("hNewtonRaphson");
     }
 
@@ -511,15 +516,14 @@ protected:
         {
             if constexpr (cstone::execution::HaveGpu<Acc>{})
             {
-                return cstone::minMax(cstone::execution::gpuDefaultStream, rawPtr(field) + first,
-                                      rawPtr(field) + last);
+                return cstone::minMax(cstone::execution::gpuDefaultStream, rawPtr(field) + first, rawPtr(field) + last);
             }
             else { return cstone::minMax(cstone::execution::cpu, field.data() + first, field.data() + last); }
         };
         auto [kxMin, kxMax] = extrema(get<"kx">(d));
         auto [xmMin, xmMax] = extrema(get<"xm">(d));
 
-        double maxDivv = d.minDtRho > 0 && std::isfinite(d.minDtRho) ? d.Krho / d.minDtRho : 0.0;
+        double                 maxDivv = d.minDtRho > 0 && std::isfinite(d.minDtRho) ? d.Krho / d.minDtRho : 0.0;
         util::array<double, 4> ex{maxDivv, -double(kxMin), double(kxMax), double(xmMax)}, exOut;
         MPI_Allreduce(ex.data(), exOut.data(), ex.size(), MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         if (Base::rank_ == 0)
@@ -544,8 +548,7 @@ protected:
         MPI_Allreduce(c.data(), cOut.data(), c.size(), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if (Base::rank_ == 0)
         {
-            std::cout << "# nonfinite[ve]: c11=" << cOut[0] << " prho=" << cOut[1] << " alpha=" << cOut[2]
-                      << std::endl;
+            std::cout << "# nonfinite[ve]: c11=" << cOut[0] << " prho=" << cOut[1] << " alpha=" << cOut[2] << std::endl;
         }
     }
 
@@ -593,10 +596,7 @@ protected:
     template<class FieldVector>
     unsigned long long nonFiniteCount(const FieldVector& field, size_t first, size_t last)
     {
-        if constexpr (cstone::execution::HaveGpu<Acc>{})
-        {
-            return gpu::countNonFiniteGpu(rawPtr(field), first, last);
-        }
+        if constexpr (cstone::execution::HaveGpu<Acc>{}) { return gpu::countNonFiniteGpu(rawPtr(field), first, last); }
         else
         {
             unsigned long long n = 0;
@@ -612,10 +612,9 @@ protected:
 
     void printNonFinite(const char* tag, typename DataType::HydroData& d, size_t first, size_t last)
     {
-        util::array<unsigned long long, 4> c{nonFiniteCount(get<"du">(d), first, last),
-                                             nonFiniteCount(get<"ax">(d), first, last),
-                                             nonFiniteCount(get<"ay">(d), first, last),
-                                             nonFiniteCount(get<"az">(d), first, last)},
+        util::array<unsigned long long, 4> c{
+            nonFiniteCount(get<"du">(d), first, last), nonFiniteCount(get<"ax">(d), first, last),
+            nonFiniteCount(get<"ay">(d), first, last), nonFiniteCount(get<"az">(d), first, last)},
             cOut;
         MPI_Allreduce(c.data(), cOut.data(), c.size(), MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if (Base::rank_ == 0)

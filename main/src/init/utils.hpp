@@ -161,6 +161,9 @@ void initFieldsAtRest(Dataset& d, double m_part)
 
     cstone::fill(d.exec, d.u.begin(), d.u.end(), 0.0);
     cstone::fill(d.exec, d.temp.begin(), d.temp.end(), 0.0);
+    // dissipation accumulators (allocated by ve-nr/ve-disk only; no-op otherwise)
+    cstone::fill(d.exec, d.u_visc_tot.begin(), d.u_visc_tot.end(), 0.0);
+    cstone::fill(d.exec, d.u_visc_restr.begin(), d.u_visc_restr.end(), 0.0);
 
     generateParticleIDs(d.exec, d.id);
 }
