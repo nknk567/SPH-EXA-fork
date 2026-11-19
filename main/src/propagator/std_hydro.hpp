@@ -126,6 +126,7 @@ public:
         Base::logDomainStats(domain, simData);
 
         auto& d = simData.hydro;
+        cstone::fill(domain.exec(), d.keys.begin(), d.keys.end(), 0);
         d.resize(domain.nParticlesWithHalos());
         size_t first = domain.startIndex();
         size_t last  = domain.endIndex();
