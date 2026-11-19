@@ -43,12 +43,12 @@ protected:
     using typename Base::Acc;
     using T = typename DataType::RealType;
 
-    /*! @brief TDE shock observation: the accumulated AV heating (total / outside the nozzle
-     * radius) is carried between steps and checkpointed; the per-step AV heating rate is
+    /*! @brief TDE shock observation: the accumulated AV heating (one float per particle) is
+     * carried between steps and checkpointed; the per-step AV heating rate (float) is
      * recomputed by the momentum/energy kernel, which only stores it when the field exists.
      * Declared here rather than in VeDiskProp because the field lists are consumed by the
-     * base activateFields()/conservedFields(); plain ve-nr runs carry the two extra arrays. */
-    using ShockObsFields  = FieldList<"u_visc_tot", "u_visc_restr">;
+     * base activateFields()/conservedFields(); plain ve-nr runs carry the extra array. */
+    using ShockObsFields  = FieldList<"u_visc_tot">;
     using ShockDiffFields = FieldList<"du_visc_tot">;
 
     /*! @brief NR field lists: the volume elements are carried between steps (SPHYNX volstd),

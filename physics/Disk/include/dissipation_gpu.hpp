@@ -4,12 +4,10 @@
 
 #pragma once
 
-#include "star_data.hpp"
+#include <cstddef>
 
 namespace disk
 {
-template<typename Treal, typename Thydro>
-void integrateDissipationGPU(size_t first, size_t last, const Treal* x, const Treal* y, const Treal* z,
-                             const Thydro* du_visc, Treal* u_visc_tot, Treal* u_visc_restr, double dt,
-                             const StarData& star);
+template<typename Thydro>
+void integrateDissipationGPU(size_t first, size_t last, const Thydro* du_visc, Thydro* u_visc_tot, double dt);
 }

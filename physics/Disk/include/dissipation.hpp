@@ -10,45 +10,34 @@
 namespace disk
 {
 
-/*! @brief Accumulate this step's artificial-viscosity heating per particle.
- *
- * u_visc_tot   += du_visc * dt for every particle,
- * u_visc_restr += du_visc * dt only while the particle is farther than star.r_shock_restr
- *                 from the central object (excludes the pericentre nozzle shock).
+/*! @brief Accumulate this step's artificial-viscosity heating per particle:
+ * u_visc_tot += du_visc_tot * dt.
  *
  * du_visc_tot is the AV part of du of the current force evaluation; dt is the time step that
- * advances u with that du (first-order accumulation of a non-negative rate). Call it before
- * computePositions so the distance gate uses the positions the forces were evaluated at.
+ * advances u with that du (first-order accumulation of a non-negative rate). The increment
+ * is formed in double and added to the float accumulator. The pericentre nozzle shock is
+ * not separated here; the analysis does that from the dump cadence (baseline subtraction).
  */
-template<typename Dataset, typename StarData>
-void integrateDissipationImpl(size_t first, size_t last, Dataset& d, double dt, const StarData& star)
+template<typename Dataset>
+void integrateDissipationImpl(size_t first, size_t last, Dataset& d, double dt)
 {
-    const double r2 = star.r_shock_restr * star.r_shock_restr;
+    using Tacc = typename Dataset::HydroType;
 
 #pragma omp parallel for schedule(static)
     for (size_t i = first; i < last; i++)
     {
-        const double inc = double(d.du_visc_tot[i]) * dt;
-        d.u_visc_tot[i] += inc;
-
-        const double dx    = d.x[i] - star.position[0];
-        const double dy    = d.y[i] - star.position[1];
-        const double dz    = d.z[i] - star.position[2];
-        const double dist2 = dx * dx + dy * dy + dz * dz;
-        if (dist2 > r2) { d.u_visc_restr[i] += inc; }
+        d.u_visc_tot[i] += Tacc(double(d.du_visc_tot[i]) * dt);
     }
 }
 
-template<typename Dataset, typename StarData>
-void integrateDissipation(size_t first, size_t last, Dataset& d, double dt, const StarData& star)
+template<typename Dataset>
+void integrateDissipation(size_t first, size_t last, Dataset& d, double dt)
 {
     if constexpr (d.useGpu)
     {
-        integrateDissipationGPU(first, last, getPtr<"x">(d), getPtr<"y">(d), getPtr<"z">(d),
-                                getPtr<"du_visc_tot">(d), getPtr<"u_visc_tot">(d), getPtr<"u_visc_restr">(d), dt,
-                                star);
+        integrateDissipationGPU(first, last, getPtr<"du_visc_tot">(d), getPtr<"u_visc_tot">(d), dt);
     }
-    else { integrateDissipationImpl(first, last, d, dt, star); }
+    else { integrateDissipationImpl(first, last, d, dt); }
 }
 
 } // namespace disk

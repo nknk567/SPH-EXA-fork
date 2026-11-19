@@ -99,10 +99,9 @@ public:
         computeTimestep(first, last, d, star.t_du, d.etaAcc * star.t_star);
         timer.step("Timestep");
 
-        /* accumulate this step's AV heating (shock observation): total, and only outside
-         * star.r_shock_restr; before computePositions so the gate uses the force-evaluation
-         * positions and d.minDt is the dt that advances u with the same du */
-        disk::integrateDissipation(first, last, d, d.minDt, star);
+        /* accumulate this step's AV heating (shock observation) with d.minDt, the dt that
+         * advances u with the same du in computePositions below */
+        disk::integrateDissipation(first, last, d, d.minDt);
         timer.step("integrateDissipation");
 
         computePositions(groups_.view(), d, domain.box(), d.minDt, {float(d.minDt_m1)});

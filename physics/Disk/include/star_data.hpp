@@ -50,9 +50,6 @@ struct StarData
     //! @brief Limit the timestep depending on changes in the internal energy. delta_t = K_u * u / du
     double K_u{std::numeric_limits<double>::infinity()};
 
-    //! @brief Restriction radius for shock observation (u_visc_restr)
-    double r_shock_restr{470.0};
-
     template<typename Archive>
     void loadOrStoreAttributes(Archive* ar)
     {
@@ -97,7 +94,6 @@ struct StarData
         optionalIO("star::cooling_rho_limit", &cooling_rho_limit, 1);
         optionalIO("star::u_floor", &u_floor, 1);
         optionalIO("star::K_u", &K_u, 1);
-        optionalIO("star::r_shock_restr", &r_shock_restr, 1);
     };
 
     //! @brief Potential from interaction between star and particles
