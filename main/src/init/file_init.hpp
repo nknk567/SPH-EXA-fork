@@ -78,10 +78,9 @@ void restoreDataset(IFileReader* reader, Dataset& d)
                         if (reader->rank() == 0)
                         {
                             std::cout << "\nWARNING: optional field " << key
-                                      << " not found in restart file, initializing to zero. Volume elements "
-                                         "(xm, ballmass) are recomputed when running without NR smoothing-length "
-                                         "iterations; for the ve-nr and ve-disk propagators, first regenerate the "
-                                         "checkpoint with a classical run. The dissipation accumulator u_visc_tot "
+                                      << " not found in restart file, initializing to zero. A zero NR constraint "
+                                         "target (ballmass) is re-seeded from rho * h^3 by the first NR pass of the "
+                                         "ve-nr and ve-disk propagators. The dissipation accumulator u_visc_tot "
                                          "starts counting from zero."
                                       << std::endl;
                         }

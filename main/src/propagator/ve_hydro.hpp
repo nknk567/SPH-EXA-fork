@@ -79,9 +79,9 @@ protected:
     using DependentFieldsCommon_ = FieldList<"ax", "ay", "az", "prho", "c", "du", "c11", "c12", "c13", "c22", "c23",
                                              "c33", "kx", "nc", "dtCourant">;
 
-    /* xm is recomputed from the standard SPH density every step here, hence dependent; the NR
-     * propagator (ve-nr/ve-disk) instead carries the volume elements between steps (SPHYNX) and
-     * re-declares xm as a conserved field. */
+    /* xm = m / rho0 is recomputed from the standard SPH density every step, hence dependent;
+     * the NR propagators (ve-nr/ve-disk) share this definition and freeze the step's xm during
+     * their smoothing-length iterations. */
     using DependentFields_ = decltype(DependentFieldsCommon_{} + FieldList<"xm">{});
 
     //! @brief velocity gradient fields will only be allocated when avClean is true

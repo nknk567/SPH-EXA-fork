@@ -302,11 +302,11 @@ public:
 
     /*! @brief conserved fields that may be missing in restart files from older versions
      *
-     * These are zero-initialized with a warning instead of failing the restart: xm and
-     * ballmass are recomputed on the first step after the restart, the dissipation
-     * accumulator simply starts counting from zero.
+     * These are zero-initialized with a warning instead of failing the restart: a zero
+     * ballmass is the NR recompute signal consumed by the first NR pass after the restart, the
+     * dissipation accumulator simply starts counting from zero.
      */
-    inline static constexpr std::array optionalRestartFields{"xm", "ballmass", "u_visc_tot"};
+    inline static constexpr std::array optionalRestartFields{"ballmass", "u_visc_tot"};
 
     /*! @brief return a tuple of field references
      *

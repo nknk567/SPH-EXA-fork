@@ -21,8 +21,9 @@ using namespace sph;
  *
  * Extends the plain VE propagator: each step, h is converged to the volume-element consistency
  * rho * h^3 = ballmassEta(ng0) * m (grad-h terms formally consistent with dh/drho = -h/(3 rho)),
- * and the volume elements are carried over as the SPH-smoothed converged volume of the previous
- * step, following SPHYNX (Cabezon & Garcia-Senz). Pair interactions are processed symmetrically
+ * following SPHYNX (Cabezon & Garcia-Senz). The volume elements are the classical SPH-EXA
+ * xm = m / rho0, recomputed from the standard SPH density at the step-start (guard) h every step
+ * and frozen during the step's iterations. Pair interactions are processed symmetrically
  * within 2 * max(h_i, h_j), restoring the reaction to the neighbor-kernel term of the pair force
  * — essential for energy conservation with the strong h contrasts the NR scheme develops at
  * density discontinuities.
@@ -51,13 +52,13 @@ protected:
     using ShockObsFields  = FieldList<"u_visc_tot">;
     using ShockDiffFields = FieldList<"du_visc_tot">;
 
-    /*! @brief NR field lists: the volume elements are carried between steps (SPHYNX volstd),
-     * so xm is CONSERVED here, unlike the classical base where it is a dependent field.
-     * ballmass is the per-particle NR constraint target rho * h^3 = ballmass, carried between
-     * steps (frozen when particleBallmass = 1, refilled nominal every step otherwise). */
+    /*! @brief NR field lists: xm stays a dependent field as in the classical base (recomputed
+     * every step). ballmass is the per-particle NR constraint target rho * h^3 = ballmass,
+     * carried between steps (frozen when particleBallmass = 1, refilled nominal every step
+     * otherwise). */
     using ConservedFields =
-        decltype(typename Base::ConservedFields{} + FieldList<"xm", "ballmass">{} + ShockObsFields{});
-    using DependentFields_ = decltype(typename Base::DependentFieldsCommon_{} + ShockDiffFields{});
+        decltype(typename Base::ConservedFields{} + FieldList<"ballmass">{} + ShockObsFields{});
+    using DependentFields_ = decltype(typename Base::DependentFields_{} + ShockDiffFields{});
     using DependentFields =
         std::conditional_t<avClean, decltype(DependentFields_{} + typename Base::GradVFields{}), DependentFields_>;
 
@@ -101,30 +102,6 @@ protected:
          */
         float gradhMin{0.1f};
 
-        /*! @brief per-step change limits for a carried volume element (asymmetric)
-         *
-         * The carried weights are the SPH-smoothed converged volumes (volstd). UPWARD volume
-         * drift at vacuum boundaries is a numerical ratchet of the V^2-weighted smoothing —
-         * hence the tight growth limit; physical volume growth per step is O(|divv| * dt) << 1,
-         * so it is inert in resolved flow. DOWNWARD movement is legitimate fast adaptation:
-         * compressing debris correctly shrinks h at up to 0.5 * h0 per step and the carried
-         * volume must follow at a comparable rate, or kx = eta * xm / h^3 spikes by the
-         * staleness ratio — hence the looser shrink limit.
-         */
-        float volstdGrowFactor{2.0f};
-        float volstdShrinkFactor{8.0f};
-
-        /*! @brief volume-element source: 0 = carried smoothed volume, 1 = m/rho0 every step
-         *
-         * 0 (SPHYNX volstd): the weights are the smoothed converged volumes of the previous
-         * step, frozen during the step. 1 (classical SPH-EXA VE definition): xm = m/rho0 is
-         * recomputed from the step-start h every step. Known risk of mode 1 under NR: for
-         * self-dominated (isolated) particles xm ~ h^3 at the step-start h, so the root has no
-         * restoring force ACROSS steps and drifts against the caps; the neighbor-count guard
-         * and the per-step walls must contain it.
-         */
-        unsigned xmSource{0};
-
         /*! @brief NR constraint target source: 0 = fixed nominal target, 1 = per-particle target
          *
          * 0: ballmass is refilled with ballmassEta(ng0) * m every step — the fixed global
@@ -163,9 +140,6 @@ protected:
             optionalIO("hNRWallFactor", &hNRWallFactor, 1);
             optionalIO("hNRTol", &hNRTol, 1);
             optionalIO("gradhMin", &gradhMin, 1);
-            optionalIO("volstdGrowFactor", &volstdGrowFactor, 1);
-            optionalIO("volstdShrinkFactor", &volstdShrinkFactor, 1);
-            optionalIO("xmSource", &xmSource, 1);
             optionalIO("particleBallmass", &particleBallmass, 1);
         }
     };
@@ -174,17 +148,6 @@ protected:
 
     //! @brief neighbor-list build capacity for the extended NR search, sized once, see updateNgmaxExt
     unsigned ngmaxExt_{0};
-
-    template<class VType>
-    using AccVector =
-        std::conditional_t<cstone::execution::HaveGpu<Acc>{}, cstone::DeviceVector<VType>, std::vector<VType>>;
-
-    /*! @brief SPH-smoothed converged particle volume, the VE weights xm of the next step
-     *
-     * Computed at force evaluation time, but only assigned to xm in integrate(), i.e. after the
-     * (checkpoint) output, so that restart files contain the weights belonging to the dumped positions.
-     */
-    AccVector<typename DataType::HydroData::HydroType> volstd_;
 
 public:
     HydroVeNRProp(std::ostream& output, size_t rank, const InitSettings& settings)
@@ -326,18 +289,13 @@ public:
         timer.step("FindNeighbors");
         pmReader.step();
 
-        /* The volume elements are carried over from the smoothed converged volume of the
-         * previous step (SPHYNX-style, see computeVolstd) and only initialized from the
-         * standard SPH density on the first step. Recomputing xm from the CURRENT h every
-         * step (tried as a diagnostic) makes the NR constraint ill-posed for undersampled
-         * particles: with a self-dominated density, xm ~ h^3/(K*w0) and both sides of
-         * kx * h^3 = eta * xm scale with h^3 — the root degenerates and h drifts against the
-         * caps (observed as kx -> eta/(K*w0) spikes and permanent 9-iteration tug-of-war). */
-        if (nrParams_.xmSource != 0 || d.iteration == 1)
-        {
-            computeXMass(d, domain.box());
-            timer.step("XMass");
-        }
+        /* Classical volume elements xm = m / rho0 at the guard h; frozen during the NR
+         * iterations of this step (SPHYNX iterates on frozen weights as well). Self-dominated
+         * (isolated) particles have xm ~ h^3 here, so both sides of kx * h^3 = eta * xm scale
+         * with h^3 and the constraint has no root: Omega -> 0 freezes them in the NR postamble
+         * and the neighbor-count guard owns their h. */
+        computeXMass(d, domain.box());
+        timer.step("XMass");
         domain.exchangeHalos(std::tie(get<"xm">(d)), get<"ax">(d), get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
 
@@ -349,16 +307,6 @@ public:
         domain.exchangeHalos(std::tuple_cat(std::tie(get<"h">(d)), get<"vx", "vy", "vz", "kx">(d)), get<"ax">(d),
                              get<"keys">(d));
         timer.step("mpi::synchronizeHalos");
-
-        if (nrParams_.xmSource == 0)
-        {
-            /* Smoothed converged volume, the VE weights of the next step; needs kx halos,
-             * computed before ay/az are released. Assigned to xm in integrate(), after the
-             * output. */
-            reallocateDestructive(volstd_, d.x.size(), d.getAllocGrowthRate());
-            computeVolstd(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_));
-            timer.step("Volstd");
-        }
 
         /* hNRIterMax == 0 (settings-file opt-out, fresh runs only): no NR iterations, classical
          * kernels and h update -> classical ve plus the symmetric pair set and two-way halos,
@@ -386,15 +334,6 @@ public:
         if (haveUnconvergedParticles && not d.removeUnconvergedParticles)
         {
             throw std::runtime_error("Neighbor search did not converge\n");
-        }
-
-        if (nrParams_.xmSource == 0)
-        {
-            /* volume elements of the next step, the smoothed converged volume of this step
-             * (SPHYNX-style); placed after the checkpoint output so that restarts see the
-             * weights that belong to the dumped positions */
-            setVolumeElements(groups_.view(), d, cstone::rawPtr(volstd_), nrParams_.volstdGrowFactor,
-                              nrParams_.volstdShrinkFactor);
         }
         timer.step("UpdateQuantities");
     }
@@ -427,10 +366,8 @@ protected:
      * The iterations reuse the fixed neighbor list with fixed
      * volume elements xm and are gather-only, so they require no communication and each
      * rank may stop as soon as its own particles are converged. Following SPHYNX
-     * (Cabezon & Garcia-Senz).
-     * volstd_ temporarily holds the pre-iteration h, capping the cumulative upward h
-     * movement at the neighbor-list extension; it is reused for the smoothed volume
-     * later in the step.
+     * (Cabezon & Garcia-Senz). The iterations use ax/ay/az as scratch (az holds the
+     * step-start h0 until the end of this function), see computeVeNR for the layout.
      */
     void convergeSmoothingLengthNR(DomainType& domain, DataType& simData)
     {
@@ -445,16 +382,14 @@ protected:
         //! targets rebased this step because the NR converging point was outside the band
         size_t numBallmassAdjusted = 0;
 
-        reallocateDestructive(volstd_, d.x.size(), d.getAllocGrowthRate());
         unsigned            nrIterations = 0;
         std::vector<size_t> nrUnconverged;
         size_t              capIterUp = 0, capIterDown = 0;
         while (nrIterations < nrParams_.hNRIterMax)
         {
             ++nrIterations;
-            NRPassStats stats = computeVeNR(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
-                                            /*firstIteration*/ nrIterations == 1, nrParams_.hNRTol,
-                                            nrParams_.hNRExtFactor, wallFactor, bandMin, bandMax);
+            NRPassStats stats = computeVeNR(groups_.view(), d, domain.box(), /*firstIteration*/ nrIterations == 1,
+                                            nrParams_.hNRTol, nrParams_.hNRExtFactor, wallFactor, bandMin, bandMax);
             nrUnconverged.push_back(stats.numUnconverged);
             capIterUp += stats.numCapUp;
             capIterDown += stats.numCapDown;
@@ -467,10 +402,9 @@ protected:
              * octree-traversal updates instead (exact, see computeVeNRTail). */
             if (stats.numUnconverged * 100 < groups_.view().lastBody - groups_.view().firstBody)
             {
-                nrIterations += computeVeNRTail(groups_.view(), d, domain.box(), cstone::rawPtr(volstd_),
-                                                nrParams_.hNRIterMax - nrIterations, nrUnconverged, nrParams_.hNRTol,
-                                                nrParams_.hNRExtFactor, wallFactor, bandMin, bandMax, capIterUp,
-                                                capIterDown, numBallmassAdjusted);
+                nrIterations += computeVeNRTail(groups_.view(), d, domain.box(), nrParams_.hNRIterMax - nrIterations,
+                                                nrUnconverged, nrParams_.hNRTol, nrParams_.hNRExtFactor, wallFactor,
+                                                bandMin, bandMax, capIterUp, capIterDown, numBallmassAdjusted);
                 break;
             }
         }
@@ -478,8 +412,8 @@ protected:
         if (Base::rank_ == 0) { std::cout << "# hNRIterations: " << nrIterations << std::endl; }
         // NR convergence diagnostic, safe to comment out
         printNRUnconverged(nrUnconverged, nrParams_.hNRIterMax, numBallmassAdjusted);
-        //! cap statistics, safe to comment out; volstd_ still holds the step-start h here
-        printNRCapped(capIterUp, capIterDown, countHWallPinned(groups_.view(), d, cstone::rawPtr(volstd_), wallFactor));
+        //! cap statistics, safe to comment out; the az scratch still holds the step-start h here
+        printNRCapped(capIterUp, capIterDown, countHWallPinned(groups_.view(), d, wallFactor));
         timer.step("hNewtonRaphson");
     }
 

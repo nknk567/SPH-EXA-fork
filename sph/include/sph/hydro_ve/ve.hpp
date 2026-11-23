@@ -47,39 +47,6 @@ void computeVe(Dataset& d, const cstone::Box<Tc>& box)
     else { veIjLoop(d.neighborhood, d.K, d.xm.data(), d.wh, d.kx.data()); }
 }
 
-/*! @brief compute the SPH-smoothed converged particle volume, the VE weights of the next step
- *
- * As in SPHYNX (calculate_IAD.f90/update.f90), the weights of the next step are the smoothed
- * volume estimate of the converged state, making them independent of the positions at force
- * evaluation time. @p volstd must have room for absolute particle indices up to grp.lastBody.
- */
-template<typename Tc, class Dataset, class Tv>
-void computeVolstd(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, Tv* volstd)
-{
-    if constexpr (d.useGpu) { gpu::computeVolstd(grp, d, box, volstd); }
-    else { volstdIjLoop(d.neighborhood, d.K, d.xm.data(), d.kx.data(), d.wh, volstd); }
-}
-
-//! @brief assign the volume elements of the next step for locally owned particles
-template<class Dataset, class Tv>
-void setVolumeElements(const GroupView& grp, Dataset& d, const Tv* volstd, float volstdGrowFactor,
-                       float volstdShrinkFactor)
-{
-    if constexpr (d.useGpu) { gpu::setVolumeElements(grp, d, volstd, volstdGrowFactor, volstdShrinkFactor); }
-    else
-    {
-        auto* xm = d.xm.data();
-#pragma omp parallel for schedule(static)
-        for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
-        {
-            //! clamp the per-step change of the carried volume, see the ve-nr volstdGrow/ShrinkFactor parameters
-            Tv lo = xm[i] / Tv(volstdShrinkFactor);
-            Tv hi = xm[i] * Tv(volstdGrowFactor);
-            xm[i] = stl::min(stl::max(volstd[i], lo), hi);
-        }
-    }
-}
-
 /*! @brief fill the NR constraint target with its nominal value ballmassEta(ng0) * m
  *
  * Every step when the per-particle ballmass mode is off (fixed global target, legacy behavior),
@@ -107,40 +74,49 @@ void fillNominalBallmass(const GroupView& grp, Dataset& d)
 /*! @brief one Newton-Raphson iteration for the smoothing length constraint rho * h^3 = ballmass
  *
  * Iterates over the fixed neighbor list with fixed volume elements xm and updates h of locally
- * owned particles in place. Uses the ay field as scratch space for the updated smoothing length,
- * the az field for the relative h change per particle (consumed by computeVeNRTail) and the ax
- * field for the neighbor count inside 2h tested by the convergence-point band check.
- * The constraint target is the per-particle ballmass field, nominally ballmassEta(ng0) * m;
- * converging points whose neighbor count falls outside [bandMin, bandMax] are reset to h0 with
- * the target flagged for a re-seed there, see VeNRPostamble.
- * @p h0 holds the smoothing lengths at the start of the step's NR iterations (filled here when
- * @p firstIteration is set); the cumulative upward h movement is capped at hWallFactor * h0
- * (>= the neighbor-list extension hExtFactor; growth beyond the extension trades the capture
- * truncation of the listed sums for faster migration, see VeNRPostamble).
+ * owned particles in place. The constraint target is the per-particle ballmass field, nominally
+ * ballmassEta(ng0) * m; converging points whose neighbor count falls outside [bandMin, bandMax]
+ * are reset to h0 with the target flagged for a re-seed there, see VeNRPostamble.
+ *
+ * Scratch layout of the NR iterations (dependent fields, free until computeForcesCommon):
+ *  - az: h0, the smoothing lengths at the start of the step's NR iterations, filled from h when
+ *        @p firstIteration is set and read by every pass, computeVeNRTail and countHWallPinned.
+ *        The cumulative upward h movement is capped at hWallFactor * h0 (>= the neighbor-list
+ *        extension hExtFactor; growth beyond the extension trades the capture truncation of the
+ *        listed sums for faster migration, see VeNRPostamble).
+ *  - ay: the updated smoothing length (pass output; may not alias h, h_j is read concurrently).
+ *  - ax: during the pass the neighbor count inside 2h tested by the convergence-point band check
+ *        (pass output, dead after the postamble); afterwards overwritten with the relative h
+ *        change per particle, consumed by computeVeNRTail.
+ * kx receives the normalization at the old h and is recomputed by computeVe afterwards. On the
+ * symmetric GPU list loop the three pass outputs (kx, ay, ax) double as the atomic accumulators
+ * of the interaction sums (three results for three outputs avoids temporary allocations), so
+ * none of them can carry state across a pass — hence h0 lives in az.
  *
  * @return pass statistics: the number of locally owned particles with a relative h change
  *         >= @p tol (zero means the iterations are converged), the per-iteration clamp hits
  *         and the band-check resets of this pass
  */
-template<typename Tc, class Dataset, class Tv>
-NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, Tv* h0, bool firstIteration,
-                        float tol, float hExtFactor, float hWallFactor, float bandMin, float bandMax)
+template<typename Tc, class Dataset>
+NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, bool firstIteration, float tol,
+                        float hExtFactor, float hWallFactor, float bandMin, float bandMax)
 {
     if constexpr (d.useGpu)
     {
-        return gpu::computeVeNR(grp, d, box, h0, firstIteration, tol, hExtFactor, hWallFactor, bandMin, bandMax);
+        return gpu::computeVeNR(grp, d, box, firstIteration, tol, hExtFactor, hWallFactor, bandMin, bandMax);
     }
     else
     {
+        using Th = std::decay_t<decltype(d.h[0])>;
+        Th* h0   = d.az.data();
         if (firstIteration) { std::copy(d.h.data(), d.h.data() + d.x.size(), h0); }
         veNRIjLoop(d.neighborhood, d.K, hExtFactor, hWallFactor, tol, bandMin, bandMax, d.xm.data(), d.m.data(), h0,
                    d.ballmass.data(), d.wh, d.kx.data(), d.ay.data(), d.ax.data());
 
-        using Th               = std::decay_t<decltype(d.h[0])>;
         const Th* hNew         = d.ay.data();
         const Th* bm           = d.ballmass.data();
         Th*       h            = d.h.data();
-        Th*       relDh        = d.az.data();
+        Th*       relDh        = d.ax.data();
         size_t    numUnconverged = 0, capUp = 0, capDown = 0, numReset = 0;
 #pragma omp parallel for schedule(static) reduction(+ : numUnconverged, capUp, capDown, numReset)
         for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
@@ -160,18 +136,22 @@ NRPassStats computeVeNR(const GroupView& grp, Dataset& d, const cstone::Box<Tc>&
 
 /*! @brief count particles whose final h ended the NR iterations pinned at the cumulative walls
  *
+ * Reads the step-start h0 from the az scratch (see computeVeNR), so it must run before az is
+ * released.
+ *
  * @return {at hWallFactor * h0 (upper wall), at 0.5 * h0 (lower wall)}; these particles are
  *         frozen OFF their NR root (relDh = 0 at the wall counts as converged), so they do not
  *         appear in the unconverged statistics — this is the complementary view.
  */
-template<class Dataset, class Tv>
-std::pair<size_t, size_t> countHWallPinned(const GroupView& grp, Dataset& d, const Tv* h0, float hWallFactor)
+template<class Dataset>
+std::pair<size_t, size_t> countHWallPinned(const GroupView& grp, Dataset& d, float hWallFactor)
 {
-    if constexpr (d.useGpu) { return gpu::countHWallPinned(grp, d, h0, hWallFactor); }
+    if constexpr (d.useGpu) { return gpu::countHWallPinned(grp, d, hWallFactor); }
     else
     {
         using Th        = std::decay_t<decltype(d.h[0])>;
         const Th* h     = d.h.data();
+        const Th* h0    = d.az.data();
         size_t    up    = 0, down = 0;
 #pragma omp parallel for schedule(static) reduction(+ : up, down)
         for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
@@ -185,29 +165,30 @@ std::pair<size_t, size_t> countHWallPinned(const GroupView& grp, Dataset& d, con
 
 /*! @brief finish the NR smoothing-length iterations for the unconverged residual only
  *
- * Extracts the particles whose relative h change of the last computeVeNR pass (az scratch) was
+ * Extracts the particles whose relative h change of the last computeVeNR pass (ax scratch) was
  * still >= @p tol and iterates only those, each by direct octree traversal (veNRTraversalUpdate)
  * instead of full neighbor-list passes over all particles. Fused: every particle runs freely to
  * its own convergence (h kept local, committed once) instead of lockstep passes over the whole
  * subset — exact, because the NR update of a particle depends only on its own h and the fixed
  * volume elements. The per-pass unconverged counts of the lockstep formulation are recovered
  * as suffix sums over the histogram of convergence iterations. Converged particles keep their
- * last h instead of accumulating further sub-tolerance refinements.
+ * last h instead of accumulating further sub-tolerance refinements. The step-start h0 is read
+ * from the az scratch; the per-particle count output goes to ax, whose relDh content is dead
+ * once the subset is extracted (see the scratch layout at computeVeNR).
  *
  * @param maxPasses           remaining iteration budget (hNRIterMax minus the passes already done)
  * @param unconvergedPerPass  appends the local unconverged count after each pass (diagnostic)
  * @return the number of passes performed (the largest convergence iteration among the subset)
  */
-template<typename Tc, class Dataset, class Tv>
-unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, const Tv* h0,
-                         unsigned maxPasses, std::vector<size_t>& unconvergedPerPass, float tol, float hExtFactor,
-                         float hWallFactor, float bandMin, float bandMax, size_t& capUp, size_t& capDown,
-                         size_t& numReset)
+template<typename Tc, class Dataset>
+unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>& box, unsigned maxPasses,
+                         std::vector<size_t>& unconvergedPerPass, float tol, float hExtFactor, float hWallFactor,
+                         float bandMin, float bandMax, size_t& capUp, size_t& capDown, size_t& numReset)
 {
     if constexpr (d.useGpu)
     {
-        return gpu::computeVeNRTail(grp, d, box, h0, maxPasses, unconvergedPerPass, tol, hExtFactor, hWallFactor,
-                                    bandMin, bandMax, capUp, capDown, numReset);
+        return gpu::computeVeNRTail(grp, d, box, maxPasses, unconvergedPerPass, tol, hExtFactor, hWallFactor, bandMin,
+                                    bandMax, capUp, capDown, numReset);
     }
     else
     {
@@ -215,7 +196,7 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
         if (maxPasses == 0) { return 0; }
 
         std::vector<cstone::LocalIndex> subset;
-        const Th*                       relDh = d.az.data();
+        const Th*                       relDh = d.ax.data();
         for (cstone::LocalIndex i = grp.firstBody; i < grp.lastBody; ++i)
         {
             if (relDh[i] >= Th(tol)) { subset.push_back(i); }
@@ -223,6 +204,7 @@ unsigned computeVeNRTail(const GroupView& grp, Dataset& d, const cstone::Box<Tc>
         if (subset.empty()) { return 0; }
 
         Th*                 h  = d.h.data();
+        const Th*           h0 = d.az.data();
         const Th*           bm = d.ballmass.data();
         std::vector<size_t> bins(maxPasses + 2, 0);
         std::visit(
