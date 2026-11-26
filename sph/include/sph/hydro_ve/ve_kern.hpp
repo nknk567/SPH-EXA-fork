@@ -228,7 +228,7 @@ void veNRIjLoop(const Neighbordhood& neighborhood, Tc K, const T* xm, const Tm* 
     std::visit(
         [&]<class Kernel>(Kernel wh)
         {
-            neighborhood.ijLoop(cstone::ijloop::makeIjLoopData<Tc, T*>(
+            neighborhood.ijLoop(cstone::ijloop::IjLoopData(
                 std::make_tuple(xm, m, h0), std::make_tuple(kx, hNew, count), VeNRInteraction<T, Kernel>{wh},
                 VeNRPostamble<T, Tc>{K, ballmass, T(hExtFactor), T(hWallFactor), T(hNRTol), T(ngmin), T(ngmax)}));
         },
